@@ -28,23 +28,23 @@ What we have proven so far:
 - The repository already contains the first OS-level OpenPhone framework
   patches, privileged assistant app, policy seed, action executor, and audit
   logger.
+- The full `openphone_tegu` product boots on the physical Pixel 9a.
+- The privileged assistant package and `OpenPhoneAgentManagerService`
+  registered as `openphone_agent` have been verified over ADB.
 
 What we have not proven yet:
 
-- The full `openphone_tegu` product has not yet been accepted as V1 until the
-  assistant and `OpenPhoneAgentManagerService` are verified on the physical
-  phone.
-- The phone is not yet a working AI phone. It is currently a custom OS bring-up
-  with the first AI-control substrate under construction.
+- The phone is not yet a working AI phone. It is currently a custom OS with the
+  first AI-control substrate booting and verified.
 - The model loop, natural language task runner, Settings integration, richer
   screen understanding, and hardware smoke tests remain to be completed.
 
 The right next move is not more device shopping and not an app-only prototype.
-It is to finish the Pixel 9a full-product loop:
+It is to finish the first AI task loop:
 
 ```text
-build full OpenPhone OTA -> flash -> boot -> verify OS service ->
-verify assistant -> execute actions -> audit -> add model loop
+capture screen context -> ask model -> request action -> confirm ->
+execute through OS service -> audit -> iterate
 ```
 
 ## V1 Product Promise
@@ -166,7 +166,7 @@ Status as of 2026-05-29:
 | Track | Status | Evidence / Notes |
 | --- | --- | --- |
 | Repo structure | pass | OpenPhone repo contains manifests, overlays, patches, scripts, docs, contracts, and device docs. |
-| Legal/licensing docs | started | `LICENSE`, `NOTICE`, and `docs/LICENSING.md` exist; commercial policy still needs final legal review. |
+| Legal/licensing docs | started | `LICENSE`, `LICENSE.noncommercial`, `COMMERCIAL.md`, `THIRD_PARTY_NOTICES.md`, `NOTICE`, and `docs/LICENSING.md` exist; commercial policy still needs final legal review. |
 | Upstream base | pass | LineageOS selected as practical AOSP base for device support. |
 | First device | pass | Pixel 9a `tegu`, verified SKU `GTF7P`. |
 | Bootloader unlock | pass | Device is unlocked and reports verified boot state `orange`. |
@@ -192,24 +192,28 @@ already unlocked and the device is allowed to be wiped.
 
 ### 1. Build on Linux
 
-Use a Linux x86_64 build host. The current EC2 layout is:
+Use any Linux x86_64 build host with enough CPU, RAM, disk, Android build
+dependencies, `repo`, and `git-lfs`. EC2 was only used because the local
+machine was macOS; it is not an OpenPhone requirement.
+
+The conventional repo layout is:
 
 ```text
-/home/ubuntu/OpenPhone
-/home/ubuntu/OpenPhone/.worktree/android
+/path/to/OpenPhone
+/path/to/OpenPhone/.worktree/android
 ```
 
 Apply OpenPhone patches:
 
 ```bash
-cd /home/ubuntu/OpenPhone
+cd /path/to/OpenPhone
 ./scripts/apply-patches.sh
 ```
 
 Prepare the Pixel 9a DTB until this is automated:
 
 ```bash
-cd /home/ubuntu/OpenPhone/.worktree/android
+cd /path/to/OpenPhone/.worktree/android
 rm -rf /tmp/vkb-prebuilt
 mkdir -p /tmp/vkb-prebuilt
 out/host/linux-x86/bin/unpack_bootimg \
@@ -228,7 +232,7 @@ f1aed2bc4c07d3cb1e610f5227a566f22e995dfe05341ca6bf14805be6928688
 Build full target-files:
 
 ```bash
-cd /home/ubuntu/OpenPhone
+cd /path/to/OpenPhone
 OPENPHONE_RELEASE=bp4a \
 OPENPHONE_BUILD_GOAL=target-files-package \
 ./scripts/build.sh openphone_tegu
@@ -237,7 +241,7 @@ OPENPHONE_BUILD_GOAL=target-files-package \
 Generate the OTA:
 
 ```bash
-cd /home/ubuntu/OpenPhone/.worktree/android
+cd /path/to/OpenPhone/.worktree/android
 TF=out/target/product/tegu/obj/PACKAGING/target_files_intermediates/openphone_tegu-target_files.zip
 out/host/linux-x86/bin/ota_from_target_files \
   "$TF" \
@@ -263,10 +267,13 @@ Required result:
 
 ### 2. Copy Artifact to Local Machine
 
+If the Linux build host is remote, copy the OTA to the machine connected to the
+phone:
+
 ```bash
 mkdir -p .worktree/artifacts/tegu
 scp -i "$OPENPHONE_BUILD_SSH_KEY" \
-  "$OPENPHONE_BUILD_HOST":/home/ubuntu/OpenPhone/.worktree/android/out/target/product/tegu/openphone_tegu-bp4a-v1-dev-ota.zip \
+  "$OPENPHONE_BUILD_HOST":/path/to/OpenPhone/.worktree/android/out/target/product/tegu/openphone_tegu-bp4a-v1-dev-ota.zip \
   .worktree/artifacts/tegu/
 shasum -a 256 .worktree/artifacts/tegu/openphone_tegu-bp4a-v1-dev-ota.zip
 ```
@@ -443,11 +450,15 @@ Important distinction:
 
 ### Build Host
 
-Use a Linux x86_64 host for full device OTAs. The current EC2 workflow uses:
+Use a Linux x86_64 host for full device OTAs. It can be a local Linux
+workstation, a dedicated build server, a VM, or a cloud instance. EC2 is only
+one possible host option.
+
+Recommended layout:
 
 ```text
-/home/ubuntu/OpenPhone
-/home/ubuntu/OpenPhone/.worktree/android
+/path/to/OpenPhone
+/path/to/OpenPhone/.worktree/android
 ```
 
 Local macOS is useful for repository work, adb/fastboot, and artifact

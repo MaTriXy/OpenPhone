@@ -80,7 +80,7 @@ Root cause:
   `$(wildcard device/google/tegu-kernels/6.1/*.dtb)`, but that directory only
   had a prebuilt `vendor_kernel_boot.img` and no standalone `*.dtb`.
 
-Current fix under test:
+DTB build requirement:
 
 - Extract the DTB from the known-good prebuilt
   `device/google/tegu-kernels/6.1/vendor_kernel_boot.img`.

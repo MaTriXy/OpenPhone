@@ -67,7 +67,15 @@ new file mode 100644
 index 000000000000..2b50025aac64
 --- /dev/null
 +++ b/core/java/android/openphone/IOpenPhoneAgentService.aidl
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,18 @@
++/*
++ * Copyright 2026 OpenPhone contributors.
++ *
++ * SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
++ *
++ * Commercial use requires a separate written license.
++ */
++
 +package android.openphone;
 +
 +/** @hide */
@@ -83,21 +91,13 @@ new file mode 100644
 index 000000000000..0c4414db53fe
 --- /dev/null
 +++ b/core/java/android/openphone/OpenPhoneAgentManager.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,79 @@
 +/*
-+ * Copyright (C) 2026 OpenPhone
++ * Copyright 2026 OpenPhone contributors.
 + *
-+ * Licensed under the Apache License, Version 2.0 (the "License");
-+ * you may not use this file except in compliance with the License.
-+ * You may obtain a copy of the License at
++ * SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 + *
-+ *      http://www.apache.org/licenses/LICENSE-2.0
-+ *
-+ * Unless required by applicable law or agreed to in writing, software
-+ * distributed under the License is distributed on an "AS IS" BASIS,
-+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+ * See the License for the specific language governing permissions and
-+ * limitations under the License.
++ * Commercial use requires a separate written license.
 + */
 +
 +package android.openphone;
@@ -208,21 +208,13 @@ new file mode 100644
 index 000000000000..e26b7f02aa8d
 --- /dev/null
 +++ b/services/core/java/com/android/server/openphone/OpenPhoneAgentManagerService.java
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,153 @@
 +/*
-+ * Copyright (C) 2026 OpenPhone
++ * Copyright 2026 OpenPhone contributors.
 + *
-+ * Licensed under the Apache License, Version 2.0 (the "License");
-+ * you may not use this file except in compliance with the License.
-+ * You may obtain a copy of the License at
++ * SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 + *
-+ *      http://www.apache.org/licenses/LICENSE-2.0
-+ *
-+ * Unless required by applicable law or agreed to in writing, software
-+ * distributed under the License is distributed on an "AS IS" BASIS,
-+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+ * See the License for the specific language governing permissions and
-+ * limitations under the License.
++ * Commercial use requires a separate written license.
 + */
 +
 +package com.android.server.openphone;
@@ -395,4 +387,3 @@ index a184d6a7efe8..08e33934a725 100644
                  t.traceBegin("StartSupervisionService");
 -- 
 2.50.1 (Apple Git-155)
-

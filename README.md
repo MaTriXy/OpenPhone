@@ -10,20 +10,24 @@ It intentionally does not vendor the full Android source tree.
 
 ## Current State
 
-This repo currently implements the project scaffold described in
+This repo currently implements the OpenPhone OS bringup described in
 [SPEC.md](SPEC.md):
 
 - LineageOS upstream sync workflow.
 - OpenPhone local manifest hook.
 - Patch-stack application workflow.
 - Generic OpenPhone product overlay.
-- Minimal privileged `OpenPhoneAssistant` system app skeleton.
-- Verified `OpenPhoneAssistant` module build inside a synced LineageOS tree.
-- Device support and licensing documentation.
+- Pixel 9a `openphone_tegu` product overlay.
+- Privileged persistent `OpenPhoneAssistant` system app.
+- Hidden framework API and `system_server` Binder service for OpenPhone agent
+  capabilities.
+- Policy seed, screen context plumbing, mediated action execution, confirmation
+  flow, and persistent audit log patches.
+- Verified full-product boot on a physical Pixel 9a.
 
-The deep OS integration work is still ahead: framework Binder APIs, screen
-understanding, action execution, SELinux policy, policy enforcement, audit log,
-OTA, full product image completion, and validated device ports.
+The next deep OS integration work is the actual model/task loop, richer screen
+understanding, Settings/SystemUI surfaces, broader action coverage, OTA
+hardening, production signing, and validated device ports beyond Pixel 9a.
 
 ## Repository Layout
 
@@ -71,7 +75,7 @@ Bootstrap the Android tree:
 ./scripts/apply-patches.sh
 ```
 
-Validate the repository scaffold:
+Validate the repository:
 
 ```bash
 ./scripts/check.sh
@@ -109,9 +113,11 @@ OPENPHONE_ANDROID_DIR=/path/to/android/tree ./scripts/sync.sh
 
 ## Licensing
 
-OpenPhone-owned code is intended to be source-available for non-commercial use,
-with commercial licensing available separately. Upstream Android, LineageOS,
-Linux kernel, device trees, vendor extraction scripts, and third-party code keep
-their original licenses.
+OpenPhone-owned materials are source-available for non-commercial use under the
+PolyForm Noncommercial License 1.0.0, with commercial licensing available
+separately. Upstream Android, LineageOS, Linux kernel, device trees, vendor
+extraction scripts, and third-party code keep their original licenses.
 
-See [docs/LICENSING.md](docs/LICENSING.md) and [LICENSE](LICENSE).
+See [docs/LICENSING.md](docs/LICENSING.md), [LICENSE](LICENSE),
+[LICENSE.noncommercial](LICENSE.noncommercial), [COMMERCIAL.md](COMMERCIAL.md),
+and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

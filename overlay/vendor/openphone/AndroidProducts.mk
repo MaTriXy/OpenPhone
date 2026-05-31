@@ -5,7 +5,7 @@ PRODUCT_MAKEFILES := \
 
 COMMON_LUNCH_CHOICES := \
     openphone_arm64-eng \
-    openphone_arm64-bp2a-eng \
-    openphone_arm64-bp2a-userdebug \
-    openphone_tegu_smoke-bp2a-userdebug \
-    openphone_tegu-bp2a-userdebug
+    openphone_arm64-bp4a-eng \
+    openphone_arm64-bp4a-userdebug \
+    openphone_tegu_smoke-bp4a-userdebug \
+    openphone_tegu-bp4a-userdebug

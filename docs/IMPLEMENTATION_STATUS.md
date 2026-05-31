@@ -5,7 +5,9 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Implemented in This Repository
 
 - Canonical OpenPhone project structure.
-- Source-available licensing boundary notice.
+- Dual-license source-available licensing boundary for OpenPhone-owned
+  materials: PolyForm Noncommercial for non-commercial use and separate written
+  license for commercial use.
 - LineageOS upstream sync script.
 - OpenPhone local manifest hook.
 - Patch-stack directory layout and patch application script.
@@ -58,7 +60,7 @@ This document tracks current implementation evidence against `SPEC.md`.
 - Build preflight for GNU coreutils on macOS.
 - Darwin Soong bootstrap test skip for local macOS builds.
 - Verified Lineage `repo sync` on a case-sensitive APFS sparse volume.
-- Verified `lunch openphone_arm64 bp2a userdebug` against the synced tree.
+- Verified `lunch openphone_arm64 bp4a userdebug` against the synced tree.
 - Verified overlay and patch replay against the synced Lineage tree.
 - Verified focused `OpenPhoneAssistant` module build inside the Android tree.
 - Verified focused `services.core-android_common-checkbuild` build for the
@@ -78,7 +80,7 @@ This document tracks current implementation evidence against `SPEC.md`.
   - privileged `org.openphone.assistant` package,
   - running `org.openphone.assistant/.OpenPhoneAssistantService`, and
   - registered `openphone_agent` Binder service.
-- Device support matrix placeholder.
+- Device support matrix and Pixel 9a bringup notes.
 
 ## Not Yet Implemented
 

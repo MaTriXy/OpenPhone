@@ -7,19 +7,27 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 required=(
   README.md
   SPEC.md
+  COMMERCIAL.md
+  CONTRIBUTING.md
   LICENSE
+  LICENSE.noncommercial
   NOTICE
+  THIRD_PARTY_NOTICES.md
   docs/ARCHITECTURE.md
   docs/BUILD.md
+  docs/BRINGUP_LOG.md
   docs/CAPABILITIES.md
   docs/DEVICE_SUPPORT.md
   docs/FRAMEWORK_PLAN.md
+  docs/IMPLEMENTATION_STATUS.md
   docs/LICENSING.md
+  docs/V1_AI_PHONE_PLAN.md
   docs/contracts/action-request.schema.json
   docs/contracts/agent-task.schema.json
   docs/contracts/audit-event.schema.json
   docs/contracts/screen-context.schema.json
   devices/MATRIX.md
+  devices/tegu.md
   manifests/openphone.xml
   overlay/vendor/openphone/AndroidProducts.mk
   overlay/vendor/openphone/products/openphone_common.mk
@@ -27,7 +35,9 @@ required=(
   overlay/vendor/openphone/products/openphone_tegu.mk
   overlay/packages/apps/OpenPhoneAssistant/Android.bp
   overlay/packages/apps/OpenPhoneAssistant/AndroidManifest.xml
+  overlay/packages/apps/OpenPhoneAssistant/LICENSE
   overlay/packages/apps/OpenPhoneAssistant/src/org/openphone/assistant/IOpenPhoneAssistant.aidl
+  patches/system_sepolicy/0001-OpenPhone-label-agent-manager-service.patch
 )
 
 for file in "${required[@]}"; do
@@ -66,4 +76,11 @@ for scan_root in scan_roots:
 PY
 fi
 
-printf 'OpenPhone repo scaffold checks passed.\n'
+if grep -R "SPDX-license-identifier-Apache-2.0" \
+    "$root/overlay/vendor/openphone" \
+    "$root/overlay/packages/apps/OpenPhoneAssistant" >/dev/null 2>&1; then
+  printf 'OpenPhone-owned overlay modules must not be marked Apache-2.0\n' >&2
+  exit 1
+fi
+
+printf 'OpenPhone repo checks passed.\n'

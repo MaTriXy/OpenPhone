@@ -1,3 +1,18 @@
+package {
+    default_applicable_licenses: ["OpenPhoneAssistant_license"],
+}
+
+license {
+    name: "OpenPhoneAssistant_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-PolyForm-Noncommercial-1.0.0",
+    ],
+    license_text: [
+        "LICENSE",
+    ],
+}
+
 android_app {
     name: "OpenPhoneAssistant",
     srcs: [

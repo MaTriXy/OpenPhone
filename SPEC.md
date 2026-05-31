@@ -173,7 +173,7 @@ OpenPhone cannot relicense code it did not write.
 
 ### 6.2 OpenPhone-Owned Code
 
-OpenPhone-owned modules may use a source-available non-commercial license, with separate commercial licensing available from OpenPhone.
+OpenPhone-owned modules use a source-available non-commercial license, with separate commercial licensing available from OpenPhone. The current public non-commercial license is PolyForm Noncommercial License 1.0.0.
 
 This can apply to:
 
@@ -1558,11 +1558,9 @@ called the OpenPhone MVP.
 
 The project still needs decisions on:
 
-- First target device.
-- Exact non-commercial source-available license.
 - Whether OpenPhone cloud services are required for MVP.
 - Local model minimum requirements.
-- Whether commercial builds use the same source license or a private addendum.
+- Commercial license agreement terms and pricing.
 - Whether to support MicroG or remain fully Google-free initially.
 - Whether device builds should start from official Lineage support only.
 - Whether typed parcelables should land before or after first physical boot.

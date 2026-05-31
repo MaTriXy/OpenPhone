@@ -16,11 +16,11 @@ PRODUCT_BUILD_BOOT_IMAGE := true
 PRODUCT_BUILD_INIT_BOOT_IMAGE := true
 PRODUCT_BUILD_VENDOR_BOOT_IMAGE := true
 # Tegu's kernel prebuilts currently ship the required DTB inside the prebuilt
-# vendor_kernel_boot.img, not as standalone *.dtb files. Rebuilding this image
-# from target-files creates a vendor_kernel_boot without a DTB and the Pixel 9a
-# falls back to fastboot before Android starts. Keep the known-good upstream
-# vendor_kernel_boot in place until OpenPhone provides a complete DTB source or
-# switches to copying the prebuilt image.
+# vendor_kernel_boot.img, not as standalone *.dtb files. Before generating
+# target-files, extract that DTB to device/google/tegu-kernels/6.1/tegu.dtb as
+# documented in docs/TEGU_BOOTCHAIN.md. Without that file, target-files can
+# generate a vendor_kernel_boot image with a zero-byte DTB and the Pixel 9a
+# falls back to fastboot before Android starts.
 PRODUCT_BUILD_VENDOR_KERNEL_BOOT_IMAGE := false
 PRODUCT_BUILD_VBMETA_IMAGE := true
 PRODUCT_BUILD_SUPER_PARTITION := true

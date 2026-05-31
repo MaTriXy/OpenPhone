@@ -63,7 +63,7 @@ Defaults:
 OPENPHONE_ANDROID_DIR=.worktree/android
 LINEAGE_BRANCH=lineage-23.2
 LINEAGE_MANIFEST_URL=https://github.com/LineageOS/android.git
-OPENPHONE_RELEASE=bp2a
+OPENPHONE_RELEASE=bp4a
 ```
 
 ## Sync
@@ -90,6 +90,12 @@ Generic OpenPhone ARM64 build:
 
 ```bash
 ./scripts/build.sh openphone_arm64
+```
+
+The Pixel 9a target uses the `bp4a` release suffix:
+
+```bash
+OPENPHONE_RELEASE=bp4a ./scripts/build.sh openphone_tegu
 ```
 
 Default build goal:
