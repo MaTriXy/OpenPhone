@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "get_screen",
+      "capability": "screen.read.visible",
+      "kind": "observe",
+      "requires_reason": true
+    },
+    {
+      "name": "watch_screen",
+      "capability": "screen.read.visible",
+      "kind": "observe",
+      "requires_reason": true
+    },
+    {
+      "name": "open_app",
+      "capability": "apps.launch",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "open_url",
+      "capability": "network.use",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "tap",
+      "capability": "input.perform",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "tap_element",
+      "capability": "input.perform",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "long_press",
+      "capability": "input.perform",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "long_press_element",
+      "capability": "input.perform",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "swipe",
+      "capability": "input.perform",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "type_text",
+      "capability": "input.perform",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "press_key",
+      "capability": "input.perform",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "set_clipboard",
+      "capability": "clipboard.write",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "paste",
+      "capability": "clipboard.read",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "share_text",
+      "capability": "share.content",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "wait",
+      "capability": "tasks.observe",
+      "kind": "control",
+      "requires_reason": true
+    },
+    {
+      "name": "ask_user_confirmation",
+      "capability": "tasks.observe",
+      "kind": "control",
+      "requires_reason": true
+    },
+    {
+      "name": "finish_task",
+      "capability": "tasks.observe",
+      "kind": "control",
+      "requires_reason": false
+    },
+    {
+      "name": "fail_task",
+      "capability": "tasks.observe",
+      "kind": "control",
+      "requires_reason": false
+    }
+  ]
+}

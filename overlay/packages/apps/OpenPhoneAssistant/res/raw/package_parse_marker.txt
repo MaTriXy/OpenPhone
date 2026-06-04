@@ -5,5 +5,5 @@ force Android PackageManager to reparse the system APK even when deterministic
 build timestamps and similar APK sizes could otherwise reuse stale package
 metadata.
 
-versionCode=48
-versionName=0.1.12-dev
+versionCode=57
+versionName=0.1.21-dev

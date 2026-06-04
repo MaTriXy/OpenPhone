@@ -101,6 +101,17 @@ For a real phone port, set a device-specific lunch target:
 OPENPHONE_BUILD_GOAL="droid target-files-package otapackage" ./scripts/build.sh openphone_tegu
 ```
 
+Optional Google Play / Google Mobile Services installation is documented in
+[docs/GMS.md](docs/GMS.md). OpenPhone does not redistribute Google packages, but
+for local Pixel 9a testing the helper can download and verify the public
+MindTheGapps Android 16 arm64 release, then sideload it from recovery:
+
+```bash
+scripts/download-mindthegapps.sh
+scripts/sideload-user-gms.sh \
+  --package .worktree/downloads/gms/MindTheGapps-16.0.0-arm64-*.zip
+```
+
 The default Android checkout lives at:
 
 ```text

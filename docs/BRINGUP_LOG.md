@@ -3,6 +3,74 @@
 This is the running field log for physical device work. Keep it factual:
 record commands, observed device behavior, artifact hashes, and conclusions.
 
+## 2026-06-04: Semantic Agent UI Targeting
+
+Device:
+
+- Google Pixel 9a, codename `tegu`
+- Serial observed over ADB: `61301JEBF07589`
+- Running OpenPhone/LineageOS development build with ADB and accessibility
+  enabled.
+
+Artifacts:
+
+- Assistant APK:
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-v60-semantic-labels-guardrail.apk`
+- Assistant APK SHA-256:
+  `671fe581211e32228d41cea95b0a7bb5705cdba6807f262fdabaee7ab56de861`
+- Mounted phone APK:
+  `/system_ext/priv-app/OpenPhoneAssistant/OpenPhoneAssistant.apk`
+- Mounted phone APK SHA-256:
+  `671fe581211e32228d41cea95b0a7bb5705cdba6807f262fdabaee7ab56de861`
+
+Changes validated:
+
+- Added model-visible semantic tools:
+  - `tap_element`
+  - `long_press_element`
+- The assistant resolves `element_id` from the current accessibility snapshot
+  to the element center and dispatches normal framework-mediated tap or
+  long-press actions.
+- Accessibility labels now aggregate descendant text for clickable Settings
+  rows whose parent node has no own label.
+- Sensitive-screen hints were tightened so generic Settings Apps rows do not
+  trigger false account/payment confirmation.
+
+Physical evals:
+
+- `scripts/run-assistant-task.sh --goal "Open Settings." --wait 90`
+  reached `com.android.settings/.Settings`.
+- `scripts/run-assistant-task.sh --goal "Open Settings, open the Apps settings
+  page, then finish when the Apps page is visible." --wait 120` finished
+  successfully.
+- Trajectory:
+  `.worktree/evals/20260604-semantic-elements-pass/trajectory`
+- Task ID:
+  `task-185660852914`
+- Observed tool sequence:
+  - `open_app` with `Settings`
+  - `tap_element` with `element_id=el-6`, label
+    `Apps | Recent apps, default apps`
+  - `finish_task`
+- Final activity:
+  `com.android.settings/.SubSettings`
+- Final visible text included:
+  - `Apps`
+  - `Recently opened apps`
+  - `OpenPhone Assistant`
+  - `See all 43 apps`
+  - `Default apps`
+
+Conclusion:
+
+- The agent is no longer limited to raw coordinate taps for this class of task.
+  It can use the on-phone accessibility UI tree to choose a labeled element,
+  execute through OS-mediated input, observe the resulting screen, and finish
+  based on visible UI evidence.
+- This is still bounded evidence. The next reliability step is a verifier and
+  a small benchmark suite that records pass/fail trajectories for multi-step
+  tasks across several apps.
+
 ## 2026-05-29: Pixel 9a `tegu`
 
 Device:
@@ -353,3 +421,22 @@ Ready-to-flash next artifact:
   - step 2 model tool: `finish_task`
   - step 2 summary:
     `Settings app is open and visible.`
+
+## 2026-06-04: User-Supplied GMS Sideload Validation
+
+- Added host helpers:
+  - `scripts/download-mindthegapps.sh`
+  - `scripts/sideload-user-gms.sh`
+- Downloaded public MindTheGapps Android 16 arm64 release from GitHub:
+  `MindTheGapps-16.0.0-arm64-20260409_073023.zip`.
+- Verified release-provided SHA-256:
+  `a6ff8b8c31f7ccd0a9f2fd651fa4438a8e39a5f63b95be246ea1f98982af2c28`.
+- Rebooted the Pixel 9a into recovery and entered:
+  `Apply update -> Apply from ADB`.
+- Sideload result:
+  `Total xfer: 1.00x`.
+- User confirmed the package installed successfully and the flow worked.
+- Product/legal boundary:
+  OpenPhone does not redistribute Google Mobile Services; the helper downloads
+  into ignored local worktree state for user/developer devices and the sideload
+  helper installs a local ZIP from recovery.

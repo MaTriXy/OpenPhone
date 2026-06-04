@@ -6,3 +6,6 @@ out/
 *.swp
 *.swo
 *.pem
+docs/local/
+__pycache__/
+*.pyc

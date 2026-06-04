@@ -2,18 +2,24 @@ package org.openphone.assistant;
 
 import android.app.Activity;
 import android.Manifest;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.openphone.OpenPhoneAgentManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.InputType;
+import android.util.Base64;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -26,20 +32,43 @@ import org.openphone.assistant.agent.FrameworkToolExecutor;
 import org.openphone.assistant.agent.AuditEvidenceExporter;
 import org.openphone.assistant.agent.TrajectoryRecorder;
 import org.openphone.assistant.model.LocalHeuristicModelAdapter;
+import org.openphone.assistant.model.ModelEndpointConfig;
 import org.openphone.assistant.model.ModelAdapter;
 import org.openphone.assistant.model.OpenAiRealtimeAdapter;
 import org.openphone.assistant.model.OpenAiSpeechTranscriber;
+import org.openphone.assistant.ota.OtaUpdateClient;
+import org.openphone.assistant.policy.AppCapabilityPolicy;
 
 import java.io.IOException;
 
 public final class MainActivity extends Activity {
+    private static final String EXTRA_DEV_OPENAI_API_KEY =
+            "org.openphone.assistant.extra.DEV_OPENAI_API_KEY";
+    private static final String EXTRA_GOAL = "org.openphone.assistant.extra.GOAL";
+    private static final String EXTRA_GOAL_BASE64 =
+            "org.openphone.assistant.extra.GOAL_BASE64";
+    private static final String EXTRA_RUN = "org.openphone.assistant.extra.RUN";
+
     private static final int REQUEST_RECORD_AUDIO = 1001;
     private static final int VOICE_CAPTURE_MILLIS = 5000;
+    private static final String PREFS = "openphone_assistant";
+    private static final String PREF_GRANT_INPUT = "grant_input";
+    private static final String PREF_GRANT_SCREEN_CAPTURE = "grant_screen_capture";
+    private static final String PREF_GRANT_CLIPBOARD = "grant_clipboard";
+    private static final String PREF_GRANT_SHARE = "grant_share";
+    private static final String PREF_GRANT_NETWORK = "grant_network";
+    private static final String SECURE_GRANT_INPUT = "openphone_task_grant_input";
+    private static final String SECURE_GRANT_SCREEN_CAPTURE = "openphone_task_grant_screenshot";
+    private static final String SECURE_GRANT_CLIPBOARD = "openphone_task_grant_clipboard";
+    private static final String SECURE_GRANT_SHARE = "openphone_task_grant_share";
+    private static final String SECURE_GRANT_NETWORK = "openphone_task_grant_network";
 
     private OpenPhoneAgentManager mAgentManager;
     private PointerOverlayController mPointerOverlayController;
     private String mActiveTaskId;
     private String mPendingActionId;
+    private String mPendingToolName;
+    private JSONObject mPendingToolArguments;
     private LinearLayout mAdvancedPanel;
     private TextView mIslandView;
     private TextView mStatusView;
@@ -52,16 +81,23 @@ public final class MainActivity extends Activity {
     private EditText mGoalInput;
     private EditText mActionInput;
     private EditText mApiKeyInput;
+    private EditText mBrokerUrlInput;
+    private EditText mBrokerTokenInput;
+    private EditText mOtaFeedUrlInput;
+    private TextView mOtaStatusView;
     private CheckBox mInputGrant;
     private CheckBox mScreenCaptureGrant;
     private CheckBox mClipboardGrant;
     private CheckBox mShareGrant;
     private CheckBox mNetworkGrant;
+    private CheckBox mUseBroker;
     private CheckBox mUseRealtime;
     private volatile boolean mAgentRunCancelled;
     private int mAgentRunGeneration;
+    private int mAuditRefreshGeneration;
     private Thread mAgentThread;
     private ModelAdapter mRunningModelAdapter;
+    private OtaUpdateClient.Update mLatestOtaUpdate;
     private boolean mListening;
 
     @Override
@@ -72,12 +108,66 @@ public final class MainActivity extends Activity {
         OpenPhoneAccessibilityService.ensureEnabled(this);
         setContentView(buildView());
         refreshAll();
+        applyDebugIntentExtras(getIntent());
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         OpenPhoneAccessibilityService.ensureEnabled(this);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        applyDebugIntentExtras(intent);
+    }
+
+    private void applyDebugIntentExtras(Intent intent) {
+        if (!debugIntentExtrasAllowed() || intent == null) {
+            return;
+        }
+        String apiKey = intent.getStringExtra(EXTRA_DEV_OPENAI_API_KEY);
+        if (apiKey != null && mApiKeyInput != null) {
+            if (mUseRealtime != null) {
+                mUseRealtime.setChecked(true);
+            }
+            if (mUseBroker != null) {
+                mUseBroker.setChecked(false);
+            }
+            mApiKeyInput.setText(apiKey);
+            refreshModelDisclosure();
+        }
+        String goal = debugGoalFromIntent(intent);
+        if (goal != null && mGoalInput != null) {
+            mGoalInput.setText(goal);
+        }
+        if (intent.getBooleanExtra(EXTRA_RUN, false)) {
+            mGoalInput.post(new Runnable() {
+                @Override
+                public void run() {
+                    startAgentFromCurrentGoal();
+                }
+            });
+        }
+    }
+
+    private static boolean debugIntentExtrasAllowed() {
+        return "userdebug".equals(Build.TYPE) || "eng".equals(Build.TYPE);
+    }
+
+    private static String debugGoalFromIntent(Intent intent) {
+        String encodedGoal = intent.getStringExtra(EXTRA_GOAL_BASE64);
+        if (encodedGoal != null && !encodedGoal.isEmpty()) {
+            try {
+                return new String(Base64.decode(encodedGoal, Base64.DEFAULT),
+                        java.nio.charset.StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException e) {
+                return "";
+            }
+        }
+        return intent.getStringExtra(EXTRA_GOAL);
     }
 
     private View buildView() {
@@ -90,7 +180,7 @@ public final class MainActivity extends Activity {
         root.setPadding(dp(20), dp(52), dp(20), dp(28));
         scrollView.addView(root);
 
-        mIslandView = label("OpenPhone is ready", 14, true);
+        mIslandView = label("Ready", 14, true);
         mIslandView.setTextColor(getColor(R.color.openphone_accent));
         mIslandView.setGravity(android.view.Gravity.CENTER);
         mIslandView.setTypeface(Typeface.DEFAULT_BOLD);
@@ -104,11 +194,11 @@ public final class MainActivity extends Activity {
         header.setPadding(0, dp(8), 0, dp(18));
         root.addView(header);
 
-        TextView title = label("What should I do?", 30, true);
+        TextView title = label("Ask OpenPhone", 30, true);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         header.addView(title);
 
-        TextView subtitle = label("Speak a task and OpenPhone can look, tap, type, and navigate.",
+        TextView subtitle = label("Tell me the outcome. I will handle the steps.",
                 15, false);
         subtitle.setTextColor(getColor(R.color.openphone_text_muted));
         subtitle.setPadding(0, dp(6), 0, 0);
@@ -123,11 +213,11 @@ public final class MainActivity extends Activity {
         mGoalInput.setTextSize(16);
         mGoalInput.setTextColor(getColor(R.color.openphone_text_primary));
         mGoalInput.setHintTextColor(getColor(R.color.openphone_text_secondary));
-        mGoalInput.setHint("Say or type something like: open Spotify, find flights, change a setting...");
+        mGoalInput.setHint("Try: open Settings, check my battery level, search the web...");
         styleInput(mGoalInput);
         goalPanel.addView(mGoalInput, blockParams());
 
-        Button startAgentButton = button("Start Agent", true, new View.OnClickListener() {
+        Button startAgentButton = button("Speak", true, new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 startVoiceAgent();
@@ -136,7 +226,7 @@ public final class MainActivity extends Activity {
         startAgentButton.setTextSize(18);
         goalPanel.addView(startAgentButton, blockParams());
 
-        Button typeAgentButton = button("Run Typed Task", false, new View.OnClickListener() {
+        Button typeAgentButton = button("Run", false, new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 startAgentFromCurrentGoal();
@@ -144,8 +234,8 @@ public final class MainActivity extends Activity {
         });
         goalPanel.addView(typeAgentButton, blockParams());
 
-        mTaskView = section(root, "Agent");
-        mTaskView.setText("Idle");
+        mTaskView = section(root, "Task");
+        mTaskView.setText("Ready.");
 
         mConfirmationPanel = panel();
         mConfirmationPanel.setVisibility(View.GONE);
@@ -172,7 +262,7 @@ public final class MainActivity extends Activity {
             }
         }), weightedButtonParams());
 
-        Button advancedButton = button("Advanced", false, new View.OnClickListener() {
+        Button advancedButton = button("Developer", false, new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 toggleAdvanced();
@@ -197,6 +287,18 @@ public final class MainActivity extends Activity {
         });
         mAdvancedPanel.addView(mUseRealtime, fullWidthParams());
 
+        mUseBroker = new CheckBox(this);
+        mUseBroker.setText("Use OpenPhone broker");
+        mUseBroker.setTextColor(getColor(R.color.openphone_text_primary));
+        mUseBroker.setChecked(false);
+        mUseBroker.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshModelDisclosure();
+            }
+        });
+        mAdvancedPanel.addView(mUseBroker, fullWidthParams());
+
         mModelDisclosureView = body();
         mModelDisclosureView.setTextColor(getColor(R.color.openphone_text_muted));
         mModelDisclosureView.setBackground(panelBackground(R.color.openphone_background));
@@ -213,23 +315,86 @@ public final class MainActivity extends Activity {
         styleInput(mApiKeyInput);
         mAdvancedPanel.addView(mApiKeyInput, blockParams());
 
+        mBrokerUrlInput = new EditText(this);
+        mBrokerUrlInput.setSingleLine(true);
+        mBrokerUrlInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_URI);
+        mBrokerUrlInput.setTextColor(getColor(R.color.openphone_text_primary));
+        mBrokerUrlInput.setHintTextColor(getColor(R.color.openphone_text_secondary));
+        mBrokerUrlInput.setHint("Broker base URL, e.g. https://broker.example.com");
+        styleInput(mBrokerUrlInput);
+        mAdvancedPanel.addView(mBrokerUrlInput, blockParams());
+
+        mBrokerTokenInput = new EditText(this);
+        mBrokerTokenInput.setSingleLine(true);
+        mBrokerTokenInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        mBrokerTokenInput.setTextColor(getColor(R.color.openphone_text_primary));
+        mBrokerTokenInput.setHintTextColor(getColor(R.color.openphone_text_secondary));
+        mBrokerTokenInput.setHint("Broker session token (memory only)");
+        styleInput(mBrokerTokenInput);
+        mAdvancedPanel.addView(mBrokerTokenInput, blockParams());
+
+        LinearLayout otaPanel = panel();
+        mAdvancedPanel.addView(otaPanel, blockParams());
+        otaPanel.addView(sectionTitle("Preview OTA Updates"));
+
+        mOtaFeedUrlInput = new EditText(this);
+        mOtaFeedUrlInput.setSingleLine(true);
+        mOtaFeedUrlInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_URI);
+        mOtaFeedUrlInput.setTextColor(getColor(R.color.openphone_text_primary));
+        mOtaFeedUrlInput.setHintTextColor(getColor(R.color.openphone_text_secondary));
+        mOtaFeedUrlInput.setHint("OTA feed URL");
+        styleInput(mOtaFeedUrlInput);
+        otaPanel.addView(mOtaFeedUrlInput, blockParams());
+
+        LinearLayout otaRow = buttonRow();
+        otaPanel.addView(otaRow, blockParams());
+        otaRow.addView(button("Check", false, new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                checkOtaFeed();
+            }
+        }), weightedButtonParams());
+        otaRow.addView(button("Download", false, new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                downloadLatestOta();
+            }
+        }), weightedButtonParams());
+
+        mOtaStatusView = body();
+        mOtaStatusView.setTextColor(getColor(R.color.openphone_text_muted));
+        mOtaStatusView.setText("Checks a signed release feed, validates this device, and "
+                + "downloads a SHA-256 verified OTA ZIP. Installation remains manual in "
+                + "this preview.");
+        mOtaStatusView.setBackground(panelBackground(R.color.openphone_background));
+        mOtaStatusView.setPadding(dp(12), dp(10), dp(12), dp(10));
+        otaPanel.addView(mOtaStatusView, blockParams());
+
         LinearLayout grantPanel = panel();
         mAdvancedPanel.addView(grantPanel, blockParams());
         grantPanel.addView(sectionTitle("Task Grants"));
 
-        mInputGrant = grantCheckBox("Tap, type, and navigate", true);
+        mInputGrant = grantCheckBox("Tap, type, and navigate", PREF_GRANT_INPUT,
+                SECURE_GRANT_INPUT, true);
         grantPanel.addView(mInputGrant, fullWidthParams());
 
-        mScreenCaptureGrant = grantCheckBox("Capture screenshots while task is active", true);
+        mScreenCaptureGrant = grantCheckBox("Capture screenshots while task is active",
+                PREF_GRANT_SCREEN_CAPTURE, SECURE_GRANT_SCREEN_CAPTURE, true);
         grantPanel.addView(mScreenCaptureGrant, fullWidthParams());
 
-        mClipboardGrant = grantCheckBox("Use clipboard", false);
+        mClipboardGrant = grantCheckBox("Use clipboard", PREF_GRANT_CLIPBOARD,
+                SECURE_GRANT_CLIPBOARD, false);
         grantPanel.addView(mClipboardGrant, fullWidthParams());
 
-        mShareGrant = grantCheckBox("Open Android share sheet", false);
+        mShareGrant = grantCheckBox("Open Android share sheet", PREF_GRANT_SHARE,
+                SECURE_GRANT_SHARE, false);
         grantPanel.addView(mShareGrant, fullWidthParams());
 
-        mNetworkGrant = grantCheckBox("Open web links", true);
+        mNetworkGrant = grantCheckBox("Open web links", PREF_GRANT_NETWORK,
+                SECURE_GRANT_NETWORK, true);
         grantPanel.addView(mNetworkGrant, fullWidthParams());
 
         mActionInput = new EditText(this);
@@ -359,7 +524,7 @@ public final class MainActivity extends Activity {
         button.setText(text);
         button.setAllCaps(false);
         button.setTextSize(14);
-        button.setTextColor(primary ? Color.BLACK : getColor(R.color.openphone_text_primary));
+        button.setTextColor(primary ? Color.WHITE : getColor(R.color.openphone_text_primary));
         button.setMinHeight(dp(48));
         button.setMinimumHeight(dp(48));
         button.setPadding(dp(8), 0, dp(8), 0);
@@ -368,12 +533,38 @@ public final class MainActivity extends Activity {
         return button;
     }
 
-    private CheckBox grantCheckBox(String text, boolean checked) {
+    private CheckBox grantCheckBox(String text, final String prefKey, final String secureKey,
+            boolean defaultChecked) {
         CheckBox checkBox = new CheckBox(this);
         checkBox.setText(text);
         checkBox.setTextColor(getColor(R.color.openphone_text_primary));
-        checkBox.setChecked(checked);
+        checkBox.setChecked(grantDefault(prefKey, secureKey, defaultChecked));
+        checkBox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                grantPrefs().edit().putBoolean(prefKey, isChecked).apply();
+                writeSecureGrantDefault(secureKey, isChecked);
+            }
+        });
         return checkBox;
+    }
+
+    private SharedPreferences grantPrefs() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE);
+    }
+
+    private boolean grantDefault(String prefKey, String secureKey, boolean defaultChecked) {
+        int fallback = grantPrefs().getBoolean(prefKey, defaultChecked) ? 1 : 0;
+        return Settings.Secure.getInt(getContentResolver(), secureKey, fallback) == 1;
+    }
+
+    private void writeSecureGrantDefault(String secureKey, boolean enabled) {
+        try {
+            Settings.Secure.putInt(getContentResolver(), secureKey, enabled ? 1 : 0);
+        } catch (SecurityException ignored) {
+            // Development builds grant this to the privileged assistant; keep
+            // app-private persistence working if a userland test build does not.
+        }
     }
 
     private TextView label(String text, int sp, boolean primary) {
@@ -493,20 +684,34 @@ public final class MainActivity extends Activity {
         if (mModelDisclosureView == null || mUseRealtime == null) {
             return;
         }
-        ModelAdapter adapter = selectedModelAdapter("");
+        ModelAdapter adapter = selectedModelAdapter(modelEndpointConfig());
         String disclosure = modelRunDisclosure(adapter);
         if (adapter.usesCloud()) {
-            disclosure += "\n\nVoice Start Agent: " + OpenAiSpeechTranscriber.providerDisplayName()
+            ModelEndpointConfig endpointConfig = modelEndpointConfig();
+            disclosure += "\n\nVoice command: "
+                    + (endpointConfig.isBrokerMode()
+                            ? endpointConfig.providerDisplayName()
+                            : OpenAiSpeechTranscriber.providerDisplayName())
                     + " / " + OpenAiSpeechTranscriber.modelName()
-                    + ". " + OpenAiSpeechTranscriber.privacyDisclosure();
+                    + ". " + voicePrivacyDisclosure(endpointConfig);
         }
         mModelDisclosureView.setText(disclosure);
     }
 
-    private ModelAdapter selectedModelAdapter(String apiKey) {
+    private ModelAdapter selectedModelAdapter(ModelEndpointConfig endpointConfig) {
         return mUseRealtime != null && mUseRealtime.isChecked()
-                ? new OpenAiRealtimeAdapter(apiKey)
+                ? new OpenAiRealtimeAdapter(endpointConfig)
                 : new LocalHeuristicModelAdapter();
+    }
+
+    private ModelEndpointConfig modelEndpointConfig() {
+        if (mUseBroker != null && mUseBroker.isChecked()) {
+            return ModelEndpointConfig.broker(
+                    mBrokerUrlInput == null ? "" : mBrokerUrlInput.getText().toString(),
+                    mBrokerTokenInput == null ? "" : mBrokerTokenInput.getText().toString());
+        }
+        return ModelEndpointConfig.directOpenAi(
+                mApiKeyInput == null ? "" : mApiKeyInput.getText().toString());
     }
 
     private static String modelRunDisclosure(ModelAdapter adapter) {
@@ -516,12 +721,22 @@ public final class MainActivity extends Activity {
                 + "\n" + adapter.privacyDisclosure();
     }
 
+    private static String voicePrivacyDisclosure(ModelEndpointConfig endpointConfig) {
+        if (endpointConfig != null && endpointConfig.isBrokerMode()) {
+            return "Voice start records a short command and sends it to the configured "
+                    + "OpenPhone model broker for transcription. The transcript becomes the "
+                    + "task text; audio is not stored by OpenPhone.";
+        }
+        return OpenAiSpeechTranscriber.privacyDisclosure();
+    }
+
     private void startVoiceAgent() {
         if (mListening) {
             return;
         }
-        if (mApiKeyInput.getText().toString().trim().isEmpty()) {
-            mTaskView.setText("Add a dev OpenAI API key in Advanced, then tap Start Agent.");
+        if (!modelEndpointConfig().isConfigured()) {
+            mTaskView.setText("Model setup is missing. Open Developer settings and add a "
+                    + "broker token or development API key.");
             updateIsland("Setup needed");
             return;
         }
@@ -543,16 +758,18 @@ public final class MainActivity extends Activity {
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             listenThenRun();
         } else {
-            mTaskView.setText("Microphone permission is needed for Start Agent.");
+            mTaskView.setText("Microphone permission is needed before I can listen.");
             updateIsland("Mic blocked");
         }
     }
 
     private void listenThenRun() {
-        final String apiKey = mApiKeyInput.getText().toString();
+        final ModelEndpointConfig endpointConfig = modelEndpointConfig();
         mListening = true;
-        mTaskView.setText("Listening...\n\n" + OpenAiSpeechTranscriber.privacyDisclosure()
-                + "\nProvider: " + OpenAiSpeechTranscriber.providerDisplayName()
+        mTaskView.setText("Listening...\n\n" + voicePrivacyDisclosure(endpointConfig)
+                + "\nProvider: " + (endpointConfig.isBrokerMode()
+                        ? endpointConfig.providerDisplayName()
+                        : OpenAiSpeechTranscriber.providerDisplayName())
                 + "\nModel: " + OpenAiSpeechTranscriber.modelName());
         updateIsland("Listening...");
         new Thread(new Runnable() {
@@ -561,7 +778,7 @@ public final class MainActivity extends Activity {
                 String text = "";
                 String error = null;
                 try {
-                    text = new OpenAiSpeechTranscriber(apiKey)
+                    text = new OpenAiSpeechTranscriber(endpointConfig)
                             .recordAndTranscribe(VOICE_CAPTURE_MILLIS);
                 } catch (IOException e) {
                     error = e.getMessage();
@@ -578,7 +795,7 @@ public final class MainActivity extends Activity {
                             return;
                         }
                         if (finalText == null || finalText.trim().isEmpty()) {
-                            mTaskView.setText("I didn't catch that. Tap Start Agent and speak again.");
+                            mTaskView.setText("I didn't catch that. Tap Speak and try again.");
                             updateIsland("Try again");
                             return;
                         }
@@ -601,13 +818,13 @@ public final class MainActivity extends Activity {
             refreshAll();
             return;
         }
-        if (mUseRealtime.isChecked() && mApiKeyInput.getText().toString().trim().isEmpty()) {
-            mTaskView.setText("Model key is missing. Open Advanced and add a dev key.");
+        if (mUseRealtime.isChecked() && !modelEndpointConfig().isConfigured()) {
+            mTaskView.setText("Model setup is missing. Open Developer settings and add a "
+                    + "broker token or development API key.");
             updateIsland("Setup needed");
             return;
         }
-        startTask();
-        runAgent();
+        startTaskThenRunAgent(goal);
     }
 
     private void toggleAdvanced() {
@@ -629,11 +846,20 @@ public final class MainActivity extends Activity {
             refreshAll();
             return;
         }
+        String goal = mGoalInput.getText().toString();
+        String response = mAgentManager.startTask(taskRequestJson(goal));
+        mActiveTaskId = parseString(response, "task_id");
+        showTaskStarted(goal);
+        refreshAudit();
+    }
+
+    private String taskRequestJson(String goal) {
         JSONObject request = new JSONObject();
         try {
-            request.put("goal", mGoalInput.getText().toString());
+            request.put("goal", goal == null ? "" : goal);
             request.put("user_visible", true);
             request.put("background_allowed", false);
+            request.put("grant_defaults_source", "settings_secure");
             JSONArray capabilities = new JSONArray();
             capabilities.put("screen.read.visible");
             capabilities.put("tasks.observe");
@@ -658,14 +884,60 @@ public final class MainActivity extends Activity {
         } catch (JSONException e) {
             throw new IllegalStateException(e);
         }
+        return request.toString();
+    }
 
-        String response = mAgentManager.startTask(request.toString());
-        mActiveTaskId = parseString(response, "task_id");
-        mTaskView.setText("Working on: " + mGoalInput.getText().toString());
+    private void showTaskStarted(String goal) {
+        mTaskView.setText("Working on: " + (goal == null ? "" : goal));
         updateIsland("Agent active");
         mPointerOverlayController.show(mActiveTaskId);
         OpenPhoneNotificationController.showActive(this, mActiveTaskId);
-        refreshAudit();
+    }
+
+    private void startTaskThenRunAgent(final String goal) {
+        final OpenPhoneAgentManager agentManager = mAgentManager;
+        if (agentManager == null) {
+            refreshAll();
+            return;
+        }
+        final String requestJson = taskRequestJson(goal);
+        mTaskView.setText("Starting: " + goal);
+        updateIsland("Starting");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String response = null;
+                RuntimeException error = null;
+                try {
+                    response = agentManager.startTask(requestJson);
+                } catch (RuntimeException e) {
+                    error = e;
+                }
+                final String finalResponse = response;
+                final RuntimeException finalError = error;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (finalError != null) {
+                            mTaskView.setText("Could not start task.\n\n"
+                                    + finalError.getClass().getSimpleName());
+                            updateIsland("Start failed");
+                            return;
+                        }
+                        mActiveTaskId = parseString(finalResponse, "task_id");
+                        if (mActiveTaskId == null || mActiveTaskId.isEmpty()) {
+                            mTaskView.setText("Could not start task.\n\n"
+                                    + prettyForDisplay(finalResponse));
+                            updateIsland("Start failed");
+                            return;
+                        }
+                        showTaskStarted(goal);
+                        refreshAudit();
+                        runAgent();
+                    }
+                });
+            }
+        }, "OpenPhoneTaskStart").start();
     }
 
     private void stopTask() {
@@ -676,6 +948,7 @@ public final class MainActivity extends Activity {
         }
         mActiveTaskId = null;
         mPendingActionId = null;
+        clearPendingToolAction();
         hidePendingConfirmation();
         mPointerOverlayController.hide();
         OpenPhoneNotificationController.showReady(this);
@@ -754,11 +1027,11 @@ public final class MainActivity extends Activity {
         final int runGeneration = ++mAgentRunGeneration;
         final String taskId = mActiveTaskId;
         final String goal = mGoalInput.getText().toString();
-        final String apiKey = mApiKeyInput.getText().toString();
+        final ModelEndpointConfig endpointConfig = modelEndpointConfig();
         mTaskView.setText("Working on: " + goal);
         updateIsland("Agent is working");
         FrameworkToolExecutor toolExecutor = new FrameworkToolExecutor(this, mAgentManager);
-        ModelAdapter adapter = selectedModelAdapter(apiKey);
+        ModelAdapter adapter = selectedModelAdapter(endpointConfig);
         mRunningModelAdapter = adapter;
         mTaskView.setText("Working on: " + goal + "\n\n" + modelRunDisclosure(adapter));
         TrajectoryRecorder trajectory = TrajectoryRecorder.start(this, taskId, goal,
@@ -775,7 +1048,7 @@ public final class MainActivity extends Activity {
                         }
                         try {
                             trajectory.recordToolCall(toolName, argumentsJson);
-                            String grantDenied = taskGrantDenial(toolName,
+                            String grantDenied = preflightDenial(toolName,
                                     new JSONObject(argumentsJson));
                             if (grantDenied != null) {
                                 trajectory.recordToolResult(toolName, grantDenied);
@@ -838,16 +1111,53 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmPending(boolean approved) {
-        if (mAgentManager == null || mPendingActionId == null) {
+        if (mAgentManager == null) {
+            mTaskView.setText("Agent service is unavailable.");
+            return;
+        }
+        final String pendingActionId = mPendingActionId;
+        final String pendingToolName = mPendingToolName;
+        final JSONObject pendingToolArguments = copyJsonObject(mPendingToolArguments);
+        if (pendingActionId == null && pendingToolName == null) {
             mTaskView.setText("There is no pending system action to approve. "
                     + "If the agent asked for review, check the request and run the task again.");
             return;
         }
-        String result = mAgentManager.confirmAction(mPendingActionId, approved);
+
         mPendingActionId = null;
+        clearPendingToolAction();
         hidePendingConfirmation();
-        mTaskView.setText(prettyForDisplay(result));
-        refreshAudit();
+        mTaskView.setText(approved ? "Approved. Continuing..." : "Denied.");
+        updateIsland(approved ? "Continuing" : "Denied");
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String result;
+                if (pendingActionId != null) {
+                    result = mAgentManager.confirmAction(pendingActionId, approved);
+                } else if (approved) {
+                    result = executeApprovedPendingTool(pendingToolName, pendingToolArguments);
+                } else {
+                    result = "{\"status\":\"action.denied\","
+                            + "\"reason\":\"user_denied_confirmation\"}";
+                }
+                final String finalResult = result;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        mTaskView.setText(prettyForDisplay(finalResult));
+                        refreshAudit();
+                        if (approved && mActiveTaskId != null
+                                && !isActionResultFailure(finalResult)) {
+                            runAgent();
+                        } else {
+                            updateIsland(approved ? "Action failed" : "Denied");
+                        }
+                    }
+                });
+            }
+        }, "OpenPhoneApprovalExecutor").start();
     }
 
     private void showConfirmationIfNeeded(String agentResultJson) {
@@ -866,10 +1176,64 @@ public final class MainActivity extends Activity {
                     && !"null".equals(pendingActionId)) {
                 mPendingActionId = pendingActionId;
             }
+            capturePendingToolAction(confirmation);
             showPendingConfirmation(confirmationBodyFromAgentResult(status, confirmation));
         } catch (JSONException e) {
             hidePendingConfirmation();
         }
+    }
+
+    private String executeApprovedPendingTool(String toolName, JSONObject arguments) {
+        if (mActiveTaskId == null || toolName == null) {
+            return "{\"status\":\"error\",\"reason\":\"no_pending_tool_action\"}";
+        }
+        FrameworkToolExecutor toolExecutor = new FrameworkToolExecutor(this, mAgentManager);
+        JSONObject safeArguments = arguments == null ? new JSONObject() : arguments;
+        try {
+            movePointerFromTool(toolName, safeArguments);
+            return toolExecutor.execute(mActiveTaskId, toolName, safeArguments);
+        } catch (RuntimeException e) {
+            return "{\"status\":\"error\",\"reason\":\"approved_tool_failed\"}";
+        }
+    }
+
+    private static JSONObject copyJsonObject(JSONObject object) {
+        if (object == null) {
+            return null;
+        }
+        try {
+            return new JSONObject(object.toString());
+        } catch (JSONException e) {
+            return new JSONObject();
+        }
+    }
+
+    private void capturePendingToolAction(JSONObject confirmation) {
+        JSONObject action = confirmation.optJSONObject("action");
+        if (action == null) {
+            action = confirmation.optJSONObject("action_json");
+        }
+        if (action == null) {
+            action = parseObjectOrEmpty(confirmation.optString("input", ""));
+        }
+        String toolName = action.optString("tool", action.optString("type", ""));
+        JSONObject arguments = action.optJSONObject("arguments");
+        if (arguments == null) {
+            arguments = parseObjectOrEmpty(action.toString());
+            arguments.remove("tool");
+            arguments.remove("type");
+        }
+        if (toolName == null || toolName.isEmpty()) {
+            clearPendingToolAction();
+            return;
+        }
+        mPendingToolName = toolName;
+        mPendingToolArguments = arguments;
+    }
+
+    private void clearPendingToolAction() {
+        mPendingToolName = null;
+        mPendingToolArguments = null;
     }
 
     private void showPendingConfirmation(String body) {
@@ -889,10 +1253,32 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshAudit() {
-        if (mAgentManager == null) {
+        final OpenPhoneAgentManager agentManager = mAgentManager;
+        if (agentManager == null) {
             return;
         }
-        mAuditView.setText(prettyForDisplay(mAgentManager.getAuditLog(25)));
+        final int refreshGeneration = ++mAuditRefreshGeneration;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String auditText;
+                try {
+                    auditText = prettyForDisplay(agentManager.getAuditLog(25));
+                } catch (RuntimeException e) {
+                    auditText = "Audit unavailable: " + e.getClass().getSimpleName();
+                }
+                final String finalAuditText = auditText;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (refreshGeneration == mAuditRefreshGeneration
+                                && mAuditView != null) {
+                            mAuditView.setText(finalAuditText);
+                        }
+                    }
+                });
+            }
+        }, "OpenPhoneAuditRefresh").start();
     }
 
     private void exportLatestTrajectory() {
@@ -915,10 +1301,89 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private String taskGrantDenial(String toolName, JSONObject arguments) {
+    private void checkOtaFeed() {
+        final String feedUrl = mOtaFeedUrlInput == null ? ""
+                : mOtaFeedUrlInput.getText().toString().trim();
+        if (feedUrl.isEmpty()) {
+            setOtaStatus("Paste an OTA feed URL first.");
+            return;
+        }
+        setOtaStatus("Checking OTA feed for " + Build.DEVICE + "...");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String status;
+                OtaUpdateClient.Update update = null;
+                try {
+                    update = OtaUpdateClient.fetchLatest(feedUrl, Build.DEVICE);
+                    status = "Update available.\n\n" + update.summary();
+                } catch (IOException | JSONException e) {
+                    status = "OTA check failed.\n\n" + e.getMessage();
+                }
+                final String finalStatus = status;
+                final OtaUpdateClient.Update finalUpdate = update;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        mLatestOtaUpdate = finalUpdate;
+                        setOtaStatus(finalStatus);
+                    }
+                });
+            }
+        }, "OpenPhoneOtaCheck").start();
+    }
+
+    private void downloadLatestOta() {
+        final OtaUpdateClient.Update update = mLatestOtaUpdate;
+        if (update == null) {
+            setOtaStatus("Check an OTA feed before downloading.");
+            return;
+        }
+        setOtaStatus("Starting OTA download...");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String status;
+                try {
+                    status = OtaUpdateClient.downloadToDownloads(MainActivity.this, update,
+                            new OtaUpdateClient.ProgressCallback() {
+                                @Override
+                                public void onProgress(final String progress) {
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            setOtaStatus(progress);
+                                        }
+                                    });
+                                }
+                            });
+                } catch (IOException e) {
+                    status = "OTA download failed.\n\n" + e.getMessage();
+                }
+                final String finalStatus = status;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        setOtaStatus(finalStatus);
+                    }
+                });
+            }
+        }, "OpenPhoneOtaDownload").start();
+    }
+
+    private void setOtaStatus(String status) {
+        if (mOtaStatusView != null) {
+            mOtaStatusView.setText(status == null ? "" : status);
+        }
+        if (mTaskView != null) {
+            mTaskView.setText(status == null ? "" : status);
+        }
+    }
+
+    private String preflightDenial(String toolName, JSONObject arguments) {
         String missingCapability = missingTaskGrant(toolName, arguments);
         if (missingCapability == null) {
-            return null;
+            return appPolicyDenial(toolName, arguments);
         }
         try {
             return new JSONObject()
@@ -938,8 +1403,43 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private String appPolicyDenial(String toolName, JSONObject arguments) {
+        String capability = capabilityForTool(toolName, arguments);
+        if (capability == null) {
+            return null;
+        }
+        String foregroundPackage = currentForegroundPackage();
+        AppCapabilityPolicy.Decision decision =
+                AppCapabilityPolicy.evaluate(this, foregroundPackage, capability);
+        if (!decision.requiresIntervention()) {
+            return null;
+        }
+        try {
+            String status = "deny".equals(decision.action)
+                    ? "action_denied" : "confirmation_required";
+            return new JSONObject()
+                    .put("status", status)
+                    .put("reason", "app_policy_" + decision.action)
+                    .put("foreground_package", foregroundPackage)
+                    .put("capability", capability)
+                    .put("summary", "This app has a stricter OpenPhone policy for "
+                            + capabilityLabel(capability) + ".")
+                    .put("risk", "explicit_confirm".equals(decision.action)
+                            || "deny".equals(decision.action) ? "High" : "Medium")
+                    .put("policy_reason", decision.reason)
+                    .put("action_json", new JSONObject()
+                            .put("tool", toolName)
+                            .put("arguments", arguments))
+                    .toString();
+        } catch (JSONException e) {
+            return "{\"status\":\"confirmation_required\","
+                    + "\"reason\":\"app_policy_required\"}";
+        }
+    }
+
     private String missingTaskGrant(String toolName, JSONObject arguments) {
-        if (("tap".equals(toolName) || "long_press".equals(toolName)
+        if (("tap".equals(toolName) || "tap_element".equals(toolName)
+                || "long_press".equals(toolName) || "long_press_element".equals(toolName)
                 || "swipe".equals(toolName) || "type_text".equals(toolName)
                 || "press_key".equals(toolName))
                 && !mInputGrant.isChecked()) {
@@ -961,6 +1461,54 @@ public final class MainActivity extends Activity {
             return "network.use";
         }
         return null;
+    }
+
+    private static String capabilityForTool(String toolName, JSONObject arguments) {
+        if ("tap".equals(toolName) || "tap_element".equals(toolName)
+                || "long_press".equals(toolName) || "long_press_element".equals(toolName)
+                || "swipe".equals(toolName) || "type_text".equals(toolName)
+                || "press_key".equals(toolName)) {
+            return "input.perform";
+        }
+        if (("get_screen".equals(toolName) || "watch_screen".equals(toolName))
+                && arguments.optBoolean("include_screenshot", false)) {
+            return "screen.capture";
+        }
+        if ("get_screen".equals(toolName) || "watch_screen".equals(toolName)) {
+            return "screen.read.visible";
+        }
+        if ("set_clipboard".equals(toolName)) {
+            return "clipboard.write";
+        }
+        if ("paste".equals(toolName)) {
+            return "clipboard.read";
+        }
+        if ("share_text".equals(toolName)) {
+            return "share.content";
+        }
+        if ("open_url".equals(toolName)) {
+            return "network.use";
+        }
+        if ("open_app".equals(toolName)) {
+            return "apps.launch";
+        }
+        return null;
+    }
+
+    private static String currentForegroundPackage() {
+        try {
+            JSONObject snapshot = new JSONObject(OpenPhoneAccessibilityService.snapshotJson());
+            String foregroundPackage = snapshot.optString("foreground_package", "");
+            if (!foregroundPackage.isEmpty()) {
+                return foregroundPackage;
+            }
+            JSONArray packages = snapshot.optJSONArray("root_packages");
+            if (packages != null && packages.length() > 0) {
+                return packages.optString(0, "");
+            }
+        } catch (JSONException ignored) {
+        }
+        return "";
     }
 
     private static String capabilityLabel(String capability) {
@@ -1028,6 +1576,22 @@ public final class MainActivity extends Activity {
             });
             return;
         }
+        if ("tap_element".equals(toolName) || "long_press_element".equals(toolName)) {
+            final JSONObject center = elementCenterFromCurrentSnapshot(arguments.optString(
+                    "element_id", ""));
+            if (center != null) {
+                final float x = (float) center.optDouble("x", 0);
+                final float y = (float) center.optDouble("y", 0);
+                final boolean longPress = "long_press_element".equals(toolName);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        mPointerOverlayController.pointerTap(x, y, longPress);
+                    }
+                });
+            }
+            return;
+        }
         if ("swipe".equals(toolName)) {
             final float startX = (float) arguments.optDouble("start_x", 0);
             final float startY = (float) arguments.optDouble("start_y", 0);
@@ -1071,6 +1635,15 @@ public final class MainActivity extends Activity {
         } catch (JSONException e) {
             return json;
         }
+    }
+
+    private static boolean isActionResultFailure(String json) {
+        JSONObject result = parseObjectOrEmpty(json);
+        String status = result.optString("status", result.optString("state", ""));
+        return status.contains("error")
+                || status.contains("failed")
+                || status.contains("denied")
+                || status.contains("blocked");
     }
 
     private static String confirmationBodyFromActionResult(String json) {
@@ -1217,11 +1790,47 @@ public final class MainActivity extends Activity {
         if ("type_text".equals(type)) {
             return "Type text";
         }
-        if ("tap".equals(type) || "long_press".equals(type) || "scroll".equals(type)
-                || "swipe".equals(type)) {
+        if ("tap".equals(type) || "tap_element".equals(type)
+                || "long_press".equals(type) || "long_press_element".equals(type)
+                || "scroll".equals(type) || "swipe".equals(type)) {
             return type.replace('_', ' ') + " on the screen";
         }
         return type.replace('_', ' ');
+    }
+
+    private static JSONObject elementCenterFromCurrentSnapshot(String elementId) {
+        if (elementId == null || elementId.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            JSONObject snapshot = new JSONObject(OpenPhoneAccessibilityService.snapshotJson());
+            JSONArray elements = snapshot.optJSONArray("interactive_elements");
+            if (elements == null) {
+                return null;
+            }
+            for (int i = 0; i < elements.length(); i++) {
+                JSONObject element = elements.optJSONObject(i);
+                if (element == null || !elementId.equals(element.optString("id"))) {
+                    continue;
+                }
+                JSONArray bounds = element.optJSONArray("bounds");
+                if (bounds == null || bounds.length() < 4) {
+                    return null;
+                }
+                double left = bounds.optDouble(0);
+                double top = bounds.optDouble(1);
+                double right = bounds.optDouble(2);
+                double bottom = bounds.optDouble(3);
+                if (right <= left || bottom <= top) {
+                    return null;
+                }
+                return new JSONObject()
+                        .put("x", (left + right) / 2.0)
+                        .put("y", (top + bottom) / 2.0);
+            }
+        } catch (JSONException ignored) {
+        }
+        return null;
     }
 
     private static String riskForCapability(String capability, String actionType) {
@@ -1309,7 +1918,7 @@ public final class MainActivity extends Activity {
             }
         } catch (JSONException ignored) {
         }
-        return "I need review before continuing. Open Advanced for details.";
+        return "I need review before continuing.";
     }
 
     private static boolean isCancelledResult(String json) {

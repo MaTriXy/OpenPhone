@@ -17,13 +17,17 @@ import java.nio.charset.StandardCharsets;
 
 public final class OpenAiSpeechTranscriber {
     private static final String MODEL = "gpt-4o-mini-transcribe";
-    private static final String TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
     private static final int SAMPLE_RATE = 16000;
 
-    private final String mApiKey;
+    private final ModelEndpointConfig mEndpointConfig;
 
     public OpenAiSpeechTranscriber(String apiKey) {
-        mApiKey = apiKey == null ? "" : apiKey.trim();
+        this(ModelEndpointConfig.directOpenAi(apiKey));
+    }
+
+    public OpenAiSpeechTranscriber(ModelEndpointConfig endpointConfig) {
+        mEndpointConfig = endpointConfig == null
+                ? ModelEndpointConfig.directOpenAi("") : endpointConfig;
     }
 
     public static String providerDisplayName() {
@@ -40,8 +44,8 @@ public final class OpenAiSpeechTranscriber {
     }
 
     public String recordAndTranscribe(int maxMillis) throws IOException {
-        if (mApiKey.isEmpty()) {
-            throw new IOException("missing_dev_api_key");
+        if (!mEndpointConfig.isConfigured()) {
+            throw new IOException(mEndpointConfig.missingCredentialReason());
         }
         byte[] wav = recordWav(maxMillis);
         return transcribe(wav);
@@ -82,16 +86,21 @@ public final class OpenAiSpeechTranscriber {
 
     private String transcribe(byte[] wav) throws IOException {
         String boundary = "OpenPhoneBoundary" + System.currentTimeMillis();
-        HttpURLConnection connection = (HttpURLConnection) new URL(TRANSCRIPTIONS_URL)
+        HttpURLConnection connection = (HttpURLConnection) new URL(
+                mEndpointConfig.transcriptionsUrl())
                 .openConnection();
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(60000);
         connection.setRequestMethod("POST");
         connection.setDoOutput(true);
         connection.setChunkedStreamingMode(0);
-        connection.setRequestProperty("Authorization", "Bearer " + mApiKey);
+        connection.setRequestProperty("Authorization", "Bearer " + mEndpointConfig.bearerToken());
         connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
         connection.setRequestProperty("Accept", "application/json");
+        if (mEndpointConfig.isBrokerMode()) {
+            connection.setRequestProperty("X-OpenPhone-Model-Provider", "openai_transcription");
+            connection.setRequestProperty("X-OpenPhone-Request-Shape", "transcription_proxy");
+        }
 
         try (OutputStream output = connection.getOutputStream()) {
             writeField(output, boundary, "model", MODEL);

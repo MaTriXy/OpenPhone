@@ -67,3 +67,41 @@ overlay/vendor/openphone/config/openphone_policy.json
 
 This file is only declarative seed data. Real enforcement must be implemented
 inside OpenPhone framework/system services.
+
+The first per-app policy seed lives at:
+
+```text
+overlay/vendor/openphone/config/openphone_app_policy.json
+```
+
+It lets OpenPhone require stronger review for a capability when the foreground
+package is known to be sensitive. The initial seed covers Settings, Android
+permission prompts, Google account/payment surfaces, and the Play Store. The
+assistant preflight already honors this seed for model tools by reading the
+assistant-side screen tree's `foreground_package`.
+
+The enforcement path also checks a durable `Settings.Secure` override before
+the seed policy:
+
+```text
+openphone_app_policy_overrides
+```
+
+The value uses the same JSON shape as `openphone_app_policy.json`. This gives a
+future Settings editor a stable storage contract for per-app capability rules
+while the current product uses the built-in seed plus development overrides.
+The built-in seed still applies when no override is present.
+
+For development builds with ADB shell access, generate and optionally install a
+single override with:
+
+```bash
+scripts/generate-app-policy-override.sh \
+  --package com.example.sensitive \
+  --match prefix \
+  --capability input.perform \
+  --capability screen.capture \
+  --decision explicit_confirm \
+  --reason "Sensitive app requires explicit review" \
+  --install-adb
+```

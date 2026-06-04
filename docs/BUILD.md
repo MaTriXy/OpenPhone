@@ -165,6 +165,66 @@ OPENPHONE_ANDROID_DIR=/path/to/android/tree ./scripts/prepare-tegu-dtb.sh
 OPENPHONE_ANDROID_DIR=/path/to/android/tree ./scripts/verify-tegu-bootchain.sh openphone_tegu
 ```
 
+## Fast Assistant Iteration
+
+Use the full OTA path only when a change must be baked into Android partitions:
+framework/base patches, privapp permissions, sysconfig, sepolicy, boot/recovery
+behavior, or first install on a device. For assistant UI, prompt, policy,
+trajectory, and model-adapter work, use the debug harness on an already-booted
+userdebug/eng OpenPhone device.
+
+Build only the assistant module on the Linux Android build host:
+
+```bash
+OPENPHONE_BUILD_GOAL=OpenPhoneAssistant \
+./scripts/build.sh openphone_tegu-bp4a-userdebug
+```
+
+Copy the resulting APK back to the host, then push it into `/system_ext` without
+recovery. Because `org.openphone.assistant` is a persistent privileged app,
+Android rejects normal `adb install -r`; enable Developer Options -> Rooted
+debugging once, then use:
+
+```bash
+scripts/push-assistant-apk.sh /path/to/OpenPhoneAssistant.apk
+```
+
+The device reboots after the push. PackageManager may still show stale
+persistent system-app metadata on some builds; verify the mounted APK hash if
+that happens. Use full OTA or factory reset only when the mounted APK bytes do
+not match, framework/system files changed, or PackageManager state itself is
+what you are testing.
+
+Run a task with a direct development OpenAI key:
+
+```bash
+mkdir -p .worktree/secrets
+printf '%s' "$OPENAI_API_KEY" > .worktree/secrets/openai_api_key
+scripts/run-assistant-task.sh --goal "screen" --wait 30
+```
+
+The key file path is ignored by git. You can also pass `--api-key-file <path>`,
+or set `OPENAI_API_KEY` directly in the shell.
+
+Run without a provider key for local-mode/debug checks:
+
+```bash
+scripts/run-assistant-task.sh --local --goal "screen" --wait 10
+```
+
+After using Advanced -> Export Trace in the assistant, pull and validate the
+newest trajectory:
+
+```bash
+scripts/pull-latest-trajectory.sh \
+  --output-dir .worktree/evals/latest-assistant-run
+```
+
+The harness passes the goal as base64 and uses Android `singleTop` intent
+delivery so repeated host-side runs update the existing assistant activity
+instead of reusing stale text. Provider keys remain in the assistant's
+in-memory development field; use the broker path for publishable evidence.
+
 ## Flash
 
 ```bash
@@ -173,3 +233,20 @@ OPENPHONE_ANDROID_DIR=/path/to/android/tree ./scripts/verify-tegu-bootchain.sh o
 
 The flash script currently refuses to guess destructive steps. Device-specific
 flash procedures belong in `devices/<codename>.md`.
+
+## Optional User-Supplied Google Services
+
+OpenPhone does not redistribute Google Play Store, Google Play Services, or
+Google apps. A user may sideload a compatible package on their own device after
+installing OpenPhone.
+
+For the host-side helper and policy boundary, see [GMS.md](GMS.md):
+
+```bash
+scripts/download-mindthegapps.sh
+scripts/sideload-user-gms.sh \
+  --package .worktree/downloads/gms/MindTheGapps-16.0.0-arm64-*.zip
+```
+
+For Pixel 9a, run the sideload command after installing the OpenPhone OTA and
+entering recovery `Apply update -> Apply from ADB` for additional packages.

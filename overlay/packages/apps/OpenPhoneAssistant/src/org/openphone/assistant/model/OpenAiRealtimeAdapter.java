@@ -16,27 +16,32 @@ import org.json.JSONObject;
 
 public final class OpenAiRealtimeAdapter implements ModelAdapter {
     private static final String MODEL = "gpt-4.1-mini";
-    private static final String RESPONSES_URL = "https://api.openai.com/v1/responses";
-    private static final int MAX_STEPS = 10;
+    private static final int MAX_STEPS = 25;
     private static final int MAX_CONSECUTIVE_TOOL_ERRORS = 2;
-    private static final long MAX_DURATION_MS = 120000;
+    private static final int MAX_CONSECUTIVE_NO_PROGRESS_ACTIONS = 2;
+    private static final long MAX_DURATION_MS = 300000;
 
-    private final String mApiKey;
+    private final ModelEndpointConfig mEndpointConfig;
     private volatile boolean mCancelled;
     private volatile HttpURLConnection mActiveConnection;
 
     public OpenAiRealtimeAdapter(String apiKey) {
-        mApiKey = apiKey == null ? "" : apiKey.trim();
+        this(ModelEndpointConfig.directOpenAi(apiKey));
+    }
+
+    public OpenAiRealtimeAdapter(ModelEndpointConfig endpointConfig) {
+        mEndpointConfig = endpointConfig == null
+                ? ModelEndpointConfig.directOpenAi("") : endpointConfig;
     }
 
     @Override
     public String name() {
-        return "openai-responses-vision-dev";
+        return mEndpointConfig.providerName();
     }
 
     @Override
     public String providerDisplayName() {
-        return "OpenAI Responses vision";
+        return mEndpointConfig.providerDisplayName();
     }
 
     @Override
@@ -51,9 +56,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
 
     @Override
     public String privacyDisclosure() {
-        return "Cloud task mode sends the goal, task-scoped screenshots, and UI metadata "
-                + "to OpenAI while the task is active. The development API key stays in "
-                + "memory and is not written to the trajectory.";
+        return mEndpointConfig.privacyDisclosure();
     }
 
     @Override
@@ -68,14 +71,15 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
     @Override
     public String runTask(String taskId, String userGoal, ToolExecutor executor) {
         mCancelled = false;
-        if (mApiKey == null || mApiKey.isEmpty()) {
-            return unavailable("missing_dev_api_key");
+        if (!mEndpointConfig.isConfigured()) {
+            return unavailable(mEndpointConfig.missingCredentialReason());
         }
 
         JSONArray steps = new JSONArray();
         try {
             long startedAtMillis = System.currentTimeMillis();
             int consecutiveToolErrors = 0;
+            int consecutiveNoProgressActions = 0;
             for (int step = 1; step <= MAX_STEPS; step++) {
                 if (mCancelled || executor.isCancelled()) {
                     return result("cancelled", userGoal, steps);
@@ -90,13 +94,16 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 JSONObject screenJson = new JSONObject(screen);
                 JSONObject screenshot = screenJson.optJSONObject("screenshot");
                 if (screenshot == null || screenshot.optString("data").isEmpty()) {
-                    return new JSONObject()
-                            .put("status", "screen_capture_failed")
-                            .put("provider", name())
-                            .put("steps", steps)
-                            .put("screen", redactScreenshot(screenJson))
-                            .put("screenshot_error", screenJson.optString("screenshot_error"))
-                            .toString(2);
+                    String status = screenJson.optString("status", "");
+                    if (!"screen.blocked".equals(status)) {
+                        return new JSONObject()
+                                .put("status", "screen_capture_failed")
+                                .put("provider", name())
+                                .put("steps", steps)
+                                .put("screen", redactScreenshot(screenJson))
+                                .put("screenshot_error", screenJson.optString("screenshot_error"))
+                                .toString(2);
+                    }
                 }
 
                 JSONObject response = callResponsesApi(userGoal, steps, screenJson, screenshot);
@@ -109,6 +116,9 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                         .put("step", step)
                         .put("openai_response_id", response.optString("id"))
                         .put("thought", decision.optString("thought"))
+                        .put("task_state", decision.optString("task_state"))
+                        .put("next_subgoal", decision.optString("next_subgoal"))
+                        .put("success_criteria", decision.optString("success_criteria"))
                         .put("tool", decision.optString("tool"))
                         .put("arguments", decision.optJSONObject("arguments") == null
                                 ? new JSONObject() : decision.optJSONObject("arguments"))
@@ -120,8 +130,27 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 if (arguments == null) {
                     arguments = new JSONObject();
                 }
+                normalizeBrowserUrlDecision(userGoal, steps, screenJson, decision, arguments);
+                toolName = decision.optString("tool", "");
+                arguments = decision.optJSONObject("arguments");
+                if (arguments == null) {
+                    arguments = new JSONObject();
+                }
+                ensureToolReason(toolName, arguments, decision.optString("thought", ""));
+                stepJson.put("arguments", arguments);
+                stepJson.put("tool", toolName);
 
                 if ("finish_task".equals(toolName)) {
+                    JSONObject finishEvidence = finishEvidence(userGoal, screenJson);
+                    stepJson.put("finish_evidence", finishEvidence);
+                    if (!finishEvidence.optBoolean("has_screen_evidence", false)) {
+                        String toolResult = executor.callTool("wait", new JSONObject()
+                                .put("duration_ms", 1500)
+                                .put("reason", "Wait for visible evidence before finishing.")
+                                .toString());
+                        stepJson.put("tool_result", toolResult);
+                        continue;
+                    }
                     String toolResult = executor.callTool(toolName, arguments.toString());
                     stepJson.put("tool_result", toolResult);
                     return result("task.finished", userGoal, steps);
@@ -167,7 +196,31 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 } else {
                     consecutiveToolErrors = 0;
                 }
-                sleepAfterAction();
+                if (shouldVerifyProgress(toolName)) {
+                    sleepAfterAction();
+                    String afterScreen = captureScreenWithRetry(executor);
+                    if (mCancelled || executor.isCancelled()) {
+                        return result("cancelled", userGoal, steps);
+                    }
+                    JSONObject afterScreenJson = new JSONObject(afterScreen);
+                    JSONObject verification = progressVerification(screenJson, afterScreenJson);
+                    stepJson.put("verification", verification);
+                    stepJson.put("after_screen", redactScreenshot(
+                            new JSONObject(afterScreenJson.toString())));
+                    if (verification.optBoolean("screen_changed", false)) {
+                        consecutiveNoProgressActions = 0;
+                    } else {
+                        consecutiveNoProgressActions++;
+                        stepJson.put("consecutive_no_progress_actions",
+                                consecutiveNoProgressActions);
+                        if (consecutiveNoProgressActions >= MAX_CONSECUTIVE_NO_PROGRESS_ACTIONS) {
+                            return result("no_progress", userGoal, steps);
+                        }
+                    }
+                } else {
+                    consecutiveNoProgressActions = 0;
+                    sleepAfterAction();
+                }
             }
             return result("step_limit_reached", userGoal, steps);
         } catch (JSONException e) {
@@ -183,7 +236,8 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
     private String captureScreenWithRetry(ToolExecutor executor) {
         String request = "{\"include_screenshot\":true,\"include_activity\":true,"
                 + "\"include_ui_tree\":true,"
-                + "\"max_dimension\":512,\"quality\":65}";
+                + "\"max_dimension\":512,\"quality\":65,"
+                + "\"reason\":\"observe current screen for the active task\"}";
         String screen = executor.callTool("get_screen", request);
         if (hasScreenshot(screen) || mCancelled || executor.isCancelled()) {
             return screen;
@@ -199,17 +253,44 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
 
     private JSONObject callResponsesApi(String userGoal, JSONArray steps, JSONObject screenJson,
             JSONObject screenshot) throws IOException, JSONException {
-        String mimeType = screenshot.optString("mime_type", "image/jpeg");
-        String dataUrl = "data:" + mimeType + ";base64," + screenshot.optString("data");
+        String mimeType = screenshot == null ? "image/jpeg"
+                : screenshot.optString("mime_type", "image/jpeg");
+        String dataUrl = screenshot == null || screenshot.optString("data").isEmpty()
+                ? "" : "data:" + mimeType + ";base64," + screenshot.optString("data");
 
-        String prompt = "You are running inside OpenPhone, an experimental Android OS assistant. "
-                + "You can control the phone by returning exactly one JSON object. "
-                + "Use the screenshot to decide the next action. Keep actions small and safe. "
-                + "If the task is complete, use finish_task. If you are stuck, use fail_task. "
-                + "Do not include markdown.\n\n"
+        String prompt = "You are OpenPhone Agent, a mobile GUI agent running inside Android. "
+                + "Your job is to complete the user's real phone task, not to demonstrate "
+                + "one action. Work like an AndroidWorld/M3A-style agent: observe the "
+                + "current screen, maintain task state from prior steps, choose the next "
+                + "subgoal, execute exactly one action, then verify progress on the next "
+                + "observation. Return exactly one JSON object and no markdown.\n\n"
+                + "Agent rules:\n"
+                + "- Treat this as a long-horizon task. Use up to the available step budget.\n"
+                + "- First understand where you are: foreground app, visible text, UI tree, "
+                + "and screenshot.\n"
+                + "- Prefer semantic UI actions. Use tap_element or long_press_element with "
+                + "an interactive_elements id whenever a matching enabled element exists.\n"
+                + "- Use raw coordinates only for unlabeled/custom UI when no suitable "
+                + "element id exists.\n"
+                + "- If an action did not change the screen, recover: choose another visible "
+                + "target, scroll, press back, wait for loading, or fail with a precise reason.\n"
+                + "- Do not repeat the same failed/no-op action.\n"
+                + "- Do not finish just because an app opened. Finish only when the current "
+                + "screen visibly satisfies the user's goal.\n"
+                + "- If the goal requires credentials, payment, purchase, posting, sending, "
+                + "calling, deleting, or installing from an unsafe source, ask for "
+                + "confirmation or stop at the safe boundary.\n"
+                + "- If the foreground screen is OpenPhone Assistant, the task is already "
+                + "running; do not tap Speak, Run, or Developer. Start by opening the "
+                + "target app, URL, or system surface needed for the user goal.\n\n"
                 + "Allowed JSON schema:\n"
-                + "{\"thought\":\"short reason\",\"tool\":\"get_screen|watch_screen|"
-                + "open_app|open_url|tap|long_press|swipe|type_text|press_key|"
+                + "{\"task_state\":\"what is already true and what remains\","
+                + "\"next_subgoal\":\"the immediate objective for this one action\","
+                + "\"success_criteria\":\"what must be visible before finish_task\","
+                + "\"thought\":\"short reason\","
+                + "\"tool\":\"get_screen|watch_screen|"
+                + "open_app|open_url|tap|tap_element|long_press|long_press_element|"
+                + "swipe|type_text|press_key|"
                 + "set_clipboard|paste|share_text|wait|"
                 + "ask_user_confirmation|finish_task|fail_task\","
                 + "\"arguments\":{...}}\n\n"
@@ -218,21 +299,37 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "\"include_ui_tree\":true,\"reason\":\"...\"}\n"
                 + "- watch_screen: {\"fps\":1,\"duration_ms\":1500,\"include_ui_tree\":true,"
                 + "\"reason\":\"...\"}\n"
-                + "- open_app: {\"package_or_label\":\"Settings|Browser|org.lineageos.jelly\"}\n"
-                + "- open_url: {\"url\":\"https://example.com\"}\n"
+                + "- open_app: {\"package_or_label\":\"Settings|Browser|org.lineageos.jelly\","
+                + "\"reason\":\"...\"}\n"
+                + "- open_url: {\"url\":\"https://example.com\",\"reason\":\"...\"}\n"
                 + "- tap/long_press: {\"x\":540,\"y\":1200,\"reason\":\"...\"}\n"
+                + "- tap_element/long_press_element: {\"element_id\":\"el-3\","
+                + "\"reason\":\"...\"}\n"
                 + "- swipe: {\"start_x\":540,\"start_y\":1800,\"end_x\":540,\"end_y\":800,"
                 + "\"reason\":\"...\"}\n"
                 + "- type_text/set_clipboard/share_text: {\"text\":\"...\",\"reason\":\"...\"}\n"
                 + "- paste: {\"reason\":\"...\"}\n"
-                + "- press_key: {\"key\":\"back|home|recents\",\"reason\":\"...\"}\n"
+                + "- press_key: {\"key\":\"back|home|recents|enter|search|go\","
+                + "\"reason\":\"...\"}\n"
                 + "- wait: {\"duration_ms\":1000,\"reason\":\"...\"}\n"
                 + "- ask_user_confirmation: {\"summary\":\"...\",\"risk\":\"...\","
-                + "\"action_json\":{...}}\n"
+                + "\"reason\":\"...\",\"action_json\":{...}}\n"
                 + "- finish_task: {\"summary\":\"...\"}\n"
                 + "- fail_task: {\"reason\":\"...\"}\n\n"
+                + "Recovery guidance:\n"
+                + "- If the previous step has verification.screen_changed=false, assume the "
+                + "last action missed or was ignored. Do not retry the same element or "
+                + "coordinate unless the screen changed afterward.\n"
+                + "- If a list does not show the needed item, swipe in the direction that "
+                + "reveals more content, then observe again.\n"
+                + "- If an app opens to an unexpected screen, use visible navigation, search, "
+                + "tabs, back, or menus before giving up.\n"
+                + "- If there are multiple plausible targets, choose the one whose label most "
+                + "closely matches the next_subgoal.\n\n"
                 + "For app downloads, prefer an already-installed app store if visible. "
-                + "Use open_url for exact official download URLs instead of manually typing. "
+                + "Use open_url for exact official download URLs instead of manually typing "
+                + "into a browser. Never type an https:// URL into the address bar and then "
+                + "tap the keyboard Search/Go key; use open_url in one step. "
                 + "If no app store is installed, use Browser and official websites only. "
                 + "If the official website only offers an app store link and that store is not "
                 + "installed, finish_task with that explanation instead of continuing to scroll. "
@@ -246,11 +343,13 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         JSONArray content = new JSONArray()
                 .put(new JSONObject()
                         .put("type", "input_text")
-                        .put("text", prompt))
-                .put(new JSONObject()
-                        .put("type", "input_image")
-                        .put("image_url", dataUrl)
-                        .put("detail", "low"));
+                        .put("text", prompt));
+        if (!dataUrl.isEmpty()) {
+            content.put(new JSONObject()
+                    .put("type", "input_image")
+                    .put("image_url", dataUrl)
+                    .put("detail", "low"));
+        }
 
         JSONObject body = new JSONObject()
                 .put("model", MODEL)
@@ -258,18 +357,25 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                         .put(new JSONObject()
                                 .put("role", "user")
                                 .put("content", content)))
+                .put("metadata", requestMetadata(screenJson))
                 .put("max_output_tokens", 500);
 
-        HttpURLConnection connection = (HttpURLConnection) new URL(RESPONSES_URL).openConnection();
+        HttpURLConnection connection = (HttpURLConnection) new URL(
+                mEndpointConfig.responsesUrl()).openConnection();
         mActiveConnection = connection;
         try {
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(45000);
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
-            connection.setRequestProperty("Authorization", "Bearer " + mApiKey);
+            connection.setRequestProperty("Authorization", "Bearer "
+                    + mEndpointConfig.bearerToken());
             connection.setRequestProperty("Content-Type", "application/json");
             connection.setRequestProperty("Accept", "application/json");
+            if (mEndpointConfig.isBrokerMode()) {
+                connection.setRequestProperty("X-OpenPhone-Model-Provider", "openai_responses");
+                connection.setRequestProperty("X-OpenPhone-Request-Shape", "responses_proxy");
+            }
 
             byte[] bodyBytes = body.toString().getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(bodyBytes.length);
@@ -310,13 +416,84 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return decision;
     }
 
+    private static void normalizeBrowserUrlDecision(String userGoal, JSONArray steps,
+            JSONObject screenJson, JSONObject decision, JSONObject arguments) throws JSONException {
+        String toolName = decision.optString("tool", "");
+        String url = "";
+        if ("type_text".equals(toolName)) {
+            String text = arguments.optString("text", "").trim();
+            if (isHttpUrl(text) && isBrowserScreen(screenJson)) {
+                url = text;
+            }
+        } else if (("tap".equals(toolName) || "press_key".equals(toolName))
+                && isKeyboardSubmit(arguments)) {
+            url = lastHttpUrlFromSteps(steps);
+        }
+        if (url.isEmpty()) {
+            return;
+        }
+        String reason = arguments.optString("reason", "");
+        if (reason.trim().isEmpty()) {
+            reason = "Open the exact URL directly instead of using fragile browser keyboard input.";
+        }
+        decision.put("tool", "open_url");
+        decision.put("arguments", new JSONObject()
+                .put("url", url)
+                .put("reason", reason));
+        String thought = decision.optString("thought", "");
+        if (!thought.toLowerCase(Locale.US).contains("open_url")) {
+            decision.put("thought", thought + " Using open_url for exact URL navigation.");
+        }
+    }
+
+    private static boolean isHttpUrl(String text) {
+        String value = text == null ? "" : text.trim().toLowerCase(Locale.US);
+        return value.startsWith("https://") || value.startsWith("http://");
+    }
+
+    private static boolean isBrowserScreen(JSONObject screenJson) throws JSONException {
+        String screenText = normalizedScreenText(screenJson);
+        return screenText.contains("org.lineageos.jelly")
+                || screenText.contains("search or type url")
+                || screenText.contains("browser");
+    }
+
+    private static boolean isKeyboardSubmit(JSONObject arguments) {
+        String text = arguments == null ? "" : arguments.toString().toLowerCase(Locale.US);
+        return containsAny(text, "search key", "go key", "keyboard search", "keyboard go",
+                "proceed to the entered", "load the url", "navigate to the entered url");
+    }
+
+    private static String lastHttpUrlFromSteps(JSONArray steps) {
+        if (steps == null) {
+            return "";
+        }
+        for (int i = steps.length() - 1; i >= 0; i--) {
+            JSONObject step = steps.optJSONObject(i);
+            if (step == null) {
+                continue;
+            }
+            JSONObject arguments = step.optJSONObject("arguments");
+            if (arguments == null) {
+                continue;
+            }
+            String text = arguments.optString("url", arguments.optString("text", "")).trim();
+            if (isHttpUrl(text)) {
+                return text;
+            }
+        }
+        return "";
+    }
+
     private static boolean isAllowedTool(String toolName) {
         return "get_screen".equals(toolName)
                 || "watch_screen".equals(toolName)
                 || "open_app".equals(toolName)
                 || "open_url".equals(toolName)
                 || "tap".equals(toolName)
+                || "tap_element".equals(toolName)
                 || "long_press".equals(toolName)
+                || "long_press_element".equals(toolName)
                 || "swipe".equals(toolName)
                 || "type_text".equals(toolName)
                 || "press_key".equals(toolName)
@@ -332,6 +509,9 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         if (!canChangeDeviceOrExternalState(toolName)) {
             return null;
         }
+        if (isOpenPhoneControlSurface(screenJson)) {
+            return null;
+        }
 
         String screenText = normalizedScreenText(screenJson);
         String goal = userGoal == null ? "" : userGoal.toLowerCase(Locale.US);
@@ -342,13 +522,14 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
             risk = "High";
             summary = "The agent is about to act on an install, update, download, "
                     + "or permission screen.";
-        } else if (containsAny(screenText, "buy", "purchase", "payment", "subscribe",
-                "checkout", "card", "₪", "$", "order")) {
+        } else if (containsAny(screenText, "buy now", "purchase", "payment",
+                "subscribe", "subscription", "checkout", "credit card",
+                "debit card", "place order", "confirm order")) {
             risk = "High";
             summary = "The agent is about to act on a purchase, payment, or "
                     + "subscription screen.";
-        } else if (containsAny(screenText, "delete", "remove", "erase", "reset",
-                "factory reset")) {
+        } else if (containsAny(screenText, "remove", "erase", "reset",
+                "factory reset", "delete account", "delete file", "delete app")) {
             risk = "High";
             summary = "The agent is about to act on a destructive data-change screen.";
         } else if (containsAny(screenText, "send", "post", "share", "call", "message",
@@ -375,6 +556,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return new JSONObject()
                 .put("summary", summary)
                 .put("risk", risk)
+                .put("reason", summary)
                 .put("capability", capabilityForTool(toolName))
                 .put("action_json", new JSONObject()
                         .put("tool", toolName)
@@ -383,7 +565,9 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
 
     private static boolean canChangeDeviceOrExternalState(String toolName) {
         return "tap".equals(toolName)
+                || "tap_element".equals(toolName)
                 || "long_press".equals(toolName)
+                || "long_press_element".equals(toolName)
                 || "swipe".equals(toolName)
                 || "type_text".equals(toolName)
                 || "press_key".equals(toolName)
@@ -394,13 +578,23 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
 
     private static String capabilityForTool(String toolName) {
         if ("share_text".equals(toolName)) {
-            return "content.share";
+            return "share.content";
         }
-        if ("set_clipboard".equals(toolName) || "paste".equals(toolName)) {
+        if ("set_clipboard".equals(toolName)) {
             return "clipboard.write";
         }
-        if ("type_text".equals(toolName)) {
-            return "input.text";
+        if ("paste".equals(toolName)) {
+            return "clipboard.read";
+        }
+        if ("open_url".equals(toolName)) {
+            return "network.use";
+        }
+        if ("open_app".equals(toolName)) {
+            return "apps.launch";
+        }
+        if ("get_screen".equals(toolName) || "watch_screen".equals(toolName)
+                || "wait".equals(toolName) || "ask_user_confirmation".equals(toolName)) {
+            return "tasks.observe";
         }
         return "input.perform";
     }
@@ -408,6 +602,42 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
     private static String normalizedScreenText(JSONObject screenJson) throws JSONException {
         JSONObject copy = redactScreenshot(new JSONObject(screenJson.toString()));
         return copy.toString().toLowerCase(Locale.US);
+    }
+
+    private static boolean isOpenPhoneControlSurface(JSONObject screenJson) throws JSONException {
+        String screenText = normalizedScreenText(screenJson);
+        return screenText.contains("org.openphone.assistant")
+                && (screenText.contains("ask openphone")
+                        || screenText.contains("what should i do?"));
+    }
+
+    private static void ensureToolReason(String toolName, JSONObject arguments, String thought)
+            throws JSONException {
+        if (!requiresReason(toolName) || !arguments.optString("reason", "").trim().isEmpty()) {
+            return;
+        }
+        String reason = thought == null || thought.trim().isEmpty()
+                ? "Continue the active user task." : thought.trim();
+        arguments.put("reason", reason);
+    }
+
+    private static boolean requiresReason(String toolName) {
+        return "get_screen".equals(toolName)
+                || "watch_screen".equals(toolName)
+                || "open_app".equals(toolName)
+                || "open_url".equals(toolName)
+                || "tap".equals(toolName)
+                || "tap_element".equals(toolName)
+                || "long_press".equals(toolName)
+                || "long_press_element".equals(toolName)
+                || "swipe".equals(toolName)
+                || "type_text".equals(toolName)
+                || "press_key".equals(toolName)
+                || "set_clipboard".equals(toolName)
+                || "paste".equals(toolName)
+                || "share_text".equals(toolName)
+                || "wait".equals(toolName)
+                || "ask_user_confirmation".equals(toolName);
     }
 
     private static boolean containsAny(String text, String... needles) {
@@ -437,6 +667,182 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return "error".equals(toolStatus)
                 || "task.failed".equals(toolStatus)
                 || "screen_capture_failed".equals(toolStatus);
+    }
+
+    private static boolean shouldVerifyProgress(String toolName) {
+        return "open_app".equals(toolName)
+                || "open_url".equals(toolName)
+                || "tap".equals(toolName)
+                || "tap_element".equals(toolName)
+                || "long_press".equals(toolName)
+                || "long_press_element".equals(toolName)
+                || "swipe".equals(toolName)
+                || "type_text".equals(toolName)
+                || "press_key".equals(toolName)
+                || "set_clipboard".equals(toolName)
+                || "paste".equals(toolName)
+                || "share_text".equals(toolName);
+    }
+
+    private static JSONObject finishEvidence(String userGoal, JSONObject screenJson)
+            throws JSONException {
+        String visibleText = joinedArray(screenJson.optJSONArray("visible_text"), 80);
+        JSONArray elements = screenJson.optJSONArray("interactive_elements");
+        int elementCount = elements == null ? 0 : elements.length();
+        JSONObject screenshot = screenJson.optJSONObject("screenshot");
+        boolean hasScreenshot = screenshot != null && !screenshot.optString("data").isEmpty();
+        JSONArray matchedTerms = new JSONArray();
+        JSONArray requiredTerms = finishEvidenceTerms(userGoal);
+        String haystack = visibleText.toLowerCase(Locale.US);
+        for (int i = 0; i < requiredTerms.length(); i++) {
+            String term = requiredTerms.optString(i);
+            if (!term.isEmpty() && haystack.contains(term.toLowerCase(Locale.US))) {
+                matchedTerms.put(term);
+            }
+        }
+        boolean hasStructuredEvidence = !visibleText.isEmpty() || elementCount > 0;
+        boolean hasTermEvidence = requiredTerms.length() == 0
+                || matchedTerms.length() > 0
+                || hasScreenshot;
+        return new JSONObject()
+                .put("has_screen_evidence", (hasStructuredEvidence || hasScreenshot)
+                        && hasTermEvidence)
+                .put("has_screenshot", hasScreenshot)
+                .put("visible_text_count", screenJson.optJSONArray("visible_text") == null
+                        ? 0 : screenJson.optJSONArray("visible_text").length())
+                .put("interactive_element_count", elementCount)
+                .put("required_terms", requiredTerms)
+                .put("matched_terms", matchedTerms);
+    }
+
+    private static JSONArray finishEvidenceTerms(String userGoal) {
+        JSONArray terms = new JSONArray();
+        String goal = userGoal == null ? "" : userGoal;
+        String[] words = goal.split("[^A-Za-z0-9._-]+");
+        for (String word : words) {
+            String value = word == null ? "" : word.trim();
+            if (value.length() < 4 || isStopword(value)) {
+                continue;
+            }
+            if (value.contains(".")) {
+                String[] pieces = value.split("[.]");
+                for (String piece : pieces) {
+                    if (piece.length() >= 4 && !isStopword(piece)) {
+                        terms.put(piece);
+                    }
+                }
+            } else {
+                terms.put(value);
+            }
+            if (terms.length() >= 8) {
+                break;
+            }
+        }
+        return terms;
+    }
+
+    private static boolean isStopword(String word) {
+        String value = word == null ? "" : word.toLowerCase(Locale.US);
+        return "open".equals(value)
+                || "then".equals(value)
+                || "when".equals(value)
+                || "only".equals(value)
+                || "visible".equals(value)
+                || "finish".equals(value)
+                || "screen".equals(value)
+                || "page".equals(value)
+                || "task".equals(value)
+                || "with".equals(value)
+                || "from".equals(value)
+                || "into".equals(value)
+                || "that".equals(value)
+                || "this".equals(value)
+                || "https".equals(value)
+                || "http".equals(value);
+    }
+
+    private static JSONObject progressVerification(JSONObject before, JSONObject after)
+            throws JSONException {
+        String beforeSignature = screenSignature(before);
+        String afterSignature = screenSignature(after);
+        boolean changed = !beforeSignature.equals(afterSignature);
+        return new JSONObject()
+                .put("screen_changed", changed)
+                .put("before_activity", activityName(before))
+                .put("after_activity", activityName(after))
+                .put("before_foreground_app", foregroundPackage(before))
+                .put("after_foreground_app", foregroundPackage(after))
+                .put("before_signature", beforeSignature)
+                .put("after_signature", afterSignature);
+    }
+
+    private static String screenSignature(JSONObject screen) {
+        return foregroundPackage(screen) + "|"
+                + activityName(screen) + "|"
+                + joinedArray(screen.optJSONArray("visible_text"), 18) + "|"
+                + elementSignature(screen.optJSONArray("interactive_elements"), 18);
+    }
+
+    private static String foregroundPackage(JSONObject screen) {
+        JSONObject context = screen == null ? null : screen.optJSONObject("context");
+        String value = context == null ? "" : context.optString("foreground_app", "");
+        if (value.isEmpty()) {
+            JSONObject uiTree = screen == null ? null : screen.optJSONObject("ui_tree");
+            value = uiTree == null ? "" : uiTree.optString("foreground_package", "");
+        }
+        return value;
+    }
+
+    private static String activityName(JSONObject screen) {
+        JSONObject context = screen == null ? null : screen.optJSONObject("context");
+        return context == null ? "" : context.optString("activity", "");
+    }
+
+    private static String joinedArray(JSONArray array, int maxItems) {
+        if (array == null || array.length() == 0) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        int count = Math.min(array.length(), maxItems);
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                builder.append(" || ");
+            }
+            builder.append(compact(array.optString(i)));
+        }
+        return builder.toString();
+    }
+
+    private static String elementSignature(JSONArray elements, int maxItems) {
+        if (elements == null || elements.length() == 0) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        int count = Math.min(elements.length(), maxItems);
+        for (int i = 0; i < count; i++) {
+            JSONObject element = elements.optJSONObject(i);
+            if (element == null) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(" || ");
+            }
+            builder.append(compact(element.optString("kind")));
+            builder.append(":");
+            builder.append(compact(element.optString("label")));
+        }
+        return builder.toString();
+    }
+
+    private static String compact(String value) {
+        if (value == null) {
+            return "";
+        }
+        String compacted = value.replace('\n', ' ').replace('\r', ' ').trim();
+        while (compacted.contains("  ")) {
+            compacted = compacted.replace("  ", " ");
+        }
+        return compacted.length() <= 160 ? compacted : compacted.substring(0, 160);
     }
 
     private static boolean hasScreenshot(String screen) {
@@ -510,6 +916,37 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return builder.toString();
     }
 
+    private static JSONObject requestMetadata(JSONObject screenJson) throws JSONException {
+        JSONObject metadata = new JSONObject()
+                .put("openphone_task", "true")
+                .put("screen_source", screenJson.optString("source",
+                        screenJson.optString("foreground_app", "unknown")));
+        JSONArray riskFlags = screenJson.optJSONArray("risk_flags");
+        if (riskFlags != null) {
+            metadata.put("risk_flags", joinStrings(riskFlags));
+        }
+        String foregroundPackage = screenJson.optString("foreground_package", "");
+        if (!foregroundPackage.isEmpty()) {
+            metadata.put("foreground_package", foregroundPackage);
+        }
+        return metadata;
+    }
+
+    private static String joinStrings(JSONArray array) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < array.length(); i++) {
+            String value = array.optString(i, "");
+            if (value.isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(',');
+            }
+            builder.append(value);
+        }
+        return builder.toString();
+    }
+
     private static JSONObject redactScreenshot(JSONObject screenJson) throws JSONException {
         JSONObject screenshot = screenJson.optJSONObject("screenshot");
         if (screenshot != null) {
@@ -541,7 +978,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                     .put("status", "provider_unavailable")
                     .put("provider", "openai_responses")
                     .put("reason", reason)
-                    .put("next", "Enter a temporary dev API key in the UI")
+                    .put("next", "Configure a broker token or temporary dev API key")
                     .toString(2);
         } catch (JSONException e) {
             return "{\"status\":\"provider_unavailable\"}";

@@ -71,10 +71,22 @@ Device artifact, when published:
 
 - OTA ZIP is produced on a Linux Android build host.
 - OTA SHA-256 is recorded.
+- Private release-signing keys are prepared outside the repository with
+  `scripts/prepare-release-signing.sh`.
+- Release target-files and OTA signing is run with
+  `scripts/sign-release-ota.sh` in the private build environment.
 - `scripts/generate-release-manifest.sh <version> <artifact-dir>` has produced
   `SHA256SUMS` and `ARTIFACTS.md` for the release artifact directory.
+- `scripts/generate-ota-feed.sh` has produced an updater feed JSON when the
+  release is intended for OTA discovery.
+- `scripts/validate-ota-feed.sh` passes against the feed and staged artifact
+  directory.
 - `scripts/validate-release-artifacts.sh <artifact-dir>` passes against the
   staged release directory.
+- `scripts/validate-trajectory-export.sh <trajectory.zip>` passes for every
+  assistant trajectory export used as release validation evidence.
+- `scripts/validate-audit-evidence-export.sh <audit.json>` passes for every
+  framework audit export used as release validation evidence.
 - Pixel 9a boot and service checks are recorded.
 - Assistant package diagnostics are recorded, including package version and
   privileged component declarations.
@@ -85,23 +97,87 @@ Device artifact, when published:
 - Any ADB authorization/onboarding caveats after a clean data wipe are
   documented in the release notes.
 
+## Release Signing Preparation
+
+Create a private signing workspace outside the repository:
+
+```bash
+scripts/prepare-release-signing.sh \
+  --keys-dir "$HOME/.openphone/signing/openphone-release"
+```
+
+If a synced Android tree is available, pass it to print the exact
+`development/tools/make_key` commands:
+
+```bash
+scripts/prepare-release-signing.sh \
+  --keys-dir "$HOME/.openphone/signing/openphone-release" \
+  --android-dir .worktree/android
+```
+
+The helper creates a private `key-map.txt`, README, and `.gitignore`. It does
+not put private keys inside the repository. Use the generated key map with
+Android releasetools (`sign_target_files_apks` and `ota_from_target_files`) in
+the private build environment.
+
+Sign a target-files archive and generate a signed OTA:
+
+```bash
+scripts/sign-release-ota.sh \
+  --android-dir .worktree/android \
+  --keys-dir "$HOME/.openphone/signing/openphone-release" \
+  --target-files .worktree/android/out/target/product/tegu/obj/PACKAGING/target_files_intermediates/openphone_tegu-target_files.zip \
+  --output-dir .worktree/releases/signed \
+  --name openphone_tegu-v0.0.1
+```
+
+Use `--dry-run` first to inspect the exact releasetools commands. The signing
+script refuses to use a key directory inside the OpenPhone repository.
+
 ## GitHub Release Notes Template
 
 Stage only the files intended for publication into a clean release directory,
 then generate the artifact manifest before drafting release notes:
 
 ```bash
-mkdir -p .worktree/releases/v0.0.1
-cp .worktree/artifacts/tegu/openphone_tegu-settings-about-v48-ota.zip .worktree/releases/v0.0.1/
-scripts/generate-release-manifest.sh 0.0.1 .worktree/releases/v0.0.1
-scripts/validate-release-artifacts.sh .worktree/releases/v0.0.1
-scripts/prepare-github-release.sh 0.0.1 .worktree/releases/v0.0.1 docs/releases/0.0.1.md
+mkdir -p .worktree/releases/v0.0.1-preview
+cp .worktree/artifacts/tegu/openphone_tegu-settings-grants-v55-ota.zip \
+  .worktree/releases/v0.0.1-preview/
+scripts/generate-release-manifest.sh 0.0.1-preview .worktree/releases/v0.0.1-preview
+scripts/validate-release-artifacts.sh .worktree/releases/v0.0.1-preview
+scripts/prepare-github-release.sh \
+  0.0.1-preview .worktree/releases/v0.0.1-preview docs/releases/0.0.1.md
 ```
 
 Attach the generated OTA ZIP, `SHA256SUMS`, and `ARTIFACTS.md` to the GitHub
 release when publishing device preview artifacts. The preparation script writes
 `gh-release-draft.sh`, which can be inspected before creating the draft with
 GitHub CLI.
+
+Generate an updater feed for a staged OTA:
+
+```bash
+scripts/generate-ota-feed.sh \
+  --version 0.0.1-preview \
+  --channel preview \
+  --device tegu \
+  --artifact .worktree/releases/v0.0.1-preview/openphone_tegu-settings-grants-v55-ota.zip \
+  --base-url https://downloads.example/openphone/v0.0.1-preview \
+  --release-notes-url https://github.com/openphone-os/OpenPhone/releases/tag/v0.0.1-preview \
+  --output .worktree/releases/v0.0.1-preview/ota-feed-tegu-preview.json \
+  --requires-wipe
+
+scripts/validate-ota-feed.sh \
+  .worktree/releases/v0.0.1-preview/ota-feed-tegu-preview.json \
+  .worktree/releases/v0.0.1-preview
+```
+
+The feed contract is documented in
+`docs/contracts/ota-feed.schema.json`. The assistant now includes the first
+preview on-device OTA client for this feed: it checks that the feed targets the
+current device, downloads the chosen OTA ZIP to `Downloads/OpenPhone`, and
+verifies size and SHA-256 before making the file visible. Installation is still
+manual for `0.0.1`; use recovery sideload or the documented host flashing flow.
 
 ```markdown
 ## OpenPhone 0.0.1
@@ -131,7 +207,10 @@ Developer preview for OpenPhone.
 - Not a consumer-ready ROM.
 - Device support is limited.
 - Full autonomous agent loop is still in progress.
-- Production signing and OTA updater are not implemented.
+- Production signing is not yet used for the preview artifact, but private
+  signing workspace preparation is documented.
+- On-device OTA updater is not implemented; the first server-side OTA feed
+  contract and generator exist.
 - Hardware validation is incomplete.
 - A clean wipe may require completing onboarding and re-authorizing USB
   debugging before ADB shell/logcat/install channels work.

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "providers": {
+    "openai": {
+      "responses_url": "https://api.openai.com/v1/responses",
+      "transcriptions_url": "https://api.openai.com/v1/audio/transcriptions",
+      "responses_models": [
+        "gpt-4.1",
+        "gpt-4.1-mini"
+      ]
+    }
+  }
+}

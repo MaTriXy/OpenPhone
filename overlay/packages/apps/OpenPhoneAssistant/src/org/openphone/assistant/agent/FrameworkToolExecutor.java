@@ -1,8 +1,6 @@
 package org.openphone.assistant.agent;
 
 import android.content.Context;
-import android.content.Intent;
-import android.net.Uri;
 import android.openphone.OpenPhoneAgentManager;
 
 import org.json.JSONException;
@@ -26,6 +24,9 @@ public final class FrameworkToolExecutor {
         if (taskId == null || taskId.isEmpty()) {
             return error("no_active_task");
         }
+        if (requiresModelReason(toolName) && arguments.optString("reason", "").trim().isEmpty()) {
+            return error("missing_reason:" + toolName);
+        }
         try {
             switch (toolName) {
                 case "get_screen":
@@ -38,16 +39,28 @@ public final class FrameworkToolExecutor {
                     return mAgentManager.executeAction(taskId, action("open_app")
                             .put("package", requestedPackage)
                             .put("label", arguments.optString("label",
-                                    arguments.optString("package_or_label"))).toString());
+                                    arguments.optString("package_or_label")))
+                            .put("reason", arguments.optString("reason")).toString());
                 case "open_url":
-                    return openUrl(arguments.optString("url"));
+                    return mAgentManager.executeAction(taskId, action("open_url")
+                            .put("url", normalizedUrl(arguments.optString("url")))
+                            .put("reason", arguments.optString("reason")).toString());
                 case "tap":
                     return mAgentManager.executeAction(taskId, action("tap")
                             .put("target", point(arguments.optDouble("x"), arguments.optDouble("y")))
                             .put("reason", arguments.optString("reason")).toString());
+                case "tap_element":
+                    return mAgentManager.executeAction(taskId, action("tap")
+                            .put("target", elementCenter(arguments))
+                            .put("reason", arguments.optString("reason")).toString());
                 case "long_press":
                     return mAgentManager.executeAction(taskId, action("long_press")
                             .put("target", point(arguments.optDouble("x"), arguments.optDouble("y")))
+                            .put("duration_ms", arguments.optLong("duration_ms", 650))
+                            .put("reason", arguments.optString("reason")).toString());
+                case "long_press_element":
+                    return mAgentManager.executeAction(taskId, action("long_press")
+                            .put("target", elementCenter(arguments))
                             .put("duration_ms", arguments.optLong("duration_ms", 650))
                             .put("reason", arguments.optString("reason")).toString());
                 case "swipe":
@@ -63,8 +76,7 @@ public final class FrameworkToolExecutor {
                             .put("text", arguments.optString("text"))
                             .put("reason", arguments.optString("reason")).toString());
                 case "press_key":
-                    return mAgentManager.executeAction(taskId, action(arguments.optString("key",
-                            "back")).put("reason", arguments.optString("reason")).toString());
+                    return pressKey(taskId, arguments);
                 case "set_clipboard":
                     return mAgentManager.executeAction(taskId, action("copy")
                             .put("text", arguments.optString("text"))
@@ -85,6 +97,7 @@ public final class FrameworkToolExecutor {
                             .put("status", "confirmation_requested")
                             .put("summary", arguments.optString("summary"))
                             .put("risk", arguments.optString("risk"))
+                            .put("reason", arguments.optString("reason"))
                             .put("action", arguments.optJSONObject("action_json") == null
                                     ? new JSONObject() : arguments.optJSONObject("action_json"))
                             .toString();
@@ -100,9 +113,37 @@ public final class FrameworkToolExecutor {
         }
     }
 
+    private static boolean requiresModelReason(String toolName) {
+        switch (toolName) {
+            case "get_screen":
+            case "watch_screen":
+            case "open_app":
+            case "open_url":
+            case "tap":
+            case "tap_element":
+            case "long_press":
+            case "long_press_element":
+            case "swipe":
+            case "type_text":
+            case "press_key":
+            case "set_clipboard":
+            case "paste":
+            case "share_text":
+            case "wait":
+            case "ask_user_confirmation":
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private String getScreen(String taskId, JSONObject arguments) throws JSONException {
+        JSONObject uiTree = accessibilitySnapshot();
+        if (shouldBlockScreenshot(arguments, uiTree)) {
+            return blockedScreenResult("sensitive_screen_screenshot_blocked", uiTree);
+        }
         String screen = mAgentManager.getScreen(taskId, arguments.toString());
-        return enrichScreenResult(screen, arguments);
+        return enrichScreenResult(screen, arguments, uiTree);
     }
 
     private String watchScreen(String taskId, JSONObject arguments) throws JSONException {
@@ -111,16 +152,20 @@ public final class FrameworkToolExecutor {
         JSONObject boundedArguments = new JSONObject(arguments.toString())
                 .put("duration_ms", durationMs)
                 .put("fps", fps);
+        JSONObject uiTree = accessibilitySnapshot();
+        if (shouldBlockScreenshot(boundedArguments, uiTree)) {
+            return blockedScreenResult("sensitive_screen_watch_blocked", uiTree);
+        }
         String screen = mAgentManager.watchScreen(taskId, boundedArguments.toString());
-        return enrichScreenResult(screen, boundedArguments);
+        return enrichScreenResult(screen, boundedArguments, uiTree);
     }
 
-    private String enrichScreenResult(String screen, JSONObject arguments) throws JSONException {
+    private String enrichScreenResult(String screen, JSONObject arguments, JSONObject uiTree)
+            throws JSONException {
         if (!arguments.optBoolean("include_ui_tree", false)) {
             return screen;
         }
         JSONObject screenJson = new JSONObject(screen);
-        JSONObject uiTree = new JSONObject(OpenPhoneAccessibilityService.snapshotJson());
         screenJson.put("ui_tree", uiTree);
         JSONArray visibleText = uiTree.optJSONArray("visible_text");
         if (visibleText != null) {
@@ -131,6 +176,41 @@ public final class FrameworkToolExecutor {
             screenJson.put("interactive_elements", elements);
         }
         return screenJson.toString();
+    }
+
+    private static JSONObject accessibilitySnapshot() throws JSONException {
+        return new JSONObject(OpenPhoneAccessibilityService.snapshotJson());
+    }
+
+    private static boolean shouldBlockScreenshot(JSONObject arguments, JSONObject uiTree) {
+        return arguments.optBoolean("include_screenshot", false)
+                && hasSensitiveScreenFlag(uiTree);
+    }
+
+    private static boolean hasSensitiveScreenFlag(JSONObject uiTree) {
+        JSONArray flags = uiTree.optJSONArray("risk_flags");
+        if (flags == null) {
+            return false;
+        }
+        for (int i = 0; i < flags.length(); i++) {
+            String flag = flags.optString(i);
+            if ("sensitive_input_visible".equals(flag)
+                    || "account_or_payment_hint_visible".equals(flag)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String blockedScreenResult(String reason, JSONObject uiTree) throws JSONException {
+        return new JSONObject()
+                .put("status", "screen.blocked")
+                .put("reason", reason)
+                .put("screen_capture_included", false)
+                .put("ui_tree", uiTree)
+                .put("risk_flags", uiTree.optJSONArray("risk_flags") == null
+                        ? new JSONArray() : uiTree.optJSONArray("risk_flags"))
+                .toString();
     }
 
     private static String waitFor(long durationMs, String reason) throws JSONException {
@@ -148,29 +228,28 @@ public final class FrameworkToolExecutor {
                 .toString();
     }
 
-    private String openUrl(String url) throws JSONException {
-        if (mContext == null) {
-            return error("context_unavailable");
-        }
+    private static String normalizedUrl(String url) throws JSONException {
         if (url == null || url.trim().isEmpty()) {
-            return error("missing_url");
+            throw new JSONException("missing_url");
         }
 
         String normalizedUrl = url.trim();
         if (!normalizedUrl.startsWith("http://") && !normalizedUrl.startsWith("https://")) {
             normalizedUrl = "https://" + normalizedUrl;
         }
+        return normalizedUrl;
+    }
 
-        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(normalizedUrl));
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.setPackage("org.lineageos.jelly");
-        try {
-            mContext.startActivity(intent);
-        } catch (RuntimeException e) {
-            return error("open_url_failed:" + e.getClass().getSimpleName());
+    private String pressKey(String taskId, JSONObject arguments) throws JSONException {
+        String key = arguments.optString("key", "back").trim().toLowerCase();
+        String reason = arguments.optString("reason");
+        if ("enter".equals(key) || "search".equals(key) || "go".equals(key)
+                || "done".equals(key)) {
+            return mAgentManager.executeAction(taskId, action("tap")
+                    .put("target", point(930, 2360))
+                    .put("reason", reason).toString());
         }
-
-        return status("action.executed", "open_url:" + normalizedUrl);
+        return mAgentManager.executeAction(taskId, action(key).put("reason", reason).toString());
     }
 
     private static JSONObject action(String type) throws JSONException {
@@ -179,6 +258,40 @@ public final class FrameworkToolExecutor {
 
     private static JSONObject point(double x, double y) throws JSONException {
         return new JSONObject().put("x", x).put("y", y);
+    }
+
+    private static JSONObject elementCenter(JSONObject arguments) throws JSONException {
+        String elementId = arguments.optString("element_id", "").trim();
+        if (elementId.isEmpty()) {
+            throw new JSONException("missing_element_id");
+        }
+        JSONObject snapshot = accessibilitySnapshot();
+        JSONArray elements = snapshot.optJSONArray("interactive_elements");
+        if (elements == null) {
+            throw new JSONException("interactive_elements_unavailable");
+        }
+        for (int i = 0; i < elements.length(); i++) {
+            JSONObject element = elements.optJSONObject(i);
+            if (element == null || !elementId.equals(element.optString("id"))) {
+                continue;
+            }
+            if (!element.optBoolean("enabled", true)) {
+                throw new JSONException("element_disabled:" + elementId);
+            }
+            JSONArray bounds = element.optJSONArray("bounds");
+            if (bounds == null || bounds.length() < 4) {
+                throw new JSONException("element_bounds_unavailable:" + elementId);
+            }
+            double left = bounds.optDouble(0);
+            double top = bounds.optDouble(1);
+            double right = bounds.optDouble(2);
+            double bottom = bounds.optDouble(3);
+            if (right <= left || bottom <= top) {
+                throw new JSONException("element_bounds_invalid:" + elementId);
+            }
+            return point((left + right) / 2.0, (top + bottom) / 2.0);
+        }
+        throw new JSONException("element_not_found:" + elementId);
     }
 
     private static String packageName(String packageOrLabel) {

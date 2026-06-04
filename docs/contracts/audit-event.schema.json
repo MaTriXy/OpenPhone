@@ -14,12 +14,17 @@
     "event_type": {
       "enum": [
         "task_started",
+        "task_stopped",
+        "task_finished",
         "screen_context_read",
+        "screen_capture",
+        "screen_capture_rejected",
+        "screen_watch_started",
+        "screen_watch_rejected",
         "capability_evaluated",
         "action_rejected",
         "action_confirmed",
-        "action_executed",
-        "task_finished"
+        "action_executed"
       ]
     },
     "capability": {

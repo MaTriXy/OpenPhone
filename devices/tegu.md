@@ -137,6 +137,36 @@ wipe data.
 Flashing instructions currently follow the upstream Lineage `tegu` install flow
 until OpenPhone has its own release package and installer documentation.
 
+## Optional User-Supplied Google Apps
+
+OpenPhone does not ship Google Play Store, Google Play Services, or Google
+apps. Users who want Google Play on their own Pixel 9a can sideload a
+compatible user-supplied Google apps package after installing the OpenPhone OTA.
+See [../docs/GMS.md](../docs/GMS.md) for the project policy and compatibility
+notes.
+
+Install the package immediately after the OpenPhone OTA, before first normal
+boot, unless the package's own instructions say otherwise.
+
+Typical recovery flow:
+
+```text
+1. Sideload the OpenPhone OTA.
+2. If recovery asks "Install additional packages?", choose Yes.
+3. If recovery says it must reboot recovery first, choose Yes.
+4. Return to Apply update -> Apply from ADB.
+5. From the host, run:
+   scripts/download-mindthegapps.sh
+   scripts/sideload-user-gms.sh \
+     --package .worktree/downloads/gms/MindTheGapps-16.0.0-arm64-*.zip
+6. If recovery reports success, choose Reboot system now.
+```
+
+The sideload helper only runs `adb sideload` against a local ZIP. It does not
+download, bundle, validate, or license Google packages. The download helper
+fetches a public MindTheGapps GitHub release into ignored local worktree state
+and verifies the release-provided SHA-256 before sideloading.
+
 ## Bringup Notes
 
 The first OpenPhone smoke OTA installed and produced valid OpenPhone userspace,

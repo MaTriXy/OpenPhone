@@ -15,6 +15,7 @@
         "home",
         "recents",
         "open_app",
+        "open_url",
         "launch_intent",
         "notification_action",
         "copy",
@@ -59,6 +60,9 @@
       "additionalProperties": false
     },
     "text": {
+      "type": "string"
+    },
+    "url": {
       "type": "string"
     },
     "mime_type": {

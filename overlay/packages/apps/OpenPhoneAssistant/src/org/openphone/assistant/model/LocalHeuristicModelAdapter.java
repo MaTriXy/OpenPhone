@@ -48,8 +48,9 @@ public final class LocalHeuristicModelAdapter implements ModelAdapter {
         if (mCancelled || executor.isCancelled()) {
             return cancelled();
         }
-        String screen = executor.callTool("get_screen", "{}");
-        recordStep(steps, "get_screen", "{}", screen);
+        String screenRequest = "{\"reason\":\"observe current screen for local heuristic task\"}";
+        String screen = executor.callTool("get_screen", screenRequest);
+        recordStep(steps, "get_screen", screenRequest, screen);
         if (mCancelled || executor.isCancelled()) {
             return cancelled();
         }

@@ -40,6 +40,10 @@
       },
       "uniqueItems": true
     },
+    "grant_defaults_source": {
+      "type": "string",
+      "description": "Source used to populate initial task-grant defaults, for example settings_secure or app_private_fallback."
+    },
     "expires_in_seconds": {
       "type": "integer",
       "minimum": 1

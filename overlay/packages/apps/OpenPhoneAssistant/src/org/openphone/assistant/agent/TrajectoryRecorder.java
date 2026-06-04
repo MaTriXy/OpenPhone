@@ -145,6 +145,7 @@ public final class TrajectoryRecorder {
 
     private void append(String eventType, JSONObject payload) throws JSONException {
         JSONObject event = new JSONObject()
+                .put("schema", "openphone.trajectory_event.v1")
                 .put("index", mEventIndex++)
                 .put("timestamp_ms", System.currentTimeMillis())
                 .put("event", eventType)

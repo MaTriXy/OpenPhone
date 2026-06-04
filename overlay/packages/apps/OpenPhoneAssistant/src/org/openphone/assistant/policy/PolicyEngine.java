@@ -52,6 +52,7 @@ public final class PolicyEngine {
         risks.put("notifications.act", CapabilityRisk.MEDIUM);
         risks.put("clipboard.read", CapabilityRisk.MEDIUM);
         risks.put("clipboard.write", CapabilityRisk.LOW);
+        risks.put("share.content", CapabilityRisk.HIGH);
         risks.put("files.read.scoped", CapabilityRisk.MEDIUM);
         risks.put("contacts.read", CapabilityRisk.MEDIUM);
         risks.put("calendar.read", CapabilityRisk.MEDIUM);
@@ -67,4 +68,3 @@ public final class PolicyEngine {
         return Collections.unmodifiableMap(risks);
     }
 }
-

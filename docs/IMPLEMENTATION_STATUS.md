@@ -13,7 +13,13 @@ This document tracks current implementation evidence against `SPEC.md`.
 - Patch-stack directory layout and patch application script.
 - Generic `openphone_arm64` product definition.
 - `vendor/openphone` common product layer.
-- Initial capability and policy JSON.
+- Initial capability and policy JSON, with repo validation that the assistant
+  fallback `PolicyEngine` covers every registered capability at the same risk
+  class.
+- Initial model-tool registry, with repo validation that registered tools map
+  to known capabilities and are covered by the framework tool executor and
+  OpenAI adapter. The tool executor now rejects reason-required model tools
+  that omit a non-empty model-visible reason.
 - Privileged permission allowlist seed file.
 - Persistent privileged `OpenPhoneAssistant` app with a basic task, context,
   input-grant, and audit control surface.
@@ -32,8 +38,8 @@ This document tracks current implementation evidence against `SPEC.md`.
 - Framework screen context now reports focused and visible activities from
   `ActivityTaskManagerInternal`.
 - Framework action execution supports `open_app`, Back, Home, Recents, tap,
-  long press, scroll, text input, clipboard write, clipboard paste, and
-  confirmed share chooser launch through mediated OS APIs.
+  long press, scroll, text input, web-link launch, clipboard write, clipboard
+  paste, and confirmed share chooser launch through mediated OS APIs.
 - Task-scoped `input.perform` grants are stored by the framework service from
   `approved_capabilities` / `granted_capabilities` on task creation. Pointer
   and text input fail closed without that task grant.
@@ -74,16 +80,78 @@ This document tracks current implementation evidence against `SPEC.md`.
   start, tool calls, tool results, final agent result, and stores screenshot
   payloads as files when returned by the framework. Task start events include
   the selected provider, model, cloud/local mode, and disclosure text.
+  `events.jsonl` records now include the `openphone.trajectory_event.v1`
+  schema marker, and `docs/contracts/trajectory-event.schema.json` defines the
+  first trajectory event contract.
 - Assistant trajectory export to `Downloads/OpenPhone` as a zip file, so
   physical eval evidence can be retrieved without ADB root or a debuggable
-  assistant package.
+  assistant package. `scripts/validate-trajectory-export.sh` validates exported
+  trajectory directories or zips before they are used as eval/release evidence.
+- Assistant audit evidence export to `Downloads/OpenPhone` is now backed by
+  `docs/contracts/audit-evidence.schema.json` and
+  `scripts/validate-audit-evidence-export.sh`.
 - Assistant-side accessibility screen tree capture. The privileged assistant
   now declares an OpenPhone accessibility service, auto-enables it with
   `WRITE_SECURE_SETTINGS`, records visible text and interactive elements, and
-  merges that UI tree into model `get_screen` results when requested.
+  merges that UI tree into model `get_screen` results when requested. The first
+  privacy guardrail now flags password/payment/account-like UI, redacts
+  password-field labels from the UI tree, and blocks screenshot tool results on
+  flagged screens while still returning redacted UI-tree context. The screen
+  context schema now covers the assistant UI-tree snapshot fields for source,
+  timestamp, windows, element state, view/window IDs, sensitivity, and risk
+  hints.
 - Framework tool executor now covers the initial plan vocabulary including
   `get_screen`, bounded `watch_screen`, `wait`, and explicit
-  `ask_user_confirmation` handoff results.
+  `ask_user_confirmation` handoff results. The first machine-readable
+  `openphone_model_tools.json` registry now maps those model-visible tools to
+  product capabilities, and reason-required tools are enforced at execution
+  time.
+- Framework tool execution now supports semantic UI targets through
+  `tap_element` and `long_press_element`. The model can select an
+  accessibility `interactive_elements[].id`, the assistant resolves that ID
+  against the current UI-tree snapshot, validates that the element is enabled
+  and bounded, and dispatches the action through the same OS-mediated input
+  path as normal taps/long presses. This was physically validated on Pixel 9a
+  by opening Settings and navigating to the Apps page through a labeled
+  `Apps | Recent apps, default apps` element instead of raw coordinate choice.
+- The development OpenAI loop now records lightweight after-action progress
+  verification for state-changing tools. After an action, it captures the next
+  screen, records before/after foreground app, activity, visible-text
+  signature, and interactive-element signature in the step record, and stops
+  with `no_progress` after repeated unchanged screens. This verifier is
+  repo-checked but still needs a fresh assistant APK build and Pixel eval before
+  it is treated as physically validated.
+- Model `open_url` tools now route through the framework `open_url` action and
+  `network.use` capability instead of direct assistant-side intent launches.
+- Repo checks now verify that action types emitted by `FrameworkToolExecutor`
+  are included in `docs/contracts/action-request.schema.json` and have matching
+  framework patch-stack handling.
+- Repo checks now verify that framework `recordAudit(...)` event names are
+  represented in `docs/contracts/audit-event.schema.json`.
+- Repo checks now verify that assistant trajectory event names emitted by
+  `TrajectoryRecorder` are represented in
+  `docs/contracts/trajectory-event.schema.json`.
+- Repo checks now exercise `scripts/validate-trajectory-export.sh` against
+  both a sample unpacked trajectory directory and zip.
+- Repo checks now exercise `scripts/validate-audit-evidence-export.sh` against
+  a sample framework audit evidence export.
+- Agent eval reporting now has a public evidence contract at
+  `docs/contracts/agent-eval-report.schema.json`.
+  `scripts/validate-agent-eval-report.sh` validates eval report structure,
+  checks assistant package metadata against the repo manifest, rejects absolute
+  or parent-traversing evidence paths, and can validate referenced trajectory
+  and framework audit evidence together.
+- `scripts/collect-agent-eval.sh` now provides the host-side physical eval
+  bridge: after the assistant exports trace/audit files, it pulls the newest
+  evidence from `Downloads/OpenPhone`, records device/build/model metadata,
+  writes `agent-eval.json`, and runs the eval evidence validator.
+- `scripts/diagnose-device-connection.sh` now captures the current host/device
+  connection state for bringup blockers. It records macOS USB visibility when
+  available, ADB device state, fastboot visibility, shell/logcat probes, and a
+  concrete diagnosis such as no USB enumeration, fastboot-visible,
+  ADB unauthorized, ADB-shell-unusable, partial ADB, or ready.
+- Repo checks now verify that the screen-context schema covers the key
+  assistant accessibility UI-tree fields and risk flags.
 - The assistant now shows a user-facing approval surface for pending framework
   actions and model confirmation requests. It summarizes risk, capability, and
   requested action outside the raw developer JSON view and keeps approve/deny
@@ -97,7 +165,25 @@ This document tracks current implementation evidence against `SPEC.md`.
   input/navigation, screenshots, clipboard, sharing, and web links. The
   selected grants are sent to the framework task request, and the assistant
   locally stops model tools that exceed the selected grants before they reach
-  framework execution.
+  framework execution. Grant defaults are now persisted through Settings-owned
+  `Settings.Secure` keys with app-private fallback for migration/development.
+- A first per-app capability policy seed exists at
+  `overlay/vendor/openphone/config/openphone_app_policy.json` and is installed
+  into `system_ext`. The assistant-side accessibility screen tree now reports
+  `foreground_package` and `root_packages`; assistant model-tool preflight
+  first checks durable `Settings.Secure` app-policy overrides under
+  `openphone_app_policy_overrides`, then uses the seed plus package context to
+  require confirmation or deny sensitive package/capability combinations before
+  framework execution. The seed covers Settings, permission prompts, Play
+  Store, Google account/payment surfaces, and lock-credential/password surfaces
+  as a conservative v1 baseline. `scripts/generate-app-policy-override.sh`
+  generates and can install valid override JSON for development/eval use, and
+  repo checks validate the generated payload against known capabilities. The
+  Settings-owned full per-app editor is deliberately deferred until the core
+  agent loop has stronger physical evidence.
+- The assistant fallback policy now includes `share.content` as a high-risk
+  capability, matching the product capability registry and framework share
+  action path.
 - Assistant model runs now have stop/cancel wiring: the active adapter can be
   cancelled, the model thread is interrupted, stale run generations cannot
   update the UI, and disconnected OpenAI calls return `cancelled` instead of a
@@ -113,11 +199,48 @@ This document tracks current implementation evidence against `SPEC.md`.
   when OpenPhone is using the development OpenAI cloud path, what model is in
   use, what screen/task data may be sent, and that the dev API key is kept only
   in memory.
+- Assistant cloud model transport now supports a broker/proxy mode. In broker
+  mode, the assistant sends the same task-scoped Responses and transcription
+  request shapes to an OpenPhone-controlled endpoint with a session token, so
+  provider API keys can stay server-side. Direct phone-to-OpenAI remains as a
+  development option.
+- A first dependency-free model broker reference server exists under
+  `services/model-broker/`. It validates bearer session tokens, applies
+  coarse body-size plus per-token/IP request-count and byte-volume rate limits,
+  avoids request-body logging,
+  proxies `/v1/responses` and `/v1/audio/transcriptions` to OpenAI, and can
+  mint signed expiring development session tokens through both a CLI helper and
+  an admin-authenticated `/v1/session_tokens` endpoint. It also supports
+  structured JSONL request-outcome audit events, a JSON provider/model registry,
+  a JSON device-subject registry for token issuance, optional per-subject
+  development HMAC device proofs before token minting, and an optional
+  environment override for Responses API model allowlisting. First-pass Linux
+  deployment hardening artifacts live under `services/model-broker/deploy/`:
+  a locked-down systemd unit, an environment template that keeps secrets out of
+  the repository, an nginx TLS reverse-proxy template, and installation notes
+  for localhost binding behind HTTPS. `scripts/rotate-model-broker-secrets.sh`
+  provides a first operational helper for rotating broker token-signing and
+  admin-token secrets without modifying provider keys, and for rotating the
+  provider key without modifying broker token/admin secrets.
+  `scripts/setup-model-broker-tls.sh` provides a first certbot/nginx helper for
+  rendering broker-domain TLS config and running or printing certificate
+  issuance and renewal-validation commands.
+- Automated model broker smoke coverage exists at
+  `scripts/smoke-test-model-broker.sh` and is wired into `scripts/check.sh`.
+  It verifies local health, admin authorization failure, token minting through
+  `/v1/session_tokens`, required/invalid device-attestation rejection, signed
+  token acceptance, malformed JSON rejection, device-registry-backed subject
+  rejection, registry-backed model allowlist rejection, request-size and
+  byte-rate rejection, transcription content-type enforcement,
+  OpenPhone metadata requirements, sensitive-screen rejection, image-count
+  limits, bounded provider retry on transient 429/5xx failures, body-free
+  audit events, and no request-body leakage into audit/server logs.
 - Settings now exposes OpenPhone as a first-class OS surface: About phone has
   OpenPhone version/support rows and the Settings homepage has an OpenPhone page
   with assistant, task-grant, audit-evidence, and support entry points. Settings
-  also has first dedicated OpenPhone task-grant and audit pages; the audit page
-  reads framework service status and recent audit events directly through
+  also has dedicated OpenPhone task-grant and audit pages; the task-grant page
+  stores durable defaults in `Settings.Secure`, and the audit page reads
+  framework service status and recent audit events directly through
   `OpenPhoneAgentManager` when the service is available.
 - Build, flash, and scaffold validation scripts.
 - Pixel 9a hardware smoke-test evidence script. The script captures automated
@@ -133,9 +256,29 @@ This document tracks current implementation evidence against `SPEC.md`.
 - Release artifact validation gate. `scripts/validate-release-artifacts.sh`
   verifies staged release checksums, OTA ZIP integrity, required manifests, and
   obvious secret/key mistakes before publication.
+- OTA feed contract and tooling. `docs/contracts/ota-feed.schema.json` defines
+  the first server-side update feed for future updater clients.
+  `scripts/generate-ota-feed.sh` writes feed JSON for a staged OTA, and
+  `scripts/validate-ota-feed.sh` verifies feed structure plus local artifact
+  size/SHA-256 when an artifact directory is provided.
 - Release draft preparation. `scripts/prepare-github-release.sh` validates a
   staged release directory and writes an inspectable GitHub CLI draft-release
   command plus asset list for the release.
+- Current v0.0.1 preview release staging evidence:
+  - Clean local staging directory:
+    `.worktree/releases/v0.0.1-preview`.
+  - Staged OTA:
+    `openphone_tegu-settings-grants-v55-ota.zip`.
+  - Staged OTA SHA-256:
+    `c2f08cad2b5247eb88982c4799901fb5f70d451ffde8cb3fde0e0b463f95a443`.
+  - Generated manifest:
+    `.worktree/releases/v0.0.1-preview/release-v0.0.1-preview/ARTIFACTS.md`.
+  - Generated checksums:
+    `.worktree/releases/v0.0.1-preview/release-v0.0.1-preview/SHA256SUMS`.
+  - Generated GitHub draft helper:
+    `.worktree/releases/v0.0.1-preview/release-v0.0.1-preview/gh-release-draft.sh`.
+  - `scripts/validate-release-artifacts.sh .worktree/releases/v0.0.1-preview`
+    passed.
 - Local JSON/XML/shell scaffold checks.
 - macOS case-sensitive Android build volume helper.
 - Sync preflight checks for case-sensitive filesystem and Git LFS.
@@ -173,8 +316,9 @@ This document tracks current implementation evidence against `SPEC.md`.
 - Fully reproducible device-specific flashable image generation. The Pixel 9a
   build path now has first automation for extracting the known-good DTB before
   target-files/OTA-producing goals and verifying generated
-  `vendor_kernel_boot.img` afterward, but release signing and clean-room
-  reproducibility still need work.
+  `vendor_kernel_boot.img` afterward, and first private release-signing
+  workspace/signing wrapper support exists. Actually producing and validating a
+  signed release OTA and clean-room reproducibility still need work.
 - Typed framework parcelables for screen context, action requests, policy
   decisions, and audit events. The current Binder contract intentionally uses
   JSON strings while the service boundary is still stabilizing.
@@ -184,10 +328,11 @@ This document tracks current implementation evidence against `SPEC.md`.
   metadata, opt-in JPEG screenshot payloads, and a first assistant-side
   accessibility UI tree for visible text and interactive elements.
 - Production model transport. A development OpenAI Responses vision adapter is
-  physically validated, but it still uses a manually entered in-memory dev API
-  key and direct phone-to-OpenAI HTTPS. A production build still needs a secure
-  broker/key flow, provider registry, retry policy, rate limits, and stronger
-  privacy controls.
+  physically validated and the assistant now has a first broker/proxy transport
+  option plus a reference broker with signed session-token minting and a first
+  provider/model registry and device-subject registry, but a production build
+  still needs stronger device attestation, retry policy, stronger rate limits,
+  and stronger privacy controls.
 - Vision-based action selection. The development OpenAI adapter can now run a
   bounded screenshot/action loop, but this remains a dev path that needs
   stronger physical eval evidence, production transport, and safer confirmation
@@ -202,13 +347,17 @@ This document tracks current implementation evidence against `SPEC.md`.
   A basic assistant approve/deny path exists for pending actions, but there is
   no system modal, timeout, per-app grant editor, or high-friction payment/
   messaging flow.
-- Full Settings-hosted grant editor. Settings now exposes top-level OpenPhone,
-  task-grant, and audit pages, but grants are still explained rather than
-  edited as durable per-app/per-capability policy.
-- SystemUI background task surface. Current cursor/status affordance is owned
-  by the assistant app, not SystemUI.
+- Full Settings-hosted per-app/per-capability grant editor. Settings now
+  exposes top-level OpenPhone, task-grant, and audit pages, and it can edit
+  global durable task-grant defaults. Per-app/per-capability policy remains a
+  seed plus development override contract until the core agent loop is
+  physically stronger.
+- SystemUI background task surface. A first native `openphone_agent` Quick
+  Settings tile is implemented and builds; it shows agent availability, opens
+  the assistant when idle, and stops the active framework task when running.
+  A richer status-bar/dynamic-island surface remains pending.
 - Remaining SELinux policy for richer action execution and future services.
-- OTA client and release signing.
+- On-device OTA client and actual signed release artifact validation.
 - Kernel source publication flow.
 - Vendor blob extraction and redistribution policy per device.
 
@@ -434,6 +583,205 @@ Post-plan implementation evidence on the EC2 Linux build host:
 - v51 OTA zip integrity check passes locally with `unzip -tq`.
 - v51 physical Pixel 9a sideload/runtime validation is pending; ADB still lists
   the device but closes shell sessions with `error: closed`.
+- v52 SystemUI agent tile build evidence:
+  - EC2 focused `SystemUI` build passed for `openphone_tegu-bp4a-userdebug`.
+  - EC2 full `otapackage` build passed for `openphone_tegu-bp4a-userdebug`.
+  - Local OTA staged at
+    `.worktree/artifacts/tegu/openphone_tegu-systemui-agent-tile-v52-ota.zip`.
+  - OTA SHA-256:
+    `97a08c5bceb062f53769988b432d64aebd51cf5e9217c9eb9db55d076b38f2b2`.
+  - `unzip -tq` passed for the local OTA copy.
+  - Added `patches/frameworks_base/0011-OpenPhone-add-SystemUI-agent-QS-tile.patch`.
+  - Physical sideload/runtime validation is pending. Earlier post-wipe checks
+    reached an `adb shell` `error: closed` state; the latest local retry does
+    not enumerate the Pixel over USB at all.
+- v53 assistant broker transport evidence:
+  - Added assistant-side `ModelEndpointConfig` and broker/proxy mode for
+    `/v1/responses` and `/v1/audio/transcriptions` request shapes.
+  - Assistant direct OpenAI mode remains available for development.
+  - EC2 focused `OpenPhoneAssistant` build passed for
+    `openphone_tegu-bp4a-userdebug`.
+  - EC2 full `otapackage` build passed for `openphone_tegu-bp4a-userdebug`.
+  - Local OTA staged at
+    `.worktree/artifacts/tegu/openphone_tegu-broker-systemui-v53-ota.zip`.
+  - OTA SHA-256:
+    `f72000529942ab728512a8c8a49a7e42ed311c0db861c79237abdbd5bab25a9a`.
+  - `unzip -tq` passed for both the EC2 OTA and local OTA copy.
+  - EC2 APK metadata:
+    `versionCode=49`, `versionName=0.1.13-dev`.
+  - EC2 APK SHA-256:
+    `e5dd7d5cc26c052aa792670142f3c1e24bedc5ccf5eeedd3413f005aee2d5020`.
+  - Added `services/model-broker/openphone_model_broker.py`; local repo checks
+    compile it with `python3 -m py_compile`.
+  - Local broker smoke test passed for `GET /healthz`, unauthorized
+    `/v1/responses` rejection, signed-token minting/authentication, and
+    `/v1/audio/transcriptions` content-type validation.
+  - Local broker hardening smoke test passed for malformed JSON rejection,
+    disallowed response-model rejection, and JSONL audit event writing without
+    request bodies.
+  - Added `scripts/smoke-test-model-broker.sh` and wired it into
+    `scripts/check.sh` so the broker smoke coverage runs as part of normal repo
+    validation.
+  - Added admin-authenticated `POST /v1/session_tokens` to the broker so
+    hosted development services can mint signed, expiring device/session tokens
+    through HTTP instead of using only the CLI helper. The smoke test now
+    verifies unauthorized issuer rejection and successful issuer minting before
+    using the minted token against model endpoints.
+  - Added `services/model-broker/providers.example.json` and registry loading
+    through `OPENPHONE_BROKER_PROVIDER_REGISTRY`; the broker smoke test now
+    uses the registry-backed model allowlist before provider forwarding.
+  - Added `services/model-broker/devices.example.json` and registry loading
+    through `OPENPHONE_BROKER_DEVICE_REGISTRY`; when configured, the token
+    issuer rejects unknown subjects before minting session tokens. Registry
+    entries can also reference a per-subject attestation secret env var; when
+    present, `/v1/session_tokens` requires a fresh HMAC proof from that
+    subject before minting. The broker smoke test now verifies allowed,
+    rejected, missing-attestation, and invalid-attestation paths.
+  - Added first-pass deployment artifacts under
+    `services/model-broker/deploy/`: hardened systemd unit, environment
+    template, and deployment README for running the broker as a restricted
+    Linux service behind TLS.
+  - Added `services/model-broker/deploy/nginx-openphone-model-broker.conf`, an
+    nginx HTTPS reverse-proxy template that redirects HTTP, exposes `/healthz`
+    and `/v1/`, sets no-store/security headers, aligns body-size limits, and
+    proxies to the localhost-bound broker.
+  - Added `scripts/rotate-model-broker-secrets.sh`, which can print fresh
+    broker secrets or atomically rotate `OPENPHONE_BROKER_TOKEN_SECRET` and
+    `OPENPHONE_BROKER_ADMIN_TOKENS` in a deployed env file while preserving
+    provider keys. The helper can also rotate `OPENAI_API_KEY` while
+    preserving broker token/admin secrets. `scripts/check.sh` validates both
+    modes against temporary env files.
+  - Added `scripts/setup-model-broker-tls.sh`, which renders the nginx broker
+    TLS template for a domain/email and prints or applies the certbot/nginx
+    commands for certificate issuance and renewal dry-run validation.
+    `scripts/check.sh` validates the render path.
+  - Added `scripts/prepare-release-signing.sh`, which creates a private
+    release-signing workspace outside the repository with a `.gitignore`,
+    `README.md`, and Android releasetools key map. `scripts/check.sh` validates
+    the helper against a temporary directory.
+  - Added `scripts/sign-release-ota.sh`, a private-build-environment wrapper
+    around Android `sign_target_files_apks` and `ota_from_target_files`.
+    It refuses in-repo key directories, verifies required key material before
+    real signing, writes a signed OTA checksum, and has a `--dry-run` mode
+    covered by `scripts/check.sh`.
+  - Added `docs/contracts/ota-feed.schema.json`,
+    `scripts/generate-ota-feed.sh`, and `scripts/validate-ota-feed.sh` for the
+    first server-side OTA feed contract. `scripts/check.sh` validates feed
+    generation and local artifact matching against a temporary OTA file.
+  - Added first assistant-side sensitive-screen handling for the accessibility
+    UI-tree path. Password fields are redacted in model-visible UI-tree
+    context; password/payment/account-like risk flags cause screenshot capture
+    tools to return `screen.blocked` instead of a base64 screenshot.
+  - Added repo validation that `PolicyEngine` stays in sync with
+    `openphone_capabilities.json`, and fixed the missing `share.content`
+    high-risk mapping in the assistant fallback policy.
+  - Added `overlay/vendor/openphone/config/openphone_model_tools.json` and
+    `docs/contracts/model-tool.schema.json`. Repo checks now verify every
+    registered model tool maps to a known capability and is covered by
+    `FrameworkToolExecutor` plus the OpenAI adapter's allowed/terminal tool
+    handling. Fixed stale OpenAI adapter capability IDs for share and text
+    input.
+  - Added `patches/frameworks_base/0012-OpenPhone-add-mediated-open-url-action.patch`
+    so model web-link launches are mediated by `system_server`, require the
+    `network.use` capability path, and write framework audit events. The
+    assistant tool executor no longer starts web intents directly.
+  - Extended repo checks so assistant-emitted framework action types must be
+    listed in `docs/contracts/action-request.schema.json` and present in the
+    framework patch stack with expected capability mappings.
+  - Enforced `requires_reason` from the model-tool contract in
+    `FrameworkToolExecutor`; local heuristic and OpenAI development paths now
+    send model-visible reasons for `get_screen`, app/web launches, confirmation
+    requests, and other reason-required tools.
+  - Expanded `docs/contracts/audit-event.schema.json` to cover framework screen
+    capture/watch and task stop events, and added CI validation that the schema
+    stays aligned with framework `recordAudit(...)` event names.
+  - Added `docs/contracts/trajectory-event.schema.json` and schema markers for
+    assistant trajectory JSONL events. CI validates that trajectory recorder
+    event names stay aligned with the contract.
+  - Added `scripts/validate-trajectory-export.sh` for exported assistant trace
+    evidence. It checks trajectory JSONL schema markers, event order, required
+    task/result events, screenshot file references, and obvious secret/raw
+    base64 leakage. `scripts/check.sh` exercises both directory and zip inputs.
+  - Added `docs/contracts/audit-evidence.schema.json` and
+    `scripts/validate-audit-evidence-export.sh` for framework audit evidence
+    exports. The validator checks the schema marker, service status, audit event
+    names, redaction, and obvious secret/raw-base64 leakage.
+  - Expanded `docs/contracts/screen-context.schema.json` to cover the
+    assistant accessibility UI-tree snapshot shape, and added CI checks for key
+    emitted root/window/element fields plus sensitive-screen risk flags.
+  - Physical sideload/runtime validation is pending. Earlier post-wipe checks
+    reached an `adb shell` `error: closed` state; the latest local retry does
+    not enumerate the Pixel over USB at all.
+- v54 persisted assistant task-grant defaults evidence:
+  - Added assistant app-private persistence for input/navigation, screenshot,
+    clipboard, share-sheet, and web-link grant defaults.
+  - Assistant task requests now include `grant_defaults_source` so trajectory
+    and framework evidence can distinguish persisted defaults from one-off UI
+    state.
+  - EC2 focused `OpenPhoneAssistant` build passed for
+    `openphone_tegu-bp4a-userdebug`.
+  - EC2 full `otapackage` build passed for `openphone_tegu-bp4a-userdebug`.
+  - EC2 APK metadata:
+    `versionCode=50`, `versionName=0.1.14-dev`.
+  - EC2 APK SHA-256:
+    `5205949d1c6060fdecb25c88bd28cff4f02aa6daf3b86b5a87a3c5c0981fb191`.
+  - Local OTA staged at
+    `.worktree/artifacts/tegu/openphone_tegu-persisted-grants-v54-ota.zip`.
+  - OTA SHA-256:
+    `23dcd90f8ab2d532fe5732311a6828a1a6165f64f173881d73ef65255f226132`.
+  - `unzip -tq` passed for both the EC2 OTA and local OTA copy.
+  - Local APK staged at
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-persisted-grants-v54.apk`.
+  - Physical install/runtime validation is pending while ADB service channels
+    still close with `error: closed`.
+- v55 Settings-owned durable task-grant defaults evidence:
+  - Added `patches/packages_apps_Settings/0004-OpenPhone-add-durable-task-grant-defaults.patch`.
+  - Settings task grants are now editable switches backed by `Settings.Secure`
+    keys:
+    `openphone_task_grant_input`,
+    `openphone_task_grant_screenshot`,
+    `openphone_task_grant_clipboard`,
+    `openphone_task_grant_share`, and
+    `openphone_task_grant_network`.
+  - The assistant reads the same secure keys, keeps app-private fallback for
+    migration/development, and marks new task requests with
+    `grant_defaults_source=settings_secure`.
+  - EC2 focused `Settings OpenPhoneAssistant` build passed for
+    `openphone_tegu-bp4a-userdebug`.
+  - EC2 APK metadata:
+    `versionCode=51`, `versionName=0.1.15-dev`.
+  - EC2 assistant APK SHA-256:
+    `311d6bab821573b1654ddb73bf33278937d483efac11f2ee0c8e474688fa9027`.
+  - EC2 Settings APK SHA-256:
+    `d4e296a5af8742c211ad54c5ac025bd8e5326d76af9f10ae03ffb3ccbe7d0c4e`.
+  - EC2 full `otapackage` build passed for `openphone_tegu-bp4a-userdebug`.
+  - Local OTA staged at
+    `.worktree/artifacts/tegu/openphone_tegu-settings-grants-v55-ota.zip`.
+  - OTA SHA-256:
+    `c2f08cad2b5247eb88982c4799901fb5f70d451ffde8cb3fde0e0b463f95a443`.
+  - `unzip -tq` passed for the local OTA copy.
+  - Current clean v0.0.1 preview staging was regenerated from this OTA and
+    passed `scripts/validate-release-artifacts.sh`.
+  - Physical install/runtime validation is pending. After onboarding and USB
+    debugging were re-enabled locally, the device previously reported as
+    `device` while `adb shell` returned `error: closed`; the latest local retry
+    no longer enumerates the Pixel over USB, so cable/port/device USB state must
+    be recovered first.
+- v56 preview OTA client implementation evidence:
+  - Added `OtaUpdateClient` to the privileged assistant app.
+  - The assistant Advanced panel now has a Preview OTA Updates surface with OTA
+    feed URL input, feed check, and verified download actions.
+  - Feed checks require `schema_version=1`, target the current `Build.DEVICE`,
+    and parse the first update from `docs/contracts/ota-feed.schema.json`.
+  - OTA downloads write to `Downloads/OpenPhone` through `MediaStore`, remain
+    pending until complete, and are deleted if the downloaded size or SHA-256
+    does not match the feed.
+  - Installation is intentionally still manual for the preview; recovery
+    sideload or the host flashing flow remains the supported installation path.
+  - Assistant package metadata is bumped to `versionCode=52`,
+    `versionName=0.1.16-dev`.
+  - Physical install/runtime validation is pending until host USB/ADB
+    enumeration is recovered.
 
 Post-plan physical Pixel 9a evidence:
 
@@ -627,23 +975,31 @@ Pixel 9a assistant trajectory-export OTA evidence:
 - EC2 APK size: `107157`.
 - Build script verified generated Pixel 9a `vendor_kernel_boot.img` contains
   the known-good DTB.
-- This OTA is built but not yet physically sideloaded because the phone is
-  still in the post-wipe ADB shell-closed state.
+- This historical OTA was built but not physically sideloaded at the time
+  because the phone was in the post-wipe ADB shell-closed state. The phone later
+  recovered ADB shell/logcat and now supports privileged assistant APK
+  fast-iteration for assistant/model-loop changes.
 
 ## Next Engineering Step
 
 Move from boot/runtime verification to capability validation on the physical
 Pixel 9a:
 
-1. Recover ADB shell/logcat/install channels by completing onboarding,
-   re-enabling USB debugging, and accepting the host authorization prompt.
-2. Run `./scripts/verify-tegu-device.sh` and require PackageManager to report
-   the current manifest package version before evals continue.
-3. Re-run Eval 1 and Eval 2 from `docs/TESTING.md` on physical hardware.
-4. Sideload the v48 Settings/About build, verify the OpenPhone version/support
-   rows in Settings/About phone, then use the assistant's Export Audit control
-   to collect framework audit evidence without ADB root.
-5. Inspect trajectory files and framework audit events for screenshot payloads,
+1. Use privileged assistant APK push for assistant UI, model-loop, prompt,
+   policy, and trajectory changes. Build/flash a full OTA only for framework,
+   sepolicy, Settings, SystemUI, boot-chain, or first-install changes.
+2. Run the core Agent v1 eval set from `docs/TESTING.md`: observe current
+   screen, open Settings, browser search, text-field drafting without
+   submission, Back/Home navigation, and risky-action confirmation. App
+   installation is deferred until OpenPhone has a proper app-store strategy.
+3. Re-run `./scripts/smoke-test-tegu-hardware.sh`; the latest automated
+   baseline completed with Wi-Fi, Bluetooth, camera service, sensors, battery,
+   thermal, framework service, shell, and logcat visible, while SIM/calls/SMS,
+   audio playback/capture, camera capture, fingerprint, reboot, and factory
+   reset remain manual-required sections.
+4. Use the assistant's Export Audit control to collect framework audit evidence
+   without ADB root.
+6. Inspect trajectory files and framework audit events for screenshot payloads,
    UI-tree context, model tool calls, policy decisions, and action results.
-6. Continue from local evals to cloud model evals with a production-safe key
+7. Continue from local evals to cloud model evals with a production-safe key
    flow or explicit development broker.

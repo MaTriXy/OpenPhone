@@ -6,7 +6,9 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.graphics.Rect;
 import android.provider.Settings;
+import android.text.InputType;
 import android.text.TextUtils;
+import android.util.DisplayMetrics;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
@@ -100,15 +102,18 @@ public final class OpenPhoneAccessibilityService extends AccessibilityService {
                     .put("timestamp_ms", System.currentTimeMillis())
                     .put("visible_text", new JSONArray())
                     .put("interactive_elements", new JSONArray())
-                    .put("risk_flags", new JSONArray());
+                    .put("risk_flags", new JSONArray())
+                    .put("root_packages", new JSONArray());
 
             Set<String> textSeen = new HashSet<>();
             Counter counter = new Counter();
+            DisplayMetrics metrics = getResources().getDisplayMetrics();
+            Rect screenBounds = new Rect(0, 0, metrics.widthPixels, metrics.heightPixels);
             List<AccessibilityWindowInfo> windows = getWindows();
             if (windows == null || windows.isEmpty()) {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root != null) {
-                    collect(root, snapshot, textSeen, counter, null);
+                    collect(root, snapshot, textSeen, counter, null, screenBounds);
                     root.recycle();
                 } else {
                     snapshot.getJSONArray("risk_flags").put("ui_tree_unavailable");
@@ -130,7 +135,7 @@ public final class OpenPhoneAccessibilityService extends AccessibilityService {
                             .put("bounds", boundsJson(bounds)));
                     AccessibilityNodeInfo root = window.getRoot();
                     if (root != null) {
-                        collect(root, snapshot, textSeen, counter, window);
+                        collect(root, snapshot, textSeen, counter, window, screenBounds);
                         root.recycle();
                     }
                 }
@@ -154,21 +159,44 @@ public final class OpenPhoneAccessibilityService extends AccessibilityService {
     }
 
     private static void collect(AccessibilityNodeInfo node, JSONObject snapshot,
-            Set<String> textSeen, Counter counter, AccessibilityWindowInfo window)
+            Set<String> textSeen, Counter counter, AccessibilityWindowInfo window,
+            Rect screenBounds)
             throws JSONException {
         if (node == null) {
             return;
         }
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+        if (!isNodeVisibleOnScreen(node, bounds, screenBounds)) {
+            return;
+        }
+        CharSequence packageName = node.getPackageName();
+        if (packageName != null && packageName.length() > 0) {
+            String packageNameString = packageName.toString();
+            addRootPackage(snapshot, packageNameString);
+            if (!snapshot.has("foreground_package")) {
+                snapshot.put("foreground_package", packageNameString);
+            }
+        }
         CharSequence textValue = firstNonEmpty(node.getText(), node.getContentDescription());
-        String label = textValue == null ? "" : textValue.toString().trim();
+        String rawLabel = textValue == null ? "" : textValue.toString().trim();
+        if (rawLabel.isEmpty() && isInteractive(node)) {
+            rawLabel = subtreeLabel(node, 0).trim();
+        }
+        boolean sensitiveInput = isSensitiveInput(node);
+        boolean sensitiveHint = hasSensitiveHint(rawLabel, node.getViewIdResourceName());
+        String label = sensitiveInput ? "<redacted sensitive input>" : rawLabel;
+        if (sensitiveInput) {
+            addRiskFlag(snapshot, "sensitive_input_visible");
+        } else if (sensitiveHint) {
+            addRiskFlag(snapshot, "account_or_payment_hint_visible");
+        }
         if (!label.isEmpty() && textSeen.add(label)
                 && snapshot.getJSONArray("visible_text").length() < MAX_TEXT_ITEMS) {
             snapshot.getJSONArray("visible_text").put(label);
         }
 
         if (isInteractive(node) && counter.elements < MAX_ELEMENTS) {
-            Rect bounds = new Rect();
-            node.getBoundsInScreen(bounds);
             JSONObject element = new JSONObject()
                     .put("id", "el-" + counter.elements)
                     .put("kind", kindFor(node))
@@ -176,6 +204,11 @@ public final class OpenPhoneAccessibilityService extends AccessibilityService {
                     .put("bounds", boundsJson(bounds))
                     .put("enabled", node.isEnabled())
                     .put("focused", node.isFocused());
+            if (sensitiveInput || sensitiveHint) {
+                element.put("sensitive", sensitiveInput)
+                        .put("risk_hint", sensitiveInput
+                                ? "sensitive_input" : "account_or_payment_hint");
+            }
             String viewId = node.getViewIdResourceName();
             if (viewId != null && !viewId.isEmpty()) {
                 element.put("view_id", viewId);
@@ -193,7 +226,7 @@ public final class OpenPhoneAccessibilityService extends AccessibilityService {
                 continue;
             }
             try {
-                collect(child, snapshot, textSeen, counter, window);
+                collect(child, snapshot, textSeen, counter, window, screenBounds);
             } finally {
                 child.recycle();
             }
@@ -207,6 +240,16 @@ public final class OpenPhoneAccessibilityService extends AccessibilityService {
     private static boolean isInteractive(AccessibilityNodeInfo node) {
         return node.isClickable() || node.isLongClickable() || node.isEditable()
                 || node.isFocusable() || node.isScrollable();
+    }
+
+    private static boolean isNodeVisibleOnScreen(AccessibilityNodeInfo node, Rect bounds,
+            Rect screenBounds) {
+        return node.isVisibleToUser()
+                && bounds != null
+                && screenBounds != null
+                && bounds.width() > 0
+                && bounds.height() > 0
+                && Rect.intersects(bounds, screenBounds);
     }
 
     private static String kindFor(AccessibilityNodeInfo node) {
@@ -223,6 +266,105 @@ public final class OpenPhoneAccessibilityService extends AccessibilityService {
             return "focusable";
         }
         return "element";
+    }
+
+    private static boolean isSensitiveInput(AccessibilityNodeInfo node) {
+        if (node.isPassword()) {
+            return true;
+        }
+        int inputType = node.getInputType();
+        int variation = inputType & InputType.TYPE_MASK_VARIATION;
+        return variation == InputType.TYPE_TEXT_VARIATION_PASSWORD
+                || variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                || variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+                || variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD;
+    }
+
+    private static boolean hasSensitiveHint(String label, String viewId) {
+        String combined = ((label == null ? "" : label) + " "
+                + (viewId == null ? "" : viewId)).toLowerCase(Locale.US);
+        return combined.contains("password")
+                || combined.contains("passcode")
+                || containsToken(combined, "pin")
+                || combined.contains("otp")
+                || combined.contains("one time")
+                || combined.contains("2fa")
+                || combined.contains("cvv")
+                || combined.contains("cvc")
+                || combined.contains("credit card")
+                || combined.contains("card number")
+                || combined.contains("payment")
+                || combined.contains("bank")
+                || combined.contains("login")
+                || combined.contains("log in")
+                || combined.contains("sign in");
+    }
+
+    private static boolean containsToken(String text, String token) {
+        if (text == null || token == null || token.isEmpty()) {
+            return false;
+        }
+        String[] parts = text.split("[^a-z0-9]+");
+        for (String part : parts) {
+            if (token.equals(part)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String subtreeLabel(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth > 3) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        CharSequence textValue = firstNonEmpty(node.getText(), node.getContentDescription());
+        if (!TextUtils.isEmpty(textValue)) {
+            builder.append(textValue.toString().trim());
+        }
+        for (int i = 0; i < node.getChildCount() && builder.length() < 160; i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child == null) {
+                continue;
+            }
+            try {
+                String childText = isSensitiveInput(child)
+                        ? "<redacted sensitive input>" : subtreeLabel(child, depth + 1);
+                if (!childText.trim().isEmpty()) {
+                    if (builder.length() > 0) {
+                        builder.append(" | ");
+                    }
+                    builder.append(childText.trim());
+                }
+            } finally {
+                child.recycle();
+            }
+        }
+        if (builder.length() > 180) {
+            return builder.substring(0, 180);
+        }
+        return builder.toString();
+    }
+
+    private static void addRiskFlag(JSONObject snapshot, String flag) throws JSONException {
+        JSONArray flags = snapshot.getJSONArray("risk_flags");
+        for (int i = 0; i < flags.length(); i++) {
+            if (flag.equals(flags.optString(i))) {
+                return;
+            }
+        }
+        flags.put(flag);
+    }
+
+    private static void addRootPackage(JSONObject snapshot, String packageName)
+            throws JSONException {
+        JSONArray packages = snapshot.getJSONArray("root_packages");
+        for (int i = 0; i < packages.length(); i++) {
+            if (packageName.equals(packages.optString(i))) {
+                return;
+            }
+        }
+        packages.put(packageName);
     }
 
     private static JSONArray boundsJson(Rect bounds) throws JSONException {
