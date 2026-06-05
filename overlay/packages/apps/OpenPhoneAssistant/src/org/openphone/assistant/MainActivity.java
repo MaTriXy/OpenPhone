@@ -124,6 +124,15 @@ public final class MainActivity extends Activity {
         applyDebugIntentExtras(intent);
     }
 
+    @Override
+    protected void onDestroy() {
+        cancelAgentRun();
+        if (mPointerOverlayController != null) {
+            mPointerOverlayController.hide();
+        }
+        super.onDestroy();
+    }
+
     private void applyDebugIntentExtras(Intent intent) {
         if (!debugIntentExtrasAllowed() || intent == null) {
             return;
@@ -943,15 +952,19 @@ public final class MainActivity extends Activity {
     private void stopTask() {
         cancelAgentRun();
         String taskId = mActiveTaskId;
-        if (mAgentManager != null && taskId != null) {
-            mAgentManager.stopTask(taskId, "{\"reason\":\"user_stopped_from_assistant\"}");
+        try {
+            if (mAgentManager != null && taskId != null) {
+                mAgentManager.stopTask(taskId, "{\"reason\":\"user_stopped_from_assistant\"}");
+            }
+        } catch (RuntimeException ignored) {
+        } finally {
+            mActiveTaskId = null;
+            mPendingActionId = null;
+            clearPendingToolAction();
+            hidePendingConfirmation();
+            mPointerOverlayController.hide();
+            OpenPhoneNotificationController.showReady(this);
         }
-        mActiveTaskId = null;
-        mPendingActionId = null;
-        clearPendingToolAction();
-        hidePendingConfirmation();
-        mPointerOverlayController.hide();
-        OpenPhoneNotificationController.showReady(this);
         mTaskView.setText("Task stopped");
         updateIsland("Stopped");
         refreshAudit();

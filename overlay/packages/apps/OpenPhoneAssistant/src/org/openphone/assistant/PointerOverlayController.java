@@ -15,9 +15,11 @@ import android.widget.TextView;
 final class PointerOverlayController {
     private static final int CURSOR_SIZE = 34;
     private static final int RIPPLE_SIZE = 96;
+    private static final long MAX_VISIBLE_MS = 5 * 60 * 1000;
 
     private final Context mContext;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
+    private final Runnable mWatchdogHide = this::hide;
     private WindowManager mWindowManager;
     private FrameLayout mRoot;
     private View mDot;
@@ -32,6 +34,7 @@ final class PointerOverlayController {
         mHandler.post(() -> {
             if (mRoot != null) {
                 updateChip(taskId);
+                armWatchdog();
                 return;
             }
             mWindowManager = mContext.getSystemService(WindowManager.class);
@@ -91,6 +94,7 @@ final class PointerOverlayController {
             params.gravity = Gravity.TOP | Gravity.LEFT;
             try {
                 mWindowManager.addView(mRoot, params);
+                armWatchdog();
             } catch (RuntimeException ignored) {
                 mRoot = null;
             }
@@ -99,9 +103,11 @@ final class PointerOverlayController {
 
     void hide() {
         mHandler.post(() -> {
+            mHandler.removeCallbacks(mWatchdogHide);
             if (mRoot == null || mWindowManager == null) {
                 return;
             }
+            clearTransientViews();
             try {
                 mWindowManager.removeView(mRoot);
             } catch (RuntimeException ignored) {
@@ -115,6 +121,7 @@ final class PointerOverlayController {
 
     void pointerMove(float x, float y) {
         mHandler.post(() -> {
+            armWatchdog();
             moveDotNow(x, y);
             pulseDot();
         });
@@ -122,6 +129,7 @@ final class PointerOverlayController {
 
     void pointerTap(float x, float y, boolean longPress) {
         mHandler.post(() -> {
+            armWatchdog();
             moveDotNow(x, y);
             showAction(longPress ? "Long press" : "Tap");
             pulseDot();
@@ -131,6 +139,7 @@ final class PointerOverlayController {
 
     void pointerSwipe(float startX, float startY, float endX, float endY) {
         mHandler.post(() -> {
+            armWatchdog();
             moveDotNow(startX, startY);
             showAction("Swipe");
             addSwipeTrail(startX, startY, endX, endY);
@@ -140,9 +149,15 @@ final class PointerOverlayController {
 
     void typingIndicator() {
         mHandler.post(() -> {
+            armWatchdog();
             showAction("Typing");
             pulseDot();
         });
+    }
+
+    private void armWatchdog() {
+        mHandler.removeCallbacks(mWatchdogHide);
+        mHandler.postDelayed(mWatchdogHide, MAX_VISIBLE_MS);
     }
 
     private void updateChip(String taskId) {
@@ -231,6 +246,28 @@ final class PointerOverlayController {
         try {
             mRoot.removeView(view);
         } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void clearTransientViews() {
+        if (mRoot == null) {
+            return;
+        }
+        for (int i = mRoot.getChildCount() - 1; i >= 0; i--) {
+            View child = mRoot.getChildAt(i);
+            if (child != mChip && child != mActionLabel && child != mDot) {
+                child.animate().cancel();
+                mRoot.removeViewAt(i);
+            }
+        }
+        if (mActionLabel != null) {
+            mActionLabel.animate().cancel();
+            mActionLabel.setAlpha(0f);
+        }
+        if (mDot != null) {
+            mDot.animate().cancel();
+            mDot.setScaleX(1f);
+            mDot.setScaleY(1f);
         }
     }
 

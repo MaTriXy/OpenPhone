@@ -127,6 +127,15 @@ public final class OpenPhoneAssistantService extends Service {
         return mBinder;
     }
 
+    @Override
+    public void onDestroy() {
+        if (mPointerOverlayController != null) {
+            mPointerOverlayController.hide();
+        }
+        OpenPhoneNotificationController.cancel(this);
+        super.onDestroy();
+    }
+
     private String startNotificationTask() {
         if (mAgentManager == null) {
             return null;
@@ -151,14 +160,18 @@ public final class OpenPhoneAssistantService extends Service {
     }
 
     private void stopNotificationTask() {
-        if (mAgentManager != null && mNotificationTaskId != null) {
-            mAgentManager.stopTask(mNotificationTaskId,
-                    "{\"reason\":\"user_stopped_from_notification\"}");
+        try {
+            if (mAgentManager != null && mNotificationTaskId != null) {
+                mAgentManager.stopTask(mNotificationTaskId,
+                        "{\"reason\":\"user_stopped_from_notification\"}");
+            }
+        } catch (RuntimeException ignored) {
+        } finally {
+            mNotificationTaskId = null;
+            if (mPointerOverlayController != null) {
+                mPointerOverlayController.hide();
+            }
+            OpenPhoneNotificationController.showReady(this);
         }
-        mNotificationTaskId = null;
-        if (mPointerOverlayController != null) {
-            mPointerOverlayController.hide();
-        }
-        OpenPhoneNotificationController.showReady(this);
     }
 }
