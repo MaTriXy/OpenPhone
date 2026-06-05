@@ -95,6 +95,7 @@ public final class MainActivity extends Activity {
     private CheckBox mUseBroker;
     private CheckBox mUseRealtime;
     private volatile boolean mAgentRunCancelled;
+    private boolean mIslandVoiceLaunch;
     private int mAgentRunGeneration;
     private int mAuditRefreshGeneration;
     private Thread mAgentThread;
@@ -151,7 +152,18 @@ public final class MainActivity extends Activity {
     }
 
     private void applyDebugIntentExtras(Intent intent) {
-        if (!debugIntentExtrasAllowed() || intent == null) {
+        if (intent == null) {
+            return;
+        }
+        if (intent.getBooleanExtra(EXTRA_START_VOICE, false)) {
+            mGoalInput.post(new Runnable() {
+                @Override
+                public void run() {
+                    startIslandVoiceAgent();
+                }
+            });
+        }
+        if (!debugIntentExtrasAllowed()) {
             return;
         }
         String apiKey = intent.getStringExtra(EXTRA_DEV_OPENAI_API_KEY);
@@ -174,14 +186,6 @@ public final class MainActivity extends Activity {
                 @Override
                 public void run() {
                     startAgentFromCurrentGoal();
-                }
-            });
-        }
-        if (intent.getBooleanExtra(EXTRA_START_VOICE, false)) {
-            mGoalInput.post(new Runnable() {
-                @Override
-                public void run() {
-                    startVoiceAgent();
                 }
             });
         }
@@ -763,6 +767,9 @@ public final class MainActivity extends Activity {
             mTaskView.setText("Model setup is missing. Open Developer settings and add a "
                     + "broker token or development API key.");
             updateIsland("Setup needed");
+            if (mIslandVoiceLaunch) {
+                finishIslandVoiceLaunch();
+            }
             return;
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
@@ -771,6 +778,24 @@ public final class MainActivity extends Activity {
             return;
         }
         listenThenRun();
+        if (mIslandVoiceLaunch) {
+            mGoalInput.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    moveTaskToBack(true);
+                }
+            }, 250);
+        }
+    }
+
+    private void startIslandVoiceAgent() {
+        mIslandVoiceLaunch = true;
+        startVoiceAgent();
+    }
+
+    private void finishIslandVoiceLaunch() {
+        mIslandVoiceLaunch = false;
+        moveTaskToBack(true);
     }
 
     @Override
@@ -814,6 +839,9 @@ public final class MainActivity extends Activity {
                     @Override
                     public void run() {
                         mListening = false;
+                        if (mIslandVoiceLaunch) {
+                            mIslandVoiceLaunch = false;
+                        }
                         if (finalError != null) {
                             mTaskView.setText("I couldn't hear the task.\n\n" + finalError);
                             updateIsland("Try again");

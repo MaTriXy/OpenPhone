@@ -527,7 +527,8 @@ final class PointerOverlayController {
 
     private void launchVoiceCapture() {
         Intent intent = new Intent(mContext, MainActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                | Intent.FLAG_ACTIVITY_NO_ANIMATION);
         intent.putExtra(MainActivity.EXTRA_START_VOICE, true);
         try {
             mContext.startActivity(intent);
