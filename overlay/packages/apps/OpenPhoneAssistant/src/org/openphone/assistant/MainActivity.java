@@ -64,6 +64,7 @@ public final class MainActivity extends Activity {
     private static final String SECURE_GRANT_CLIPBOARD = "openphone_task_grant_clipboard";
     private static final String SECURE_GRANT_SHARE = "openphone_task_grant_share";
     private static final String SECURE_GRANT_NETWORK = "openphone_task_grant_network";
+    private static final String SECURE_DEV_OPENAI_API_KEY = "openphone_dev_openai_api_key";
 
     private OpenPhoneAgentManager mAgentManager;
     private PointerOverlayController mPointerOverlayController;
@@ -739,8 +740,11 @@ public final class MainActivity extends Activity {
                     mBrokerUrlInput == null ? "" : mBrokerUrlInput.getText().toString(),
                     mBrokerTokenInput == null ? "" : mBrokerTokenInput.getText().toString());
         }
-        return ModelEndpointConfig.directOpenAi(
-                mApiKeyInput == null ? "" : mApiKeyInput.getText().toString());
+        String apiKey = mApiKeyInput == null ? "" : mApiKeyInput.getText().toString();
+        if (apiKey.isEmpty() && debugIntentExtrasAllowed()) {
+            apiKey = Settings.Secure.getString(getContentResolver(), SECURE_DEV_OPENAI_API_KEY);
+        }
+        return ModelEndpointConfig.directOpenAi(apiKey == null ? "" : apiKey);
     }
 
     private static String modelRunDisclosure(ModelAdapter adapter) {

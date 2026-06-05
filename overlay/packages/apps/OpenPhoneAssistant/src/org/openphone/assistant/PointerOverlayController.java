@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.DisplayCutout;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManager;
@@ -20,11 +21,12 @@ import android.widget.TextView;
 final class PointerOverlayController {
     private static final int CURSOR_SIZE = 34;
     private static final int RIPPLE_SIZE = 96;
-    private static final int ISLAND_WIDTH = 286;
-    private static final int ISLAND_HEIGHT = 58;
-    private static final int CAMERA_RESERVED_WIDTH = 70;
+    private static final int ISLAND_WIDTH = 244;
+    private static final int ISLAND_HEIGHT = 54;
+    private static final int CAMERA_RESERVED_WIDTH = 86;
     private static final int CAMERA_ISLAND_FALLBACK_TOP = 14;
     private static final int ACTION_LABEL_GAP = 12;
+    private static final long OPEN_APP_HOLD_MS = 5000;
     private static final long MAX_VISIBLE_MS = 5 * 60 * 1000;
     private static final long DONE_VISIBLE_MS = 2200;
 
@@ -39,6 +41,7 @@ final class PointerOverlayController {
     private TextView mLeftIslandText;
     private TextView mRightIslandText;
     private TextView mActionLabel;
+    private boolean mOpenAppHoldTriggered;
     private String mMode = "mic";
 
     PointerOverlayController(Context context) {
@@ -219,7 +222,39 @@ final class PointerOverlayController {
         mIslandRoot.setFocusable(false);
         mIslandRoot.setBackground(chipBackground());
         mIslandRoot.setPadding(10, 0, 10, 0);
-        mIslandRoot.setOnClickListener(view -> launchVoiceCapture());
+        mIslandRoot.setOnTouchListener(new View.OnTouchListener() {
+            private final Runnable mOpenApp = new Runnable() {
+                @Override
+                public void run() {
+                    mOpenAppHoldTriggered = true;
+                    launchFullAssistant();
+                }
+            };
+
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        mOpenAppHoldTriggered = false;
+                        view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(100).start();
+                        mHandler.postDelayed(mOpenApp, OPEN_APP_HOLD_MS);
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        mHandler.removeCallbacks(mOpenApp);
+                        view.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
+                        if (!mOpenAppHoldTriggered) {
+                            launchVoiceCapture();
+                        }
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        mHandler.removeCallbacks(mOpenApp);
+                        view.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
+                        return true;
+                    default:
+                        return true;
+                }
+            }
+        });
         mIslandRoot.setOnApplyWindowInsetsListener((view, insets) -> {
             positionCameraIsland(insets);
             return insets;
@@ -283,16 +318,16 @@ final class PointerOverlayController {
             return;
         }
         if ("done".equals(mMode)) {
-            mLeftIslandText.setText("Done");
+            mLeftIslandText.setText("OK");
             mRightIslandText.setText("✓");
             mRightIslandText.setTextColor(0xff20e36a);
         } else if ("working".equals(mMode)) {
             mLeftIslandText.setText("AI");
-            mRightIslandText.setText("Working");
+            mRightIslandText.setText("…");
             mRightIslandText.setTextColor(0xfff4f7f8);
         } else {
-            mLeftIslandText.setText("Ask");
-            mRightIslandText.setText("Mic");
+            mLeftIslandText.setText("AI");
+            mRightIslandText.setText("◉");
             mRightIslandText.setTextColor(0xff72e0c4);
         }
     }
@@ -530,6 +565,15 @@ final class PointerOverlayController {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
                 | Intent.FLAG_ACTIVITY_NO_ANIMATION);
         intent.putExtra(MainActivity.EXTRA_START_VOICE, true);
+        try {
+            mContext.startActivity(intent);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void launchFullAssistant() {
+        Intent intent = new Intent(mContext, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         try {
             mContext.startActivity(intent);
         } catch (RuntimeException ignored) {
