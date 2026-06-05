@@ -277,6 +277,9 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "- Do not repeat the same failed/no-op action.\n"
                 + "- Do not finish just because an app opened. Finish only when the current "
                 + "screen visibly satisfies the user's goal.\n"
+                + "- For goals phrased as \"open <app/site>\", stop once that app or site is "
+                + "visibly open. Do not click login, sign up, get app, install, notification, "
+                + "or feed-personalization surfaces unless the user explicitly asked for that.\n"
                 + "- If the goal requires credentials, payment, purchase, posting, sending, "
                 + "calling, deleting, or installing from an unsafe source, ask for "
                 + "confirmation or stop at the safe boundary.\n"
@@ -333,6 +336,8 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "If no app store is installed, use Browser and official websites only. "
                 + "If the official website only offers an app store link and that store is not "
                 + "installed, finish_task with that explanation instead of continuing to scroll. "
+                + "For Twitter/X, if a browser page shows X, Twitter, or 'See what’s happening', "
+                + "the open task is complete; do not tap Get the app or login surfaces. "
                 + "Do not bypass Android install-security prompts, enter credentials, or "
                 + "accept payments/subscriptions.\n\n"
                 + "User goal: " + userGoal
@@ -515,6 +520,21 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
 
         String screenText = normalizedScreenText(screenJson);
         String goal = userGoal == null ? "" : userGoal.toLowerCase(Locale.US);
+        if (isSimpleOpenGoalSatisfied(goal, screenText)
+                && ("tap".equals(toolName) || "tap_element".equals(toolName)
+                        || "long_press".equals(toolName) || "long_press_element".equals(toolName)
+                        || "type_text".equals(toolName))) {
+            return new JSONObject()
+                    .put("summary", "The requested app or site already appears to be open. "
+                            + "The agent should finish instead of interacting further.")
+                    .put("risk", "Medium")
+                    .put("reason", "Avoid unnecessary action after a simple open task is satisfied.")
+                    .put("capability", capabilityForTool(toolName))
+                    .put("action_json", new JSONObject()
+                            .put("tool", "finish_task")
+                            .put("arguments", new JSONObject()
+                                    .put("summary", "The requested app or site is visible.")));
+        }
         String risk = "";
         String summary = "";
         if (containsAny(screenText, "install", "update", "download", "get app",
@@ -574,6 +594,21 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 || "set_clipboard".equals(toolName)
                 || "paste".equals(toolName)
                 || "share_text".equals(toolName);
+    }
+
+    private static boolean isSimpleOpenGoalSatisfied(String goal, String screenText) {
+        if (goal == null || screenText == null || !goal.contains("open ")) {
+            return false;
+        }
+        if ((goal.contains("twitter") || goal.matches(".*\\bx\\b.*"))
+                && containsAny(screenText, "x. it", "twitter", "see what", "x.com")) {
+            return true;
+        }
+        if (goal.contains("wikipedia")
+                && containsAny(screenText, "wikipedia", "the free encyclopedia")) {
+            return true;
+        }
+        return false;
     }
 
     private static String capabilityForTool(String toolName) {

@@ -316,6 +316,9 @@ public final class FrameworkToolExecutor {
         if ("spotify".equalsIgnoreCase(value)) {
             return "com.spotify.music";
         }
+        if ("twitter".equalsIgnoreCase(value) || "x".equalsIgnoreCase(value)) {
+            return "com.twitter.android";
+        }
         if ("assistant".equalsIgnoreCase(value) || "openphone".equalsIgnoreCase(value)) {
             return "org.openphone.assistant";
         }
