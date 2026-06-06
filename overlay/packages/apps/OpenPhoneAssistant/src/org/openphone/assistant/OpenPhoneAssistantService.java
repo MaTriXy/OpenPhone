@@ -25,6 +25,7 @@ public final class OpenPhoneAssistantService extends Service {
     private OpenPhoneAgentManager mAgentManager;
     private PointerOverlayController mPointerOverlayController;
     private String mNotificationTaskId;
+    private boolean mIslandHiddenByActivity;
 
     private final PolicyEngine mPolicyEngine = new PolicyEngine();
     private final AuditLog mAuditLog = new AuditLog(TAG);
@@ -114,14 +115,17 @@ public final class OpenPhoneAssistantService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent != null ? intent.getAction() : null;
         if (ACTION_HIDE_ISLAND.equals(action)) {
+            mIslandHiddenByActivity = true;
             mPointerOverlayController.hide();
             return START_STICKY;
         }
         if (ACTION_SHOW_MIC_ISLAND.equals(action)) {
+            mIslandHiddenByActivity = false;
             mPointerOverlayController.showMicButton();
             return START_STICKY;
         }
         if (OpenPhoneNotificationController.ACTION_START.equals(action)) {
+            mIslandHiddenByActivity = false;
             mNotificationTaskId = startNotificationTask();
             mPointerOverlayController.show(mNotificationTaskId);
             OpenPhoneNotificationController.showActive(this, mNotificationTaskId);
@@ -131,7 +135,9 @@ public final class OpenPhoneAssistantService extends Service {
             stopNotificationTask();
             return START_STICKY;
         }
-        mPointerOverlayController.showMicButton();
+        if (!mIslandHiddenByActivity) {
+            mPointerOverlayController.showMicButton();
+        }
         OpenPhoneNotificationController.showReady(this);
         return START_STICKY;
     }

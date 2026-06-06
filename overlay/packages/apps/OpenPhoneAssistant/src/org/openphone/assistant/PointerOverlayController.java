@@ -3,16 +3,13 @@ package org.openphone.assistant;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.PixelFormat;
-import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -42,7 +39,6 @@ final class PointerOverlayController {
     private TextView mRightIslandText;
     private TextView mActionLabel;
     private boolean mOpenAppHoldTriggered;
-    private boolean mIslandPositioned;
     private String mMode = "mic";
     private String mTranscriptText = "";
 
@@ -133,7 +129,6 @@ final class PointerOverlayController {
             mLeftIslandText = null;
             mRightIslandText = null;
             mActionLabel = null;
-            mIslandPositioned = false;
         });
     }
 
@@ -244,7 +239,6 @@ final class PointerOverlayController {
         mIslandRoot = new FrameLayout(mContext);
         mIslandRoot.setClickable(true);
         mIslandRoot.setFocusable(false);
-        mIslandRoot.setAlpha(0f);
         mIslandRoot.setBackground(chipBackground());
         mIslandRoot.setPadding(10, 0, 10, 0);
         mIslandRoot.setOnTouchListener(new View.OnTouchListener() {
@@ -287,11 +281,6 @@ final class PointerOverlayController {
                 }
             }
         });
-        mIslandRoot.setOnApplyWindowInsetsListener((view, insets) -> {
-            positionCameraIsland(insets);
-            return insets;
-        });
-
         LinearLayout row = new LinearLayout(mContext);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER);
@@ -326,13 +315,11 @@ final class PointerOverlayController {
         try {
             mWindowManager.addView(mIslandRoot, mIslandParams);
             updateIslandViews();
-            mIslandRoot.post(() -> positionCameraIsland(mIslandRoot.getRootWindowInsets()));
         } catch (RuntimeException ignored) {
             mIslandRoot = null;
             mIslandParams = null;
             mLeftIslandText = null;
             mRightIslandText = null;
-            mIslandPositioned = false;
         }
     }
 
@@ -374,35 +361,6 @@ final class PointerOverlayController {
         }
     }
 
-    private void positionCameraIsland(WindowInsets insets) {
-        if (mWindowManager == null || mIslandRoot == null || mIslandParams == null) {
-            return;
-        }
-        Rect cutout = centeredCutout(insets);
-        int displayWidth = displayWidth();
-        int nextX = Math.max(0, (displayWidth - ISLAND_WIDTH) / 2);
-        int nextY;
-        if (isCenteredCutout(cutout, displayWidth)) {
-            nextY = Math.max(0, cutout.centerY() - ISLAND_HEIGHT / 2);
-        } else {
-            nextY = CAMERA_ISLAND_FALLBACK_TOP;
-        }
-        if (mIslandPositioned && mIslandParams.x == nextX && mIslandParams.y == nextY) {
-            if (mIslandRoot.getAlpha() != 1f) {
-                mIslandRoot.setAlpha(1f);
-            }
-            return;
-        }
-        try {
-            mIslandParams.x = nextX;
-            mIslandParams.y = nextY;
-            mWindowManager.updateViewLayout(mIslandRoot, mIslandParams);
-            mIslandPositioned = true;
-            mIslandRoot.setAlpha(1f);
-        } catch (RuntimeException ignored) {
-        }
-    }
-
     private void positionActionLabel() {
         if (mRoot == null || mActionLabel == null) {
             return;
@@ -431,34 +389,6 @@ final class PointerOverlayController {
             }
         }
         return mContext.getResources().getDisplayMetrics().widthPixels;
-    }
-
-    private static boolean isCenteredCutout(Rect cutout, int displayWidth) {
-        if (cutout == null || displayWidth <= 0) {
-            return false;
-        }
-        int displayCenter = displayWidth / 2;
-        return Math.abs(cutout.centerX() - displayCenter) < displayWidth / 4;
-    }
-
-    private static Rect centeredCutout(WindowInsets insets) {
-        if (insets == null) {
-            return null;
-        }
-        DisplayCutout cutout = insets.getDisplayCutout();
-        if (cutout == null || cutout.getBoundingRects().isEmpty()) {
-            return null;
-        }
-        Rect best = null;
-        for (Rect rect : cutout.getBoundingRects()) {
-            if (rect == null || rect.isEmpty() || rect.top > 160) {
-                continue;
-            }
-            if (best == null || rect.width() > best.width()) {
-                best = rect;
-            }
-        }
-        return best;
     }
 
     private static int measuredWidth(View view) {
