@@ -18,6 +18,10 @@ import java.nio.charset.StandardCharsets;
 public final class OpenAiSpeechTranscriber {
     private static final String MODEL = "gpt-4o-mini-transcribe";
     private static final int SAMPLE_RATE = 16000;
+    private static final int MIN_RECORD_MILLIS = 900;
+    private static final int INITIAL_SPEECH_TIMEOUT_MILLIS = 4500;
+    private static final int END_SILENCE_MILLIS = 1100;
+    private static final int SPEECH_RMS_THRESHOLD = 900;
 
     private final ModelEndpointConfig mEndpointConfig;
 
@@ -54,7 +58,7 @@ public final class OpenAiSpeechTranscriber {
     private static byte[] recordWav(int maxMillis) throws IOException {
         int minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        int bufferSize = Math.max(minBuffer, SAMPLE_RATE);
+        int bufferSize = Math.max(minBuffer, SAMPLE_RATE / 5);
         AudioRecord recorder = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
                 bufferSize);
@@ -65,13 +69,29 @@ public final class OpenAiSpeechTranscriber {
 
         ByteArrayOutputStream pcm = new ByteArrayOutputStream();
         byte[] buffer = new byte[bufferSize];
+        long startedAt = System.currentTimeMillis();
         long endAt = System.currentTimeMillis() + maxMillis;
+        long lastVoiceAt = 0;
+        boolean heardVoice = false;
         try {
             recorder.startRecording();
             while (System.currentTimeMillis() < endAt) {
                 int read = recorder.read(buffer, 0, buffer.length);
                 if (read > 0) {
                     pcm.write(buffer, 0, read);
+                    long now = System.currentTimeMillis();
+                    if (rms16Bit(buffer, read) >= SPEECH_RMS_THRESHOLD) {
+                        heardVoice = true;
+                        lastVoiceAt = now;
+                    }
+                    if (now - startedAt >= MIN_RECORD_MILLIS) {
+                        if (heardVoice && now - lastVoiceAt >= END_SILENCE_MILLIS) {
+                            break;
+                        }
+                        if (!heardVoice && now - startedAt >= INITIAL_SPEECH_TIMEOUT_MILLIS) {
+                            break;
+                        }
+                    }
                 }
             }
         } finally {
@@ -82,6 +102,20 @@ public final class OpenAiSpeechTranscriber {
             recorder.release();
         }
         return wavFromPcm(pcm.toByteArray());
+    }
+
+    private static int rms16Bit(byte[] bytes, int length) {
+        long sumSquares = 0;
+        int samples = 0;
+        for (int i = 0; i + 1 < length; i += 2) {
+            int sample = (bytes[i] & 0xff) | (bytes[i + 1] << 8);
+            sumSquares += (long) sample * sample;
+            samples++;
+        }
+        if (samples == 0) {
+            return 0;
+        }
+        return (int) Math.sqrt(sumSquares / (double) samples);
     }
 
     private String transcribe(byte[] wav) throws IOException {

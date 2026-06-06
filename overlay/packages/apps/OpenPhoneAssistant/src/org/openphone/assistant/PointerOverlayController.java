@@ -24,7 +24,7 @@ final class PointerOverlayController {
     private static final int ISLAND_WIDTH = 420;
     private static final int ISLAND_HEIGHT = 86;
     private static final int CAMERA_RESERVED_WIDTH = 134;
-    private static final int CAMERA_ISLAND_FALLBACK_TOP = 8;
+    private static final int CAMERA_ISLAND_FALLBACK_TOP = 18;
     private static final int ACTION_LABEL_GAP = 12;
     private static final long OPEN_APP_HOLD_MS = 5000;
     private static final long MAX_VISIBLE_MS = 5 * 60 * 1000;
@@ -244,7 +244,11 @@ final class PointerOverlayController {
                         view.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
                         if (!mOpenAppHoldTriggered) {
                             if ("working".equals(mMode)) {
-                                launchStopAgent();
+                                if (event.getX() < view.getWidth() / 2f) {
+                                    launchVoiceCapture();
+                                } else {
+                                    launchStopAgent();
+                                }
                             } else {
                                 launchVoiceCapture();
                             }
@@ -326,7 +330,7 @@ final class PointerOverlayController {
             mRightIslandText.setText("✓");
             mRightIslandText.setTextColor(0xff20e36a);
         } else if ("working".equals(mMode)) {
-            mLeftIslandText.setText("AI");
+            mLeftIslandText.setText("Talk");
             mRightIslandText.setText("Stop");
             mRightIslandText.setTextColor(0xffff6b6b);
         } else {
@@ -344,7 +348,7 @@ final class PointerOverlayController {
         int displayWidth = displayWidth();
         if (isCenteredCutout(cutout, displayWidth)) {
             mIslandParams.x = Math.max(0, cutout.centerX() - ISLAND_WIDTH / 2);
-            mIslandParams.y = Math.max(0, cutout.centerY() - ISLAND_HEIGHT / 2);
+            mIslandParams.y = Math.max(0, cutout.bottom - ISLAND_HEIGHT / 2);
         } else {
             mIslandParams.x = Math.max(0, (displayWidth - ISLAND_WIDTH) / 2);
             mIslandParams.y = CAMERA_ISLAND_FALLBACK_TOP;

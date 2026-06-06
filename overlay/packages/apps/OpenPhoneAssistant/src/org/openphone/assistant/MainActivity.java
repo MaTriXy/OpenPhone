@@ -1001,8 +1001,17 @@ public final class MainActivity extends Activity {
             updateIsland("Setup needed");
             return;
         }
+        if (mActiveTaskId != null && mAgentThread != null) {
+            goal = continuationGoal(goal);
+        }
         startTaskThenRunAgent(goal);
         mGoalInput.setText("");
+    }
+
+    private static String continuationGoal(String followUp) {
+        return "Continue the current phone task from the visible screen state. "
+                + "The user gave this follow-up instruction while the agent was running: "
+                + (followUp == null ? "" : followUp);
     }
 
     private void appendConversation(String speaker, String message) {
@@ -1148,7 +1157,7 @@ public final class MainActivity extends Activity {
                         }
                         showTaskStarted(goal);
                         refreshAudit();
-                        runAgent();
+                        runAgent(goal);
                     }
                 });
             }
@@ -1241,6 +1250,10 @@ public final class MainActivity extends Activity {
     }
 
     private void runAgent() {
+        runAgent(mGoalInput.getText().toString());
+    }
+
+    private void runAgent(final String goal) {
         if (mAgentManager == null || mActiveTaskId == null) {
             mTaskView.setText("Start a task first");
             return;
@@ -1249,7 +1262,6 @@ public final class MainActivity extends Activity {
         mAgentRunCancelled = false;
         final int runGeneration = ++mAgentRunGeneration;
         final String taskId = mActiveTaskId;
-        final String goal = mGoalInput.getText().toString();
         final ModelEndpointConfig endpointConfig = modelEndpointConfig();
         mTaskView.setText("Working on: " + goal);
         updateIsland("Agent is working");
