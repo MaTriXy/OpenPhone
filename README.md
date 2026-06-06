@@ -18,17 +18,27 @@ This repo currently implements the OpenPhone OS bringup described in
 - Patch-stack application workflow.
 - Generic OpenPhone product overlay.
 - Pixel 9a `openphone_tegu` product overlay.
-- Privileged persistent `OpenPhoneAssistant` system app.
+- Privileged persistent `OpenPhoneAssistant` system app with a consumer-facing
+  chat surface, text/voice task entry, task stop control, model settings,
+  evidence export, OTA-preview controls, and developer tools behind an
+  advanced panel.
 - Hidden framework API and `system_server` Binder service for OpenPhone agent
   capabilities.
 - Policy seed, screen context plumbing, mediated action execution, confirmation
   flow, and persistent audit log patches.
 - Verified full-product boot on a physical Pixel 9a.
+- Fast assistant iteration path that rebuilds only `OpenPhoneAssistant`, pushes
+  the privileged APK into `/system_ext`, reboots, and validates the UI/agent on
+  the physical Pixel 9a without a full OTA loop.
 
-The active plan is tracked in [docs/PLAN.md](docs/PLAN.md). The next deep OS
-integration work is the actual model/task loop, richer screen understanding,
-Settings/SystemUI surfaces, broader action coverage, OTA hardening, production
-signing, and validated device ports beyond Pixel 9a.
+The active plan is tracked in [docs/PLAN.md](docs/PLAN.md). The current
+hardware baseline is tracked in [devices/tegu.md](devices/tegu.md), and the
+implementation evidence ledger is in
+[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). The next deep
+OS integration work is stronger multi-step agent reliability, richer screen
+understanding, production model transport, SystemUI-owned active-agent
+presence, OTA hardening, production signing, and validated device ports beyond
+Pixel 9a.
 
 ## Repository Layout
 

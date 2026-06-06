@@ -144,6 +144,18 @@ flow, and device support.
   `Downloads/OpenPhone`, and verifies size/SHA-256 before manual installation.
 - OpenPhone Assistant development package bumped to `versionCode=52` /
   `versionName=0.1.16-dev` for the preview OTA client build.
+- OpenPhone Assistant development package now reports `versionCode=57` /
+  `versionName=0.1.21-dev` in the repository manifest.
+- User-facing assistant chat composer with one stateful icon action: mic when
+  empty, send when text is present, and stop while listening or running.
+- Profile-icon entry point for the assistant advanced/model/developer surface.
+- Keyboard-aware assistant layout that keeps the composer above the IME and
+  respects bottom safe-area insets on the Pixel 9a.
+- Assistant outside-tap keyboard dismissal.
+- Fast privileged assistant APK iteration documented and validated on Pixel 9a
+  for assistant-only UI/model-loop changes.
+- User-supplied Google Mobile Services sideload helper and documentation for
+  developer devices. OpenPhone still does not redistribute Google packages.
 
 ### Changed
 
@@ -163,6 +175,9 @@ flow, and device support.
   user-facing task surface can interpret cleanly.
 - The assistant now attempts to re-enable its accessibility service on resume
   as well as at first launch, which helps after fresh OTAs or onboarding resets.
+- The assistant app now hides the background service island while the app
+  itself is foregrounded, avoiding two competing assistant controls on the same
+  screen.
 
 ## [0.0.1] - Unreleased
 

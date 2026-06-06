@@ -40,6 +40,14 @@ Already proven:
   active-task indicator, show a cursor overlay, capture voice for a short
   command, transcribe through the development OpenAI path, and run basic
   proof-of-loop actions.
+- The assistant main screen has moved from a developer console toward a clean
+  chat surface: a single composer accepts text, an icon action switches between
+  mic/send/stop based on state, the input stays above the keyboard, tapping
+  outside dismisses the keyboard, and model/task controls live behind the
+  profile/advanced surface.
+- Privileged assistant APK fast-iteration is validated on the Pixel 9a for UI
+  and model-loop work; full OTA/recovery loops are reserved for framework,
+  sepolicy, boot-chain, Settings/SystemUI, and first-install changes.
 - The first Pixel 9a boot-chain issue was diagnosed: generated
   `vendor_kernel_boot.img` had an empty DTB. The current known-good workaround
   extracts `tegu.dtb` from the upstream prebuilt before target-files/OTA
@@ -73,6 +81,9 @@ Still missing:
   task-grant, and audit surfaces exist. A first durable task-grant defaults
   editor exists, but a full per-app/per-capability grant manager remains.
 - Reproducible release packaging, changelog discipline, and GitHub automation.
+- A production app-store/default-app strategy. Current docs support no-Google
+  mode and user-supplied Google services for developer devices, but OpenPhone
+  does not redistribute Google apps or Play services.
 
 Supporting context:
 
@@ -156,6 +167,8 @@ surface.
 V1 product behavior:
 
 - One task input for speech or text.
+- Chat-style home surface that looks and behaves like a consumer assistant,
+  not a raw debug panel.
 - Clear active state while the agent is observing or acting.
 - Visible cursor/action feedback over the current app.
 - Human-readable progress and final result.

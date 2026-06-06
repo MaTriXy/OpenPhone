@@ -48,8 +48,10 @@ Device
 The current repo implements the first OpenPhone product layer:
 
 - `vendor/openphone` product config.
-- `OpenPhoneAssistant` privileged app with task, grant, screen context, and
-  audit controls.
+- `OpenPhoneAssistant` privileged app with a chat-style user surface, text and
+  voice task entry, stateful mic/send/stop composer action, advanced model and
+  developer controls, task grants, screen context, trace/audit export, OTA
+  preview controls, and audit controls.
 - Initial capability and policy config files. `scripts/check.sh` validates that
   the assistant fallback `PolicyEngine` covers every capability in
   `openphone_capabilities.json` with the same risk class.
@@ -81,6 +83,10 @@ The current repo implements the first OpenPhone product layer:
   risk hints.
 - Task-scoped input action execution for navigation, pointer gestures, scroll,
   and text.
+- Semantic UI-element targeting through assistant accessibility snapshots:
+  model tools can request `tap_element` or `long_press_element` by element ID,
+  and the assistant resolves enabled bounded elements to OS-mediated pointer
+  actions.
 - Confirmed clipboard write and paste actions.
 - Confirmed share chooser actions.
 - One-shot pending action confirmation through the assistant control surface.
@@ -112,7 +118,9 @@ not yet the final AI-native OS integration.
 The following components still need real Android framework implementation:
 
 - Window/UI hierarchy extraction and screenshot/OCR perception.
-- UI-element target resolution for input actions.
+- Framework-owned UI hierarchy extraction and production-grade UI-element
+  target resolution. The current semantic targeting path is assistant-side and
+  development-oriented.
 - Notification and app-specific action integrations.
 - Rich confirmation and grant lifecycle UI.
 - Privilege separation between assistant UI, orchestrator, and executors.

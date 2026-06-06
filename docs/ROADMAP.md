@@ -12,7 +12,8 @@ Status: in progress.
 - Changelog and release process.
 - GitHub CI for repository checks.
 - Pixel 9a development target documentation.
-- Current privileged assistant and framework-service source.
+- Current privileged assistant, framework-service, Settings, SystemUI tile, and
+  model-broker source.
 
 ## Agent v1
 
@@ -26,6 +27,7 @@ Status: in progress.
 - Trajectory logging for screenshots, model calls, actions, policy decisions,
   and failures.
 - Repeatable eval tasks.
+- User-facing chat surface for text/voice task entry.
 
 ## OS Integration v1
 
@@ -38,12 +40,15 @@ Status: partially implemented.
 - OS-mediated action execution.
 - Policy, confirmation, pointer event, and audit plumbing.
 - Assistant-owned cursor/status surface.
+- Settings-owned OpenPhone dashboard, task-grant defaults, and audit pages.
+- SystemUI Quick Settings tile.
 
 Remaining:
 
-- UI hierarchy/OCR extraction.
-- SystemUI-owned active agent surface.
-- Settings-owned grant and audit surfaces.
+- Production framework-owned UI hierarchy/OCR extraction. Current semantic
+  element targeting uses the assistant accessibility service.
+- Richer SystemUI-owned active agent surface.
+- Full Settings-owned per-app/per-capability grant editor.
 - Richer confirmation UX.
 
 ## Device and Release Hardening
@@ -57,3 +62,4 @@ Status: early.
 - Add self-hosted Android build CI later.
 - Validate Wi-Fi, cellular, camera, microphone, GPS, fingerprint, encryption,
   and reboot stability.
+- Decide and document the production app-store/default-app strategy.

@@ -200,6 +200,25 @@ service check openphone_agent -> found
 dumpsys activity services -> org.openphone.assistant/.OpenPhoneAssistantService running
 ```
 
+Current assistant development baseline:
+
+```text
+manifest versionCode=57
+manifest versionName=0.1.21-dev
+latest assistant-only APK tested: .worktree/artifacts/tegu/OpenPhoneAssistant-v91-chat-icons.apk
+```
+
+The assistant-only APK was built on the EC2 Linux Android tree, pushed with
+`scripts/push-assistant-apk.sh`, and validated on the physical Pixel 9a for:
+
+- app launch after reboot,
+- chat-style home screen,
+- profile icon opening the advanced surface,
+- keyboard-aware composer positioning,
+- mic-to-send icon state after text entry,
+- outside-tap keyboard dismissal, and
+- absence of recent `FATAL EXCEPTION` / `AndroidRuntime` logcat signatures.
+
 ## Recovery and ADB Notes
 
 After a clean data wipe or recovery `Format data / factory reset`, Android may
@@ -237,17 +256,11 @@ adb shell 'settings get secure accessibility_enabled'
 ```
 
 For the current repository manifest, the assistant APK should report
-`versionCode=48`, `versionName=0.1.12-dev`, and
-`.OpenPhoneAccessibilityService`. The current local Pixel 9a artifact is:
-
-```text
-.worktree/artifacts/tegu/openphone_tegu-model-disclosure-sepolicy-v51-ota.zip
-SHA-256: b93db84907523b8e37816abab0a315b1f62b82321755612e82d057fd8f80e866
-```
-
-Trust `scripts/verify-tegu-device.sh` over stale example output. The script
-derives the expected assistant package version from the repository manifest and
-fails if PackageManager still reports stale metadata.
+`versionCode=57`, `versionName=0.1.21-dev`, and
+`.OpenPhoneAccessibilityService`. Trust `scripts/verify-tegu-device.sh` over
+stale example output. The script derives the expected assistant package version
+from the repository manifest and fails if PackageManager still reports stale
+metadata.
 
 ## Acceptance Checklist
 
@@ -287,14 +300,17 @@ rows out of `pending`.
 | Encryption | pending |
 | OpenPhone assistant | pass |
 | Framework agent service | pass |
-| Action execution | pending |
-| Audit log | pending |
-| Policy confirmation | pending |
+| Action execution | partial pass |
+| Audit log | partial pass |
+| Policy confirmation | partial pass |
 
 ## Known Issues
 
 - Play Integrity behavior is expected to change after bootloader unlock.
 - OTA/release signing is not implemented yet.
+- Privileged assistant APK push is validated for assistant-only iteration, but
+  framework, sepolicy, Settings/SystemUI, boot-chain, and first-install changes
+  still require full target-files/OTA builds.
 - Pixel 9a OpenPhone target-files/OTA builds rely on the automated DTB
   extraction and verification in `scripts/build.sh`.
 - Full product boot requires the OpenPhone `system/sepolicy` service label for

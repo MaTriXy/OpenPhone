@@ -2,6 +2,38 @@
 
 This document tracks current implementation evidence against `SPEC.md`.
 
+## Current Snapshot
+
+As of the current repository manifest, the assistant package is
+`versionCode=57`, `versionName=0.1.21-dev`.
+
+Current physically validated Pixel 9a baseline:
+
+- `openphone_tegu` boots on the purchased Pixel 9a and exposes the
+  `openphone_agent` framework Binder service.
+- The privileged assistant APK can be rebuilt on the Linux Android build host,
+  pushed into `/system_ext/priv-app/OpenPhoneAssistant/` with
+  `scripts/push-assistant-apk.sh`, and validated without a full OTA loop for
+  assistant-only changes.
+- The latest assistant UI pass is installed on the connected Pixel 9a as
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-v91-chat-icons.apk`.
+- The assistant main screen is now a clean chat-style surface with:
+  - one text composer;
+  - a stateful icon action button: mic when empty, send when text is present,
+    stop while listening or running;
+  - a profile icon for the advanced/model/settings surface;
+  - keyboard-aware bottom insets so the composer stays above the keyboard;
+  - outside-tap keyboard dismissal;
+  - the service/dynamic island hidden while the app itself is foregrounded to
+    avoid competing assistant surfaces.
+- On-device screenshots were captured for normal, keyboard-open, send-state,
+  and keyboard-dismissed states under `.worktree/artifacts/tegu/`; no recent
+  `FATAL EXCEPTION` / `AndroidRuntime` crash signatures appeared in logcat
+  after the UI exercise.
+- User-supplied MindTheGapps sideload after the OpenPhone OTA has been
+  documented and validated as a developer-device path. OpenPhone still does not
+  redistribute Google packages.
+
 ## Implemented in This Repository
 
 - Canonical OpenPhone project structure.
@@ -21,8 +53,10 @@ This document tracks current implementation evidence against `SPEC.md`.
   OpenAI adapter. The tool executor now rejects reason-required model tools
   that omit a non-empty model-visible reason.
 - Privileged permission allowlist seed file.
-- Persistent privileged `OpenPhoneAssistant` app with a basic task, context,
-  input-grant, and audit control surface.
+- Persistent privileged `OpenPhoneAssistant` app with a user-facing chat
+  surface, task entry, voice/text start path, stop control, model settings,
+  input-grant controls, OTA-preview controls, trace/audit export, and advanced
+  developer diagnostics.
 - Assistant Binder interface seed.
 - In-app bootstrap policy evaluator and audit logger.
 - Privileged assistant boot receiver that starts the assistant service after
@@ -338,11 +372,12 @@ This document tracks current implementation evidence against `SPEC.md`.
   stronger physical eval evidence, production transport, and safer confirmation
   UX before it is release-grade.
 - Full action execution service for notification actions, app-specific
-  integrations, and richer input targeting. Current framework
-  action execution supports launcher actions, navigation keys, pointer gestures,
-  scroll gestures, keyboard text, clipboard text actions, and confirmed share
-  chooser launch, but does not yet have UI-element targeting or notification
-  integrations.
+  integrations, and richer input targeting. Current framework/assistant action
+  execution supports launcher actions, navigation keys, pointer gestures,
+  scroll gestures, keyboard text, clipboard text actions, confirmed share
+  chooser launch, and first semantic accessibility-element targeting through
+  `tap_element` / `long_press_element`, but does not yet have notification
+  integrations or production-grade app-specific actions.
 - Full confirmation UX and grant lifecycle for medium/high-risk capabilities.
   A basic assistant approve/deny path exists for pending actions, but there is
   no system modal, timeout, per-app grant editor, or high-friction payment/
@@ -355,7 +390,9 @@ This document tracks current implementation evidence against `SPEC.md`.
 - SystemUI background task surface. A first native `openphone_agent` Quick
   Settings tile is implemented and builds; it shows agent availability, opens
   the assistant when idle, and stops the active framework task when running.
-  A richer status-bar/dynamic-island surface remains pending.
+  The assistant-owned island/cursor overlay exists for development and active
+  task feedback, but a production SystemUI-owned status-bar/dynamic-island
+  surface remains pending.
 - Remaining SELinux policy for richer action execution and future services.
 - On-device OTA client and actual signed release artifact validation.
 - Kernel source publication flow.

@@ -81,6 +81,29 @@ versionCode=57
 versionName=0.1.21-dev
 ```
 
+## Assistant UI Smoke Test
+
+For assistant-only UI/model-loop work, use the fast privileged APK push path
+from [BUILD.md](BUILD.md), then validate the UI on the physical Pixel 9a before
+committing:
+
+```bash
+scripts/push-assistant-apk.sh /path/to/OpenPhoneAssistant.apk
+adb wait-for-device
+adb shell am start -n org.openphone.assistant/.MainActivity
+```
+
+Manual or screenshot-backed checks:
+
+- the app opens to the chat-style OpenPhone home screen;
+- the top-right profile icon opens the advanced/model/developer surface;
+- with an empty composer, the action button is a mic icon;
+- after typing text, the action button becomes a send icon;
+- while listening or running, the action button becomes stop;
+- focusing the composer opens the keyboard and keeps the input above it;
+- tapping outside the composer dismisses the keyboard;
+- recent logcat has no `FATAL EXCEPTION` or `AndroidRuntime` crash signature.
+
 If the mounted APK bytes match the new OTA but PackageManager still reports an
 older persistent system-app version, treat it as stale `/data/system` package
 metadata. On the Pixel 9a test device this happened after a v54 OTA: the
