@@ -21,10 +21,10 @@ import android.widget.TextView;
 final class PointerOverlayController {
     private static final int CURSOR_SIZE = 34;
     private static final int RIPPLE_SIZE = 96;
-    private static final int ISLAND_WIDTH = 244;
-    private static final int ISLAND_HEIGHT = 54;
-    private static final int CAMERA_RESERVED_WIDTH = 86;
-    private static final int CAMERA_ISLAND_FALLBACK_TOP = 14;
+    private static final int ISLAND_WIDTH = 420;
+    private static final int ISLAND_HEIGHT = 86;
+    private static final int CAMERA_RESERVED_WIDTH = 134;
+    private static final int CAMERA_ISLAND_FALLBACK_TOP = 8;
     private static final int ACTION_LABEL_GAP = 12;
     private static final long OPEN_APP_HOLD_MS = 5000;
     private static final long MAX_VISIBLE_MS = 5 * 60 * 1000;
