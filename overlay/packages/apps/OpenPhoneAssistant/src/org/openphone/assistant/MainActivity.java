@@ -5,7 +5,12 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Insets;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
@@ -13,11 +18,17 @@ import android.openphone.OpenPhoneAgentManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.util.Base64;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
@@ -68,6 +79,10 @@ public final class MainActivity extends Activity {
     private static final String SECURE_GRANT_SHARE = "openphone_task_grant_share";
     private static final String SECURE_GRANT_NETWORK = "openphone_task_grant_network";
     private static final String SECURE_DEV_OPENAI_API_KEY = "openphone_dev_openai_api_key";
+    private static final int ICON_MIC = 1;
+    private static final int ICON_SEND = 2;
+    private static final int ICON_STOP = 3;
+    private static final int ICON_PROFILE = 4;
 
     private OpenPhoneAgentManager mAgentManager;
     private PointerOverlayController mPointerOverlayController;
@@ -87,6 +102,7 @@ public final class MainActivity extends Activity {
     private TextView mContextView;
     private TextView mAuditView;
     private EditText mGoalInput;
+    private AssistantIconButton mComposerActionButton;
     private EditText mActionInput;
     private EditText mApiKeyInput;
     private EditText mBrokerUrlInput;
@@ -117,9 +133,10 @@ public final class MainActivity extends Activity {
         mAgentManager = getSystemService(OpenPhoneAgentManager.class);
         mPointerOverlayController = new PointerOverlayController(this);
         OpenPhoneAccessibilityService.ensureEnabled(this);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(buildView());
         setServiceIslandVisible(false);
-        mPointerOverlayController.showMicButton();
+        mPointerOverlayController.hide();
         refreshAll();
         applyDebugIntentExtras(getIntent());
     }
@@ -128,6 +145,9 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         setServiceIslandVisible(false);
+        if (!mIslandVoiceLaunch) {
+            mPointerOverlayController.hide();
+        }
         OpenPhoneAccessibilityService.ensureEnabled(this);
     }
 
@@ -229,14 +249,37 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(getColor(R.color.openphone_background));
-        root.setPadding(dp(16), dp(48), dp(16), dp(12));
+        root.setPadding(dp(16), dp(46), dp(16), dp(10));
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            int top = dp(24);
+            int bottom = dp(18);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Insets systemBars = insets.getInsets(WindowInsets.Type.systemBars());
+                Insets ime = insets.getInsets(WindowInsets.Type.ime());
+                top = Math.max(dp(24), systemBars.top + dp(16));
+                bottom = Math.max(dp(18), Math.max(systemBars.bottom, ime.bottom) + dp(12));
+            } else {
+                top = Math.max(dp(24), insets.getStableInsetTop() + dp(16));
+                bottom = Math.max(dp(18), insets.getStableInsetBottom() + dp(12));
+            }
+            view.setPadding(dp(16), top, dp(16), bottom);
+            return insets;
+        });
+        root.setClickable(true);
+        root.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                hideKeyboard();
+                mGoalInput.clearFocus();
+            }
+        });
         root.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(0, dp(6), 0, dp(12));
+        header.setPadding(0, dp(4), 0, dp(10));
         root.addView(header);
 
         LinearLayout titleStack = new LinearLayout(this);
@@ -244,7 +287,7 @@ public final class MainActivity extends Activity {
         header.addView(titleStack, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView title = label("OpenPhone", 24, true);
+        TextView title = label("OpenPhone", 22, true);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         titleStack.addView(title);
 
@@ -252,24 +295,45 @@ public final class MainActivity extends Activity {
         subtitle.setTextColor(getColor(R.color.openphone_text_muted));
         titleStack.addView(subtitle);
 
-        Button settingsButton = circleButton("⚙", false, new View.OnClickListener() {
+        AssistantIconButton settingsButton = iconButton(ICON_PROFILE, false,
+                new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 toggleAdvanced();
             }
         });
-        header.addView(settingsButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        header.addView(settingsButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         mConversationScroll = new ScrollView(this);
         mConversationScroll.setFillViewport(true);
         mConversationScroll.setClipToPadding(false);
         mConversationScroll.setPadding(0, dp(6), 0, dp(12));
+        mConversationScroll.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                hideKeyboard();
+                mGoalInput.clearFocus();
+            }
+        });
+        mConversationScroll.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    hideKeyboard();
+                    if (mGoalInput != null) {
+                        mGoalInput.clearFocus();
+                    }
+                }
+                return false;
+            }
+        });
         root.addView(mConversationScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         mConversationList = new LinearLayout(this);
         mConversationList.setOrientation(LinearLayout.VERTICAL);
-        mConversationList.setGravity(Gravity.BOTTOM);
+        mConversationList.setGravity(Gravity.BOTTOM | Gravity.LEFT);
+        mConversationList.setPadding(0, dp(8), 0, dp(8));
         mConversationScroll.addView(mConversationList, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         appendConversation("OpenPhone", "Ask me to do anything on this phone.");
@@ -302,12 +366,14 @@ public final class MainActivity extends Activity {
         mTaskView = label("Ready.", 12, false);
         mTaskView.setSingleLine(true);
         mTaskView.setTextColor(getColor(R.color.openphone_text_muted));
-        mTaskView.setPadding(dp(4), 0, dp(4), dp(8));
+        mTaskView.setVisibility(View.GONE);
+        mTaskView.setPadding(0, 0, 0, 0);
         root.addView(mTaskView);
 
         LinearLayout goalPanel = new LinearLayout(this);
-        goalPanel.setOrientation(LinearLayout.VERTICAL);
-        goalPanel.setPadding(dp(10), dp(10), dp(10), dp(10));
+        goalPanel.setOrientation(LinearLayout.HORIZONTAL);
+        goalPanel.setGravity(Gravity.BOTTOM);
+        goalPanel.setPadding(dp(8), dp(6), dp(8), dp(6));
         goalPanel.setBackground(composerBackground());
         root.addView(goalPanel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -319,45 +385,35 @@ public final class MainActivity extends Activity {
         mGoalInput.setTextSize(16);
         mGoalInput.setTextColor(getColor(R.color.openphone_text_primary));
         mGoalInput.setHintTextColor(getColor(R.color.openphone_text_secondary));
-        mGoalInput.setHint("Message OpenPhone");
+        mGoalInput.setHint("Message");
         styleComposerInput(mGoalInput);
+        mGoalInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                updateComposerActionButton();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
         goalPanel.addView(mGoalInput, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        LinearLayout composerRow = buttonRow();
-        composerRow.setGravity(Gravity.CENTER_VERTICAL);
-        composerRow.setPadding(0, dp(10), 0, 0);
-        goalPanel.addView(composerRow, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        Button startAgentButton = circleButton("Mic", true, new View.OnClickListener() {
+        mComposerActionButton = iconButton(ICON_MIC, true, new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                startVoiceAgent();
+                handleComposerAction();
             }
         });
-        composerRow.addView(startAgentButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
-
-        Button stopButton = circleButton("Stop", false, new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                stopTask();
-            }
-        });
-        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        stopParams.setMargins(dp(8), 0, 0, 0);
-        composerRow.addView(stopButton, stopParams);
-
-        View spacer = new View(this);
-        composerRow.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
-
-        Button typeAgentButton = circleButton("Send", true, new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                startAgentFromCurrentGoal();
-            }
-        });
-        composerRow.addView(typeAgentButton, new LinearLayout.LayoutParams(dp(74), dp(48)));
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(dp(46), dp(46));
+        actionParams.setMargins(dp(6), 0, 0, 0);
+        goalPanel.addView(mComposerActionButton, actionParams);
+        updateComposerActionButton();
 
         mAdvancedPanel = panel();
         mAdvancedPanel.setVisibility(View.GONE);
@@ -622,14 +678,59 @@ public final class MainActivity extends Activity {
         return button;
     }
 
-    private Button circleButton(String text, boolean primary, View.OnClickListener listener) {
-        Button button = button(text, primary, listener);
-        button.setTextSize(20);
-        button.setMinHeight(dp(44));
-        button.setMinimumHeight(dp(44));
-        button.setPadding(0, 0, 0, primary ? dp(2) : 0);
-        button.setBackground(pillButtonBackground(primary));
+    private AssistantIconButton iconButton(int icon, boolean primary, View.OnClickListener listener) {
+        AssistantIconButton button = new AssistantIconButton(this);
+        button.setIconState(icon, primary);
+        button.setContentDescription(iconDescription(icon));
+        button.setOnClickListener(listener);
         return button;
+    }
+
+    private static String iconDescription(int icon) {
+        switch (icon) {
+            case ICON_SEND:
+                return "Send";
+            case ICON_STOP:
+                return "Stop";
+            case ICON_PROFILE:
+                return "Profile";
+            case ICON_MIC:
+            default:
+                return "Speak";
+        }
+    }
+
+    private void handleComposerAction() {
+        if (mListening || mAgentThread != null) {
+            stopTask();
+            return;
+        }
+        if (mGoalInput != null && !mGoalInput.getText().toString().trim().isEmpty()) {
+            startAgentFromCurrentGoal();
+            return;
+        }
+        startVoiceAgent();
+    }
+
+    private void updateComposerActionButton() {
+        if (mComposerActionButton == null) {
+            return;
+        }
+        if (mListening || mAgentThread != null) {
+            mComposerActionButton.setIconState(ICON_STOP, true);
+        } else if (mGoalInput != null && !mGoalInput.getText().toString().trim().isEmpty()) {
+            mComposerActionButton.setIconState(ICON_SEND, true);
+        } else {
+            mComposerActionButton.setIconState(ICON_MIC, false);
+        }
+        mComposerActionButton.setContentDescription(iconDescription(mComposerActionButton.icon()));
+    }
+
+    private void hideKeyboard() {
+        InputMethodManager imm = getSystemService(InputMethodManager.class);
+        if (imm != null && mGoalInput != null) {
+            imm.hideSoftInputFromWindow(mGoalInput.getWindowToken(), 0);
+        }
     }
 
     private CheckBox grantCheckBox(String text, final String prefKey, final String secureKey,
@@ -713,7 +814,7 @@ public final class MainActivity extends Activity {
     private void styleComposerInput(EditText input) {
         input.setTextSize(16);
         input.setBackgroundColor(Color.TRANSPARENT);
-        input.setPadding(dp(4), dp(4), dp(4), dp(4));
+        input.setPadding(dp(8), dp(8), dp(8), dp(8));
         input.setInputType(InputType.TYPE_CLASS_TEXT
                 | InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
@@ -730,7 +831,7 @@ public final class MainActivity extends Activity {
     private GradientDrawable composerBackground() {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(getColor(R.color.openphone_surface));
-        drawable.setCornerRadius(dp(24));
+        drawable.setCornerRadius(dp(18));
         drawable.setStroke(dp(1), getColor(R.color.openphone_stroke));
         return drawable;
     }
@@ -739,7 +840,7 @@ public final class MainActivity extends Activity {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(user ? getColor(R.color.openphone_accent)
                 : getColor(R.color.openphone_surface));
-        drawable.setCornerRadius(dp(22));
+        drawable.setCornerRadius(dp(18));
         drawable.setStroke(user ? 0 : dp(1), getColor(R.color.openphone_stroke));
         return drawable;
     }
@@ -802,6 +903,112 @@ public final class MainActivity extends Activity {
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private final class AssistantIconButton extends View {
+        private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path mPath = new Path();
+        private final RectF mRect = new RectF();
+        private int mIcon = ICON_MIC;
+        private boolean mPrimary;
+
+        AssistantIconButton(Activity activity) {
+            super(activity);
+            setClickable(true);
+            setFocusable(true);
+        }
+
+        int icon() {
+            return mIcon;
+        }
+
+        void setIconState(int icon, boolean primary) {
+            mIcon = icon;
+            mPrimary = primary;
+            invalidate();
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int fallback = dp(46);
+            int width = resolveSize(fallback, widthMeasureSpec);
+            int height = resolveSize(fallback, heightMeasureSpec);
+            setMeasuredDimension(width, height);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float width = getWidth();
+            float height = getHeight();
+            float radius = Math.min(width, height) / 2f;
+            int fill = mPrimary
+                    ? getColor(isPressed()
+                            ? R.color.openphone_accent_pressed : R.color.openphone_accent)
+                    : getColor(isPressed()
+                            ? R.color.openphone_surface_high : R.color.openphone_surface);
+            int stroke = getColor(mPrimary ? R.color.openphone_accent : R.color.openphone_stroke);
+            mPaint.setStyle(Paint.Style.FILL);
+            mPaint.setColor(fill);
+            mRect.set(0.5f, 0.5f, width - 0.5f, height - 0.5f);
+            canvas.drawRoundRect(mRect, radius, radius, mPaint);
+            mPaint.setStyle(Paint.Style.STROKE);
+            mPaint.setStrokeWidth(dp(1));
+            mPaint.setColor(stroke);
+            canvas.drawRoundRect(mRect, radius, radius, mPaint);
+
+            mPaint.setColor(mPrimary ? Color.WHITE : getColor(R.color.openphone_text_secondary));
+            mPaint.setStrokeWidth(dp(2));
+            mPaint.setStrokeCap(Paint.Cap.ROUND);
+            mPaint.setStrokeJoin(Paint.Join.ROUND);
+            float cx = width / 2f;
+            float cy = height / 2f;
+            if (mIcon == ICON_SEND) {
+                drawSend(canvas, cx, cy);
+            } else if (mIcon == ICON_STOP) {
+                drawStop(canvas, cx, cy);
+            } else if (mIcon == ICON_PROFILE) {
+                drawProfile(canvas, cx, cy);
+            } else {
+                drawMic(canvas, cx, cy);
+            }
+        }
+
+        private void drawMic(Canvas canvas, float cx, float cy) {
+            mPaint.setStyle(Paint.Style.STROKE);
+            mRect.set(cx - dp(4), cy - dp(13), cx + dp(4), cy + dp(4));
+            canvas.drawRoundRect(mRect, dp(4), dp(4), mPaint);
+            mRect.set(cx - dp(10), cy - dp(5), cx + dp(10), cy + dp(11));
+            canvas.drawArc(mRect, 20, 140, false, mPaint);
+            canvas.drawLine(cx, cy + dp(12), cx, cy + dp(16), mPaint);
+            canvas.drawLine(cx - dp(5), cy + dp(16), cx + dp(5), cy + dp(16), mPaint);
+        }
+
+        private void drawSend(Canvas canvas, float cx, float cy) {
+            mPaint.setStyle(Paint.Style.FILL);
+            mPath.reset();
+            mPath.moveTo(cx - dp(11), cy - dp(10));
+            mPath.lineTo(cx + dp(13), cy);
+            mPath.lineTo(cx - dp(11), cy + dp(10));
+            mPath.lineTo(cx - dp(7), cy + dp(2));
+            mPath.lineTo(cx + dp(3), cy);
+            mPath.lineTo(cx - dp(7), cy - dp(2));
+            mPath.close();
+            canvas.drawPath(mPath, mPaint);
+        }
+
+        private void drawStop(Canvas canvas, float cx, float cy) {
+            mPaint.setStyle(Paint.Style.FILL);
+            mRect.set(cx - dp(7), cy - dp(7), cx + dp(7), cy + dp(7));
+            canvas.drawRoundRect(mRect, dp(2), dp(2), mPaint);
+        }
+
+        private void drawProfile(Canvas canvas, float cx, float cy) {
+            mPaint.setStyle(Paint.Style.STROKE);
+            canvas.drawCircle(cx, cy - dp(6), dp(5), mPaint);
+            mRect.set(cx - dp(11), cy + dp(2), cx + dp(11), cy + dp(18));
+            canvas.drawArc(mRect, 205, 130, false, mPaint);
+        }
     }
 
     private void refreshAll() {
@@ -926,8 +1133,8 @@ public final class MainActivity extends Activity {
     private void listenThenRun() {
         final ModelEndpointConfig endpointConfig = modelEndpointConfig();
         mListening = true;
+        updateComposerActionButton();
         final int voiceGeneration = ++mVoiceRunGeneration;
-        appendConversation("OpenPhone", "Listening...");
         mTaskView.setText("Listening...\n\n" + voicePrivacyDisclosure(endpointConfig)
                 + "\nProvider: " + (endpointConfig.isBrokerMode()
                         ? endpointConfig.providerDisplayName()
@@ -954,6 +1161,7 @@ public final class MainActivity extends Activity {
                             return;
                         }
                         mListening = false;
+                        updateComposerActionButton();
                         if (mIslandVoiceLaunch) {
                             mIslandVoiceLaunch = false;
                         }
@@ -965,7 +1173,6 @@ public final class MainActivity extends Activity {
                         if (finalText == null || finalText.trim().isEmpty()) {
                             mTaskView.setText("I didn't catch that. Tap Speak and try again.");
                             updateIsland("Try again");
-                            appendConversation("OpenPhone", "I didn't catch that.");
                             return;
                         }
                         String transcript = finalText.trim();
@@ -1030,7 +1237,7 @@ public final class MainActivity extends Activity {
         TextView bubble = label(message.trim(), 16, true);
         bubble.setTextColor(user ? Color.WHITE : getColor(R.color.openphone_text_primary));
         bubble.setLineSpacing(dp(2), 1.0f);
-        bubble.setPadding(dp(14), dp(10), dp(14), dp(10));
+        bubble.setPadding(dp(14), dp(9), dp(14), dp(9));
         bubble.setBackground(bubbleBackground(user));
 
         LinearLayout row = new LinearLayout(this);
@@ -1040,7 +1247,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        bubbleParams.setMargins(user ? dp(56) : 0, 0, user ? 0 : dp(56), 0);
+        bubbleParams.setMargins(user ? dp(72) : 0, 0, user ? 0 : dp(72), 0);
         row.addView(bubble, bubbleParams);
 
         mConversationList.addView(row, new LinearLayout.LayoutParams(
@@ -1068,7 +1275,8 @@ public final class MainActivity extends Activity {
         if (mIslandView != null) {
             mIslandView.setText(status);
         }
-        if (mPointerOverlayController != null) {
+        if (mPointerOverlayController != null
+                && (mIslandVoiceLaunch || mActiveTaskId != null || mAgentThread != null)) {
             mPointerOverlayController.setStatus(status);
         }
     }
@@ -1185,6 +1393,8 @@ public final class MainActivity extends Activity {
         } catch (RuntimeException ignored) {
         } finally {
             mActiveTaskId = null;
+            mAgentThread = null;
+            mRunningModelAdapter = null;
             mPendingActionId = null;
             clearPendingToolAction();
             hidePendingConfirmation();
@@ -1192,8 +1402,8 @@ public final class MainActivity extends Activity {
             OpenPhoneNotificationController.showReady(this);
         }
         mTaskView.setText("Task stopped");
-        appendConversation("OpenPhone", "Stopped.");
         updateIsland("Stopped");
+        updateComposerActionButton();
         refreshAudit();
     }
 
@@ -1331,6 +1541,7 @@ public final class MainActivity extends Activity {
                         }
                         mAgentThread = null;
                         mRunningModelAdapter = null;
+                        updateComposerActionButton();
                         if (mAgentRunCancelled || isCancelledResult(result)) {
                             mPointerOverlayController.showMicButton();
                             mTaskView.setText("Task stopped"
@@ -1354,6 +1565,7 @@ public final class MainActivity extends Activity {
             }
         }, "OpenPhoneModelRunner");
         mAgentThread = agentThread;
+        updateComposerActionButton();
         agentThread.start();
     }
 
