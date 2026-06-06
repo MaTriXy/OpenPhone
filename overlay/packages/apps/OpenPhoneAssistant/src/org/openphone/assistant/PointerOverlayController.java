@@ -42,6 +42,7 @@ final class PointerOverlayController {
     private TextView mRightIslandText;
     private TextView mActionLabel;
     private boolean mOpenAppHoldTriggered;
+    private boolean mIslandPositioned;
     private String mMode = "mic";
     private String mTranscriptText = "";
 
@@ -132,6 +133,7 @@ final class PointerOverlayController {
             mLeftIslandText = null;
             mRightIslandText = null;
             mActionLabel = null;
+            mIslandPositioned = false;
         });
     }
 
@@ -242,6 +244,7 @@ final class PointerOverlayController {
         mIslandRoot = new FrameLayout(mContext);
         mIslandRoot.setClickable(true);
         mIslandRoot.setFocusable(false);
+        mIslandRoot.setAlpha(0f);
         mIslandRoot.setBackground(chipBackground());
         mIslandRoot.setPadding(10, 0, 10, 0);
         mIslandRoot.setOnTouchListener(new View.OnTouchListener() {
@@ -258,12 +261,10 @@ final class PointerOverlayController {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
                         mOpenAppHoldTriggered = false;
-                        view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(100).start();
                         mHandler.postDelayed(mOpenApp, OPEN_APP_HOLD_MS);
                         return true;
                     case MotionEvent.ACTION_UP:
                         mHandler.removeCallbacks(mOpenApp);
-                        view.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
                         if (!mOpenAppHoldTriggered) {
                             if ("working".equals(mMode)) {
                                 if (event.getX() < view.getWidth() / 2f) {
@@ -280,7 +281,6 @@ final class PointerOverlayController {
                         return true;
                     case MotionEvent.ACTION_CANCEL:
                         mHandler.removeCallbacks(mOpenApp);
-                        view.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
                         return true;
                     default:
                         return true;
@@ -332,6 +332,7 @@ final class PointerOverlayController {
             mIslandParams = null;
             mLeftIslandText = null;
             mRightIslandText = null;
+            mIslandPositioned = false;
         }
     }
 
@@ -379,14 +380,25 @@ final class PointerOverlayController {
         }
         Rect cutout = centeredCutout(insets);
         int displayWidth = displayWidth();
-        mIslandParams.x = Math.max(0, (displayWidth - ISLAND_WIDTH) / 2);
+        int nextX = Math.max(0, (displayWidth - ISLAND_WIDTH) / 2);
+        int nextY;
         if (isCenteredCutout(cutout, displayWidth)) {
-            mIslandParams.y = Math.max(0, cutout.centerY() - ISLAND_HEIGHT / 2);
+            nextY = Math.max(0, cutout.centerY() - ISLAND_HEIGHT / 2);
         } else {
-            mIslandParams.y = CAMERA_ISLAND_FALLBACK_TOP;
+            nextY = CAMERA_ISLAND_FALLBACK_TOP;
+        }
+        if (mIslandPositioned && mIslandParams.x == nextX && mIslandParams.y == nextY) {
+            if (mIslandRoot.getAlpha() != 1f) {
+                mIslandRoot.setAlpha(1f);
+            }
+            return;
         }
         try {
+            mIslandParams.x = nextX;
+            mIslandParams.y = nextY;
             mWindowManager.updateViewLayout(mIslandRoot, mIslandParams);
+            mIslandPositioned = true;
+            mIslandRoot.setAlpha(1f);
         } catch (RuntimeException ignored) {
         }
     }
