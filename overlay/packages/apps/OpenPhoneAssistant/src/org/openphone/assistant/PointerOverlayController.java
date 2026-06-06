@@ -243,7 +243,11 @@ final class PointerOverlayController {
                         mHandler.removeCallbacks(mOpenApp);
                         view.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
                         if (!mOpenAppHoldTriggered) {
-                            launchVoiceCapture();
+                            if ("working".equals(mMode)) {
+                                launchStopAgent();
+                            } else {
+                                launchVoiceCapture();
+                            }
                         }
                         return true;
                     case MotionEvent.ACTION_CANCEL:
@@ -323,8 +327,8 @@ final class PointerOverlayController {
             mRightIslandText.setTextColor(0xff20e36a);
         } else if ("working".equals(mMode)) {
             mLeftIslandText.setText("AI");
-            mRightIslandText.setText("…");
-            mRightIslandText.setTextColor(0xfff4f7f8);
+            mRightIslandText.setText("Stop");
+            mRightIslandText.setTextColor(0xffff6b6b);
         } else {
             mLeftIslandText.setText("AI");
             mRightIslandText.setText("◉");
@@ -565,6 +569,17 @@ final class PointerOverlayController {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
                 | Intent.FLAG_ACTIVITY_NO_ANIMATION);
         intent.putExtra(MainActivity.EXTRA_START_VOICE, true);
+        try {
+            mContext.startActivity(intent);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void launchStopAgent() {
+        Intent intent = new Intent(mContext, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        intent.putExtra(MainActivity.EXTRA_STOP_AGENT, true);
         try {
             mContext.startActivity(intent);
         } catch (RuntimeException ignored) {

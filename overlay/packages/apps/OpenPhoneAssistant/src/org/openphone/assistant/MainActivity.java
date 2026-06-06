@@ -50,9 +50,11 @@ public final class MainActivity extends Activity {
     private static final String EXTRA_RUN = "org.openphone.assistant.extra.RUN";
     static final String EXTRA_START_VOICE =
             "org.openphone.assistant.extra.START_VOICE";
+    static final String EXTRA_STOP_AGENT =
+            "org.openphone.assistant.extra.STOP_AGENT";
 
     private static final int REQUEST_RECORD_AUDIO = 1001;
-    private static final int VOICE_CAPTURE_MILLIS = 5000;
+    private static final int VOICE_CAPTURE_MILLIS = 12000;
     private static final String PREFS = "openphone_assistant";
     private static final String PREF_GRANT_INPUT = "grant_input";
     private static final String PREF_GRANT_SCREEN_CAPTURE = "grant_screen_capture";
@@ -75,6 +77,7 @@ public final class MainActivity extends Activity {
     private LinearLayout mAdvancedPanel;
     private TextView mIslandView;
     private TextView mStatusView;
+    private TextView mConversationView;
     private TextView mTaskView;
     private LinearLayout mConfirmationPanel;
     private TextView mConfirmationBody;
@@ -97,8 +100,10 @@ public final class MainActivity extends Activity {
     private CheckBox mUseRealtime;
     private volatile boolean mAgentRunCancelled;
     private boolean mIslandVoiceLaunch;
+    private boolean mSuppressNextUserAppend;
     private int mAgentRunGeneration;
     private int mAuditRefreshGeneration;
+    private int mVoiceRunGeneration;
     private Thread mAgentThread;
     private ModelAdapter mRunningModelAdapter;
     private OtaUpdateClient.Update mLatestOtaUpdate;
@@ -164,6 +169,15 @@ public final class MainActivity extends Activity {
                 }
             });
         }
+        if (intent.getBooleanExtra(EXTRA_STOP_AGENT, false)) {
+            mGoalInput.post(new Runnable() {
+                @Override
+                public void run() {
+                    stopTask();
+                    moveTaskToBack(true);
+                }
+            });
+        }
         if (!debugIntentExtrasAllowed()) {
             return;
         }
@@ -224,15 +238,25 @@ public final class MainActivity extends Activity {
         header.setPadding(0, dp(8), 0, dp(18));
         root.addView(header);
 
-        TextView title = label("Ask OpenPhone", 30, true);
+        TextView title = label("OpenPhone", 30, true);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         header.addView(title);
 
-        TextView subtitle = label("Tell me the outcome. I will handle the steps.",
+        TextView subtitle = label("Your assistant for the whole phone.",
                 15, false);
         subtitle.setTextColor(getColor(R.color.openphone_text_muted));
         subtitle.setPadding(0, dp(6), 0, 0);
         header.addView(subtitle);
+
+        LinearLayout chatPanel = panel();
+        root.addView(chatPanel, blockParams());
+        chatPanel.addView(sectionTitle("Chat"));
+        mConversationView = body();
+        mConversationView.setText("Ask me to do anything on this phone.");
+        mConversationView.setTextColor(getColor(R.color.openphone_text_primary));
+        mConversationView.setBackground(panelBackground(R.color.openphone_background));
+        mConversationView.setPadding(dp(12), dp(10), dp(12), dp(10));
+        chatPanel.addView(mConversationView, blockParams());
 
         LinearLayout goalPanel = panel();
         root.addView(goalPanel, blockParams());
@@ -243,7 +267,7 @@ public final class MainActivity extends Activity {
         mGoalInput.setTextSize(16);
         mGoalInput.setTextColor(getColor(R.color.openphone_text_primary));
         mGoalInput.setHintTextColor(getColor(R.color.openphone_text_secondary));
-        mGoalInput.setHint("Try: open Settings, check my battery level, search the web...");
+        mGoalInput.setHint("Message OpenPhone...");
         styleInput(mGoalInput);
         goalPanel.addView(mGoalInput, blockParams());
 
@@ -256,7 +280,7 @@ public final class MainActivity extends Activity {
         startAgentButton.setTextSize(18);
         goalPanel.addView(startAgentButton, blockParams());
 
-        Button typeAgentButton = button("Run", false, new View.OnClickListener() {
+        Button typeAgentButton = button("Send", false, new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 startAgentFromCurrentGoal();
@@ -264,7 +288,15 @@ public final class MainActivity extends Activity {
         });
         goalPanel.addView(typeAgentButton, blockParams());
 
-        mTaskView = section(root, "Task");
+        Button stopButton = button("Stop", false, new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                stopTask();
+            }
+        });
+        goalPanel.addView(stopButton, blockParams());
+
+        mTaskView = section(root, "Status");
         mTaskView.setText("Ready.");
 
         mConfirmationPanel = panel();
@@ -292,7 +324,7 @@ public final class MainActivity extends Activity {
             }
         }), weightedButtonParams());
 
-        Button advancedButton = button("Developer", false, new View.OnClickListener() {
+        Button advancedButton = button("Settings", false, new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 toggleAdvanced();
@@ -820,6 +852,8 @@ public final class MainActivity extends Activity {
     private void listenThenRun() {
         final ModelEndpointConfig endpointConfig = modelEndpointConfig();
         mListening = true;
+        final int voiceGeneration = ++mVoiceRunGeneration;
+        appendConversation("OpenPhone", "Listening...");
         mTaskView.setText("Listening...\n\n" + voicePrivacyDisclosure(endpointConfig)
                 + "\nProvider: " + (endpointConfig.isBrokerMode()
                         ? endpointConfig.providerDisplayName()
@@ -842,6 +876,9 @@ public final class MainActivity extends Activity {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
+                        if (voiceGeneration != mVoiceRunGeneration) {
+                            return;
+                        }
                         mListening = false;
                         if (mIslandVoiceLaunch) {
                             mIslandVoiceLaunch = false;
@@ -854,9 +891,13 @@ public final class MainActivity extends Activity {
                         if (finalText == null || finalText.trim().isEmpty()) {
                             mTaskView.setText("I didn't catch that. Tap Speak and try again.");
                             updateIsland("Try again");
+                            appendConversation("OpenPhone", "I didn't catch that.");
                             return;
                         }
-                        mGoalInput.setText(finalText.trim());
+                        String transcript = finalText.trim();
+                        mGoalInput.setText(transcript);
+                        appendConversation("You", transcript);
+                        mSuppressNextUserAppend = true;
                         startAgentFromCurrentGoal();
                     }
                 });
@@ -871,6 +912,11 @@ public final class MainActivity extends Activity {
             updateIsland("Waiting for task");
             return;
         }
+        if (mSuppressNextUserAppend) {
+            mSuppressNextUserAppend = false;
+        } else {
+            appendConversation("You", goal);
+        }
         if (mAgentManager == null) {
             refreshAll();
             return;
@@ -882,6 +928,19 @@ public final class MainActivity extends Activity {
             return;
         }
         startTaskThenRunAgent(goal);
+        mGoalInput.setText("");
+    }
+
+    private void appendConversation(String speaker, String message) {
+        if (mConversationView == null || message == null || message.trim().isEmpty()) {
+            return;
+        }
+        String current = mConversationView.getText().toString();
+        if ("Ask me to do anything on this phone.".equals(current)) {
+            current = "";
+        }
+        String prefix = current.isEmpty() ? "" : current + "\n\n";
+        mConversationView.setText(prefix + speaker + ": " + message.trim());
     }
 
     private void toggleAdvanced() {
@@ -1003,6 +1062,9 @@ public final class MainActivity extends Activity {
 
     private void stopTask() {
         cancelAgentRun();
+        mVoiceRunGeneration++;
+        mListening = false;
+        mIslandVoiceLaunch = false;
         String taskId = mActiveTaskId;
         try {
             if (mAgentManager != null && taskId != null) {
@@ -1018,6 +1080,7 @@ public final class MainActivity extends Activity {
             OpenPhoneNotificationController.showReady(this);
         }
         mTaskView.setText("Task stopped");
+        appendConversation("OpenPhone", "Stopped.");
         updateIsland("Stopped");
         refreshAudit();
     }
@@ -1164,6 +1227,9 @@ public final class MainActivity extends Activity {
                         mTaskView.setText(agentResultForDisplay(result)
                                 + "\n\nTrajectory: " + trajectory.sessionPath());
                         showConfirmationIfNeeded(result);
+                        appendConversation("OpenPhone", result.contains("\"status\":\"task.finished\"")
+                                || result.contains("\"status\": \"task.finished\"")
+                                ? "Done." : "I need your review.");
                         updateIsland(result.contains("\"status\":\"task.finished\"")
                                 || result.contains("\"status\": \"task.finished\"")
                                 ? "Done" : "Needs review");
