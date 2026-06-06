@@ -21,10 +21,10 @@ import android.widget.TextView;
 final class PointerOverlayController {
     private static final int CURSOR_SIZE = 34;
     private static final int RIPPLE_SIZE = 96;
-    private static final int ISLAND_WIDTH = 420;
-    private static final int ISLAND_HEIGHT = 86;
+    private static final int ISLAND_WIDTH = 620;
+    private static final int ISLAND_HEIGHT = 96;
     private static final int CAMERA_RESERVED_WIDTH = 134;
-    private static final int CAMERA_ISLAND_FALLBACK_TOP = 18;
+    private static final int CAMERA_ISLAND_FALLBACK_TOP = 8;
     private static final int ACTION_LABEL_GAP = 12;
     private static final long OPEN_APP_HOLD_MS = 5000;
     private static final long MAX_VISIBLE_MS = 5 * 60 * 1000;
@@ -43,6 +43,7 @@ final class PointerOverlayController {
     private TextView mActionLabel;
     private boolean mOpenAppHoldTriggered;
     private String mMode = "mic";
+    private String mTranscriptText = "";
 
     PointerOverlayController(Context context) {
         mContext = context.getApplicationContext();
@@ -138,8 +139,10 @@ final class PointerOverlayController {
         mHandler.post(() -> {
             if ("Done".equals(text)) {
                 showDoneThenMic();
+            } else if ("Listening...".equals(text)) {
+                showListening();
             } else if ("Agent is working".equals(text) || "Starting".equals(text)
-                    || "Listening...".equals(text) || "Waiting for task".equals(text)
+                    || "Waiting for task".equals(text)
                     || "Continuing".equals(text)) {
                 mMode = "working";
                 ensureIslandWindow();
@@ -148,9 +151,28 @@ final class PointerOverlayController {
         });
     }
 
+    void showListening() {
+        mHandler.post(() -> {
+            mMode = "listening";
+            mTranscriptText = "";
+            ensureIslandWindow();
+            updateIslandViews();
+        });
+    }
+
+    void showTranscript(String transcript) {
+        mHandler.post(() -> {
+            mMode = "transcript";
+            mTranscriptText = transcript == null ? "" : transcript.trim();
+            ensureIslandWindow();
+            updateIslandViews();
+        });
+    }
+
     void showMicButton() {
         mHandler.post(() -> {
             mMode = "mic";
+            mTranscriptText = "";
             removePointerLayer();
             ensureIslandWindow();
             updateIslandViews();
@@ -249,6 +271,8 @@ final class PointerOverlayController {
                                 } else {
                                     launchStopAgent();
                                 }
+                            } else if ("listening".equals(mMode)) {
+                                launchStopAgent();
                             } else {
                                 launchVoiceCapture();
                             }
@@ -314,10 +338,11 @@ final class PointerOverlayController {
     private TextView islandText() {
         TextView view = new TextView(mContext);
         view.setTextColor(0xfff4f7f8);
-        view.setTextSize(13);
+        view.setTextSize(14);
         view.setTypeface(Typeface.DEFAULT_BOLD);
         view.setGravity(Gravity.CENTER);
         view.setSingleLine(true);
+        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
         return view;
     }
 
@@ -329,6 +354,14 @@ final class PointerOverlayController {
             mLeftIslandText.setText("OK");
             mRightIslandText.setText("✓");
             mRightIslandText.setTextColor(0xff20e36a);
+        } else if ("listening".equals(mMode)) {
+            mLeftIslandText.setText("Listening");
+            mRightIslandText.setText("Stop");
+            mRightIslandText.setTextColor(0xffff6b6b);
+        } else if ("transcript".equals(mMode)) {
+            mLeftIslandText.setText("You said");
+            mRightIslandText.setText(mTranscriptText == null ? "" : mTranscriptText);
+            mRightIslandText.setTextColor(0xfff4f7f8);
         } else if ("working".equals(mMode)) {
             mLeftIslandText.setText("Talk");
             mRightIslandText.setText("Stop");
@@ -346,11 +379,10 @@ final class PointerOverlayController {
         }
         Rect cutout = centeredCutout(insets);
         int displayWidth = displayWidth();
+        mIslandParams.x = Math.max(0, (displayWidth - ISLAND_WIDTH) / 2);
         if (isCenteredCutout(cutout, displayWidth)) {
-            mIslandParams.x = Math.max(0, cutout.centerX() - ISLAND_WIDTH / 2);
-            mIslandParams.y = Math.max(0, cutout.bottom - ISLAND_HEIGHT / 2);
+            mIslandParams.y = Math.max(0, cutout.centerY() - ISLAND_HEIGHT / 2);
         } else {
-            mIslandParams.x = Math.max(0, (displayWidth - ISLAND_WIDTH) / 2);
             mIslandParams.y = CAMERA_ISLAND_FALLBACK_TOP;
         }
         try {

@@ -971,8 +971,16 @@ public final class MainActivity extends Activity {
                         String transcript = finalText.trim();
                         mGoalInput.setText(transcript);
                         appendConversation("You", transcript);
+                        mPointerOverlayController.showTranscript(transcript);
                         mSuppressNextUserAppend = true;
-                        startAgentFromCurrentGoal();
+                        mGoalInput.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (voiceGeneration == mVoiceRunGeneration) {
+                                    startAgentFromCurrentGoal();
+                                }
+                            }
+                        }, 700);
                     }
                 });
             }
