@@ -254,6 +254,19 @@ to code:
   exposed to Responses/Realtime adapters, routed by the orchestrator/local
   fallback, and enforced by the reviewed/YOLO/dry-run policy layer. Calendar
   read/write remain medium-risk confirmed capabilities.
+- Calendar depth v2 is implemented and device-validated (2026-06-11):
+  `calendar_update_event` / `calendar.update_event` (partial updates keyed by
+  `event_id`, before/after snapshots), `calendar_delete_event` /
+  `calendar.delete_event` (high-risk, new `calendar.delete` capability with
+  `explicit_confirm` — YOLO always stops for deletes), and
+  `calendar_check_availability` / `calendar.check_availability` (merged
+  busy intervals + free gaps over a bounded window). All calendar tool
+  outputs carry `start_local`/`end_local` alongside unix-ms, and every model
+  prompt (orchestrator, Responses agent, Realtime initial prompt) now
+  includes live device-time context so the model computes calendar windows
+  instead of guessing epoch milliseconds. Validated on the Pixel 9a as
+  `OpenPhoneAssistant-calendar-depth-v3.apk` (v108 0.1.72-dev,
+  `sha256=62fcf0047ab2784e0d088e21d67f2ee56172ff25f3c19da288732cac29a5e3f3`).
 - Contacts connector v1 is implemented in the assistant action layer.
   `contacts_search` / `contacts.search` searches Android contacts through
   `ContactsContract`, optionally returning phone and email details. The tool is

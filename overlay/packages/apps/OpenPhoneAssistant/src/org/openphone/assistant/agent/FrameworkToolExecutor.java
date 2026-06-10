@@ -95,6 +95,12 @@ public final class FrameworkToolExecutor {
                     return calendarCreateEvent(arguments);
                 case "message_calendar_event_create":
                     return messageCalendarEventCreate(arguments);
+                case "calendar_update_event":
+                    return calendarUpdateEvent(arguments);
+                case "calendar_delete_event":
+                    return calendarDeleteEvent(arguments);
+                case "calendar_check_availability":
+                    return calendarCheckAvailability(arguments);
                 case "contacts_search":
                     return contactsSearch(arguments);
                 case "messages_search":
@@ -387,7 +393,9 @@ public final class FrameworkToolExecutor {
                 events.put(new JSONObject()
                         .put("event_id", eventId)
                         .put("start_at", begin)
+                        .put("start_local", localTime(begin))
                         .put("end_at", end)
+                        .put("end_local", localTime(end))
                         .put("title", title)
                         .put("description", description)
                         .put("location", location)
@@ -500,6 +508,255 @@ public final class FrameworkToolExecutor {
                     .put("message", messageEvidence(message));
         }
         return result.toString();
+    }
+
+    private String calendarUpdateEvent(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.WRITE_CALENDAR)) {
+            return error("calendar_permission_denied:write");
+        }
+        long eventId = arguments.optLong("event_id", 0L);
+        if (eventId <= 0) {
+            return error("missing_calendar_event_id");
+        }
+        JSONObject before = eventById(eventId);
+        if (before == null) {
+            return error("calendar_event_not_found:" + eventId);
+        }
+        ContentValues values = new ContentValues();
+        if (arguments.has("title")) {
+            String title = arguments.optString("title", "").trim();
+            if (title.isEmpty()) {
+                return error("empty_calendar_title");
+            }
+            values.put(CalendarContract.Events.TITLE, title);
+        }
+        if (arguments.has("description")) {
+            values.put(CalendarContract.Events.DESCRIPTION,
+                    arguments.optString("description", ""));
+        }
+        if (arguments.has("location")) {
+            values.put(CalendarContract.Events.EVENT_LOCATION,
+                    arguments.optString("location", ""));
+        }
+        long startAt = arguments.optLong("start_at", 0L);
+        long endAt = arguments.optLong("end_at", 0L);
+        if (startAt > 0 || endAt > 0 || arguments.has("duration_minutes")) {
+            long newStart = startAt > 0 ? startAt : before.optLong("start_at", 0L);
+            long newEnd = endAt;
+            if (newEnd <= newStart) {
+                if (arguments.has("duration_minutes") || startAt > 0) {
+                    int durationMinutes = Math.max(1, Math.min(
+                            arguments.optInt("duration_minutes", 60), 24 * 60));
+                    long beforeDuration = before.optLong("end_at", 0L)
+                            - before.optLong("start_at", 0L);
+                    newEnd = newStart + (arguments.has("duration_minutes")
+                            ? durationMinutes * 60L * 1000L
+                            : (beforeDuration > 0 ? beforeDuration
+                                    : durationMinutes * 60L * 1000L));
+                } else {
+                    return error("calendar_end_before_start");
+                }
+            }
+            values.put(CalendarContract.Events.DTSTART, newStart);
+            values.put(CalendarContract.Events.DTEND, newEnd);
+        }
+        if (arguments.has("all_day")) {
+            values.put(CalendarContract.Events.ALL_DAY,
+                    arguments.optBoolean("all_day", false) ? 1 : 0);
+        }
+        if (values.size() == 0) {
+            return error("no_calendar_fields_to_update");
+        }
+        try {
+            Uri uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId);
+            int updated = mContext.getContentResolver().update(uri, values, null, null);
+            if (updated <= 0) {
+                return error("calendar_update_failed");
+            }
+            JSONObject after = eventById(eventId);
+            return new JSONObject()
+                    .put("status", "calendar.event_updated")
+                    .put("event_id", eventId)
+                    .put("before", before)
+                    .put("after", after == null ? new JSONObject() : after)
+                    .toString();
+        } catch (SecurityException e) {
+            return error("calendar_permission_denied:write");
+        } catch (RuntimeException e) {
+            return error("calendar_update_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private String calendarDeleteEvent(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.WRITE_CALENDAR)) {
+            return error("calendar_permission_denied:write");
+        }
+        long eventId = arguments.optLong("event_id", 0L);
+        if (eventId <= 0) {
+            return error("missing_calendar_event_id");
+        }
+        JSONObject deleted = eventById(eventId);
+        if (deleted == null) {
+            return error("calendar_event_not_found:" + eventId);
+        }
+        try {
+            Uri uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId);
+            int count = mContext.getContentResolver().delete(uri, null, null);
+            if (count <= 0) {
+                return error("calendar_delete_failed");
+            }
+            return new JSONObject()
+                    .put("status", "calendar.event_deleted")
+                    .put("event_id", eventId)
+                    .put("deleted", deleted)
+                    .toString();
+        } catch (SecurityException e) {
+            return error("calendar_permission_denied:write");
+        } catch (RuntimeException e) {
+            return error("calendar_delete_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private String calendarCheckAvailability(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.READ_CALENDAR)) {
+            return error("calendar_permission_denied:read");
+        }
+        long now = System.currentTimeMillis();
+        long startAt = arguments.optLong("start_at", 0L);
+        long endAt = arguments.optLong("end_at", 0L);
+        if (startAt <= 0) {
+            startAt = now;
+        }
+        if (endAt <= startAt) {
+            endAt = startAt + 7L * 24L * 60L * 60L * 1000L;
+        }
+        long maxWindowMs = 31L * 24L * 60L * 60L * 1000L;
+        if (endAt - startAt > maxWindowMs) {
+            endAt = startAt + maxWindowMs;
+        }
+        long slotMs = Math.max(5, Math.min(arguments.optInt("duration_minutes", 30),
+                24 * 60)) * 60L * 1000L;
+        ArrayList<long[]> busyRaw = new ArrayList<>();
+        Uri.Builder builder = CalendarContract.Instances.CONTENT_URI.buildUpon();
+        ContentUris.appendId(builder, startAt);
+        ContentUris.appendId(builder, endAt);
+        String[] projection = new String[] {
+                CalendarContract.Instances.BEGIN,
+                CalendarContract.Instances.END,
+                CalendarContract.Instances.TITLE,
+                CalendarContract.Instances.ALL_DAY,
+                CalendarContract.Instances.AVAILABILITY
+        };
+        try (Cursor cursor = mContext.getContentResolver().query(builder.build(), projection,
+                null, null, CalendarContract.Instances.BEGIN + " ASC")) {
+            if (cursor == null) {
+                return error("calendar_query_failed");
+            }
+            while (cursor.moveToNext()) {
+                if (cursor.getInt(4) == CalendarContract.Events.AVAILABILITY_FREE) {
+                    continue;
+                }
+                long begin = Math.max(cursor.getLong(0), startAt);
+                long end = Math.min(cursor.getLong(1), endAt);
+                if (end > begin) {
+                    busyRaw.add(new long[] {begin, end});
+                }
+            }
+        } catch (SecurityException e) {
+            return error("calendar_permission_denied:read");
+        } catch (RuntimeException e) {
+            return error("calendar_query_failed:" + e.getClass().getSimpleName());
+        }
+        busyRaw.sort((a, b) -> Long.compare(a[0], b[0]));
+        ArrayList<long[]> busy = new ArrayList<>();
+        for (long[] interval : busyRaw) {
+            if (!busy.isEmpty() && interval[0] <= busy.get(busy.size() - 1)[1]) {
+                long[] last = busy.get(busy.size() - 1);
+                last[1] = Math.max(last[1], interval[1]);
+            } else {
+                busy.add(new long[] {interval[0], interval[1]});
+            }
+        }
+        JSONArray busyJson = new JSONArray();
+        for (long[] interval : busy) {
+            busyJson.put(new JSONObject()
+                    .put("start_at", interval[0])
+                    .put("start_local", localTime(interval[0]))
+                    .put("end_at", interval[1])
+                    .put("end_local", localTime(interval[1])));
+        }
+        JSONArray freeJson = new JSONArray();
+        long cursorMs = startAt;
+        for (long[] interval : busy) {
+            if (interval[0] - cursorMs >= slotMs && freeJson.length() < 20) {
+                freeJson.put(new JSONObject()
+                        .put("start_at", cursorMs)
+                        .put("start_local", localTime(cursorMs))
+                        .put("end_at", interval[0])
+                        .put("end_local", localTime(interval[0])));
+            }
+            cursorMs = Math.max(cursorMs, interval[1]);
+        }
+        if (endAt - cursorMs >= slotMs && freeJson.length() < 20) {
+            freeJson.put(new JSONObject()
+                    .put("start_at", cursorMs)
+                    .put("start_local", localTime(cursorMs))
+                    .put("end_at", endAt)
+                    .put("end_local", localTime(endAt)));
+        }
+        return new JSONObject()
+                .put("status", "calendar.availability")
+                .put("start_at", startAt)
+                .put("start_local", localTime(startAt))
+                .put("end_at", endAt)
+                .put("end_local", localTime(endAt))
+                .put("slot_minutes", slotMs / 60000L)
+                .put("busy", busyJson)
+                .put("free", freeJson)
+                .toString();
+    }
+
+    private static String localTime(long epochMillis) {
+        if (epochMillis <= 0) {
+            return "";
+        }
+        java.text.SimpleDateFormat format =
+                new java.text.SimpleDateFormat("EEE yyyy-MM-dd HH:mm zzz", Locale.US);
+        format.setTimeZone(TimeZone.getDefault());
+        return format.format(new java.util.Date(epochMillis));
+    }
+
+    private JSONObject eventById(long eventId) throws JSONException {
+        String[] projection = new String[] {
+                CalendarContract.Events.TITLE,
+                CalendarContract.Events.DESCRIPTION,
+                CalendarContract.Events.EVENT_LOCATION,
+                CalendarContract.Events.DTSTART,
+                CalendarContract.Events.DTEND,
+                CalendarContract.Events.ALL_DAY,
+                CalendarContract.Events.CALENDAR_ID,
+                CalendarContract.Events.DELETED
+        };
+        Uri uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId);
+        try (Cursor cursor = mContext.getContentResolver().query(uri, projection,
+                null, null, null)) {
+            if (cursor == null || !cursor.moveToFirst() || cursor.getInt(7) != 0) {
+                return null;
+            }
+            return new JSONObject()
+                    .put("event_id", eventId)
+                    .put("title", stringAt(cursor, 0))
+                    .put("description", stringAt(cursor, 1))
+                    .put("location", stringAt(cursor, 2))
+                    .put("start_at", cursor.getLong(3))
+                    .put("start_local", localTime(cursor.getLong(3)))
+                    .put("end_at", cursor.getLong(4))
+                    .put("end_local", localTime(cursor.getLong(4)))
+                    .put("all_day", cursor.getInt(5) != 0)
+                    .put("calendar_id", cursor.getLong(6));
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private long firstWritableCalendarId() {

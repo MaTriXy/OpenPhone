@@ -64,6 +64,7 @@ public final class PolicyEngine {
         risks.put("contacts.read", CapabilityRisk.MEDIUM);
         risks.put("calendar.read", CapabilityRisk.MEDIUM);
         risks.put("calendar.write", CapabilityRisk.MEDIUM);
+        risks.put("calendar.delete", CapabilityRisk.HIGH);
         risks.put("messages.read", CapabilityRisk.MEDIUM);
         risks.put("messages.draft", CapabilityRisk.MEDIUM);
         risks.put("messages.send", CapabilityRisk.HIGH);

@@ -458,8 +458,12 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "- inspect_screen: the user asks about the currently visible screen or page. "
                 + "No proposed_actions needed.\n"
                 + "- act: change device or external state. If ONE registry tool call clearly "
-                + "completes it (create a calendar event, draft a message, open an app, place "
-                + "a call, open a notification), put that single call in proposed_actions. "
+                + "completes it (create/update/delete a calendar event, draft a message, open "
+                + "an app, place a call, open a notification), put that single call in "
+                + "proposed_actions. Moving or cancelling an existing event needs its "
+                + "event_id: if you do not have one, set task_goal so the agent can "
+                + "calendar_search first. Use calendar_check_availability (retrieve) for "
+                + "free/busy questions. "
                 + "Otherwise leave proposed_actions empty and set task_goal for the autonomous "
                 + "multi-step agent (UI navigation, web tasks, anything needing the screen).\n"
                 + "- watch: the user wants future monitoring (\"tell me when...\", \"remind me "
@@ -475,14 +479,16 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "arguments matching its schema, including a specific \"reason\" argument "
                 + "where the tool requires one.\n"
                 + "- Never invent device data in answer mode; use retrieve.\n"
-                + "- High-risk tools (messages_send, calls_place, share_text) are allowed in "
-                + "proposed_actions; the OS will ask the user to confirm before execution.\n"
+                + "- High-risk tools (messages_send, calls_place, share_text, "
+                + "calendar_delete_event) are allowed in proposed_actions; the OS will ask "
+                + "the user to confirm before execution.\n"
                 + "- If has_active_task is true, follow-up instructions about the running task "
                 + "should be mode act with task_goal carrying the follow-up.\n"
                 + "- Never return Done as a reply.\n\n"
                 + "Available tools:\n" + ToolCatalog.get().promptToolCatalog() + "\n"
                 + (conversation.isEmpty() ? ""
                         : "Recent conversation (oldest first):\n" + conversation + "\n\n")
+                + "device_time: " + deviceTimeContext() + "\n"
                 + "has_active_task: " + hasActiveTask + "\n"
                 + "user_message: " + (userMessage == null ? "" : userMessage.trim());
         JSONObject body = new JSONObject()
@@ -661,7 +667,8 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "the open task is complete; do not tap Get the app or login surfaces. "
                 + "Do not bypass Android install-security prompts, enter credentials, or "
                 + "accept payments/subscriptions.\n\n"
-                + "User goal: " + userGoal
+                + "Device time: " + deviceTimeContext()
+                + "\n\nUser goal: " + userGoal
                 + "\n\nPrevious steps:\n" + steps.toString(2)
                 + "\n\nScreen metadata without image bytes:\n"
                 + redactScreenshot(new JSONObject(screenJson.toString())).toString(2);
@@ -758,6 +765,13 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
             decision.put("mode", "answer");
         }
         return decision;
+    }
+
+    private static String deviceTimeContext() {
+        java.text.SimpleDateFormat format = new java.text.SimpleDateFormat(
+                "EEE yyyy-MM-dd HH:mm zzz", Locale.US);
+        long now = System.currentTimeMillis();
+        return format.format(new java.util.Date(now)) + " (unix_ms " + now + ")";
     }
 
     private static String fallbackAnswerDecision(String reply) {

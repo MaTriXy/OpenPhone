@@ -2165,6 +2165,7 @@ public class AssistantActivityBackend extends ComponentActivity {
                 || "notifications_search".equals(toolName)
                 || "notifications_summary".equals(toolName)
                 || "calendar_search".equals(toolName)
+                || "calendar_check_availability".equals(toolName)
                 || "contacts_search".equals(toolName)
                 || "messages_search".equals(toolName)
                 || "messages_summary".equals(toolName)
@@ -2198,6 +2199,8 @@ public class AssistantActivityBackend extends ComponentActivity {
                 || "notifications_open".equals(toolName)
                 || "calendar_create_event".equals(toolName)
                 || "message_calendar_event_create".equals(toolName)
+                || "calendar_update_event".equals(toolName)
+                || "calendar_delete_event".equals(toolName)
                 || "messages_draft".equals(toolName)
                 || "messages_send".equals(toolName)
                 || "calls_place".equals(toolName)
@@ -2348,12 +2351,17 @@ public class AssistantActivityBackend extends ComponentActivity {
         if ("notifications_open".equals(toolName)) {
             return "notifications.act";
         }
-        if ("calendar_search".equals(toolName)) {
+        if ("calendar_search".equals(toolName)
+                || "calendar_check_availability".equals(toolName)) {
             return "calendar.read";
         }
         if ("calendar_create_event".equals(toolName)
-                || "message_calendar_event_create".equals(toolName)) {
+                || "message_calendar_event_create".equals(toolName)
+                || "calendar_update_event".equals(toolName)) {
             return "calendar.write";
+        }
+        if ("calendar_delete_event".equals(toolName)) {
+            return "calendar.delete";
         }
         if ("contacts_search".equals(toolName)) {
             return "contacts.read";

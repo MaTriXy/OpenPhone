@@ -435,9 +435,19 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return builder.toString();
     }
 
+    private static String deviceTimeContext() {
+        java.text.SimpleDateFormat format = new java.text.SimpleDateFormat(
+                "EEE yyyy-MM-dd HH:mm zzz", Locale.US);
+        long now = System.currentTimeMillis();
+        return format.format(new java.util.Date(now)) + " (unix_ms " + now + ")";
+    }
+
     private static String initialTaskPrompt(String userGoal) {
         return "Start this Android phone task and keep working until it is visibly complete "
-                + "or blocked. User goal: " + (userGoal == null ? "" : userGoal.trim())
+                + "or blocked. Device time: " + deviceTimeContext()
+                + ". Compute any unix-ms times (calendar windows, deadlines) from this "
+                + "device time, never guess. User goal: "
+                + (userGoal == null ? "" : userGoal.trim())
                 + "\n\nUse memory_search for durable user preferences/instructions and "
                 + "context_search if prior assistant conversation or task history may "
                 + "help. Use notifications_list or notifications_search when recent "
@@ -445,7 +455,11 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "context may help, and calendar_create_event only when the user "
                 + "explicitly asks to add an event. Use message_calendar_event_create "
                 + "when the event details come from a text message, passing the "
-                + "message query plus full event fields. Use contacts_search when contact "
+                + "message query plus full event fields. Use calendar_check_availability "
+                + "before scheduling to find conflicts and free slots, and "
+                + "calendar_update_event / calendar_delete_event (event_id from "
+                + "calendar_search) when the user asks to move, change, or cancel an "
+                + "existing event. Use contacts_search when contact "
                 + "context may help. Use messages_search for SMS context, messages_draft "
                 + "to prepare a text, and messages_send only when the user explicitly "
                 + "asked to send an SMS. Use calls_search for call history context and "
@@ -487,7 +501,11 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "help, and calendar_create_event when the user explicitly asks to add "
                 + "an event. Prefer message_calendar_event_create when the event comes "
                 + "from a text message: include the message query and complete event "
-                + "fields in one call. Use contacts_search when contact context may help. "
+                + "fields in one call. Check calendar_check_availability before "
+                + "scheduling when conflicts matter, and use calendar_update_event or "
+                + "calendar_delete_event with an event_id from calendar_search when the "
+                + "user asks to move, change, or cancel an existing event. "
+                + "Use contacts_search when contact context may help. "
                 + "Use messages_search, messages_draft, and messages_send for SMS tasks "
                 + "instead of driving the Messages UI when possible. Use calls_search "
                 + "and calls_place for phone tasks instead of driving the Dialer UI "

@@ -50,6 +50,24 @@
       "requires_reason": true
     },
     {
+      "name": "calendar_update_event",
+      "capability": "calendar.write",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "calendar_delete_event",
+      "capability": "calendar.delete",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "calendar_check_availability",
+      "capability": "calendar.read",
+      "kind": "observe",
+      "requires_reason": true
+    },
+    {
       "name": "contacts_search",
       "capability": "contacts.read",
       "kind": "observe",

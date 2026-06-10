@@ -22,6 +22,7 @@
     { "id": "contacts.read", "risk": "medium", "default": "confirm" },
     { "id": "calendar.read", "risk": "medium", "default": "confirm" },
     { "id": "calendar.write", "risk": "medium", "default": "confirm" },
+    { "id": "calendar.delete", "risk": "high", "default": "explicit_confirm" },
     { "id": "messages.read", "risk": "medium", "default": "confirm" },
     { "id": "messages.draft", "risk": "medium", "default": "confirm" },
     { "id": "messages.send", "risk": "high", "default": "explicit_confirm" },

@@ -477,6 +477,188 @@
       "audit_event_type": "action_executed"
     },
     {
+      "name": "calendar.update_event",
+      "description": "Update fields of an existing Android calendar event (title, time, location, description). Recurring events update the whole series.",
+      "model_tool": "calendar_update_event",
+      "kind": "action",
+      "input_schema_json": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "integer",
+            "description": "Calendar event id from calendar_search."
+          },
+          "title": {
+            "type": "string",
+            "description": "New event title."
+          },
+          "description": {
+            "type": "string",
+            "description": "New event details."
+          },
+          "location": {
+            "type": "string",
+            "description": "New location."
+          },
+          "start_at": {
+            "type": "integer",
+            "description": "New start, Unix time in milliseconds."
+          },
+          "end_at": {
+            "type": "integer",
+            "description": "New end, Unix time in milliseconds."
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "description": "New duration if end_at is omitted."
+          },
+          "all_day": {
+            "type": "boolean",
+            "description": "Whether this is an all-day event."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this event should be changed."
+          }
+        },
+        "required": [
+          "event_id",
+          "reason"
+        ]
+      },
+      "output_schema_json": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "integer"
+          },
+          "before": {
+            "type": "object"
+          },
+          "after": {
+            "type": "object"
+          }
+        }
+      },
+      "risk_class": "medium",
+      "required_capabilities": [
+        "calendar.write"
+      ],
+      "authorization_policy": "confirm",
+      "allowed_callers": [
+        "model",
+        "assistant_ui"
+      ],
+      "executor_service": "OpenPhoneAssistant.FrameworkToolExecutor",
+      "audit_event_type": "action_executed"
+    },
+    {
+      "name": "calendar.delete_event",
+      "description": "Delete an Android calendar event permanently. Recurring events delete the whole series.",
+      "model_tool": "calendar_delete_event",
+      "kind": "action",
+      "input_schema_json": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "integer",
+            "description": "Calendar event id from calendar_search."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this event should be deleted."
+          }
+        },
+        "required": [
+          "event_id",
+          "reason"
+        ]
+      },
+      "output_schema_json": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "integer"
+          },
+          "deleted": {
+            "type": "object"
+          }
+        }
+      },
+      "risk_class": "high",
+      "required_capabilities": [
+        "calendar.delete"
+      ],
+      "authorization_policy": "explicit_confirm",
+      "allowed_callers": [
+        "model",
+        "assistant_ui"
+      ],
+      "executor_service": "OpenPhoneAssistant.FrameworkToolExecutor",
+      "audit_event_type": "action_executed"
+    },
+    {
+      "name": "calendar.check_availability",
+      "description": "Check calendar free/busy in a time window: returns merged busy intervals and free slots long enough for a requested duration. Use before scheduling to avoid conflicts.",
+      "model_tool": "calendar_check_availability",
+      "kind": "observe",
+      "input_schema_json": {
+        "type": "object",
+        "properties": {
+          "start_at": {
+            "type": "integer",
+            "description": "Window start, Unix time in milliseconds, or 0 for now."
+          },
+          "end_at": {
+            "type": "integer",
+            "description": "Window end, Unix time in milliseconds, or 0 for start plus 7 days."
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "description": "Minimum free-slot length to report, default 30."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why availability is needed."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "output_schema_json": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "busy": {
+            "type": "array"
+          },
+          "free": {
+            "type": "array"
+          }
+        }
+      },
+      "risk_class": "medium",
+      "required_capabilities": [
+        "calendar.read"
+      ],
+      "authorization_policy": "confirm",
+      "allowed_callers": [
+        "model",
+        "assistant_ui"
+      ],
+      "executor_service": "OpenPhoneAssistant.FrameworkToolExecutor",
+      "audit_event_type": "action_executed"
+    },
+    {
       "name": "contacts.search",
       "description": "Search Android contacts by name, phone, email, or organization.",
       "model_tool": "contacts_search",

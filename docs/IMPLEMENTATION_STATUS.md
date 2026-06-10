@@ -5,22 +5,24 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=105`, `versionName=0.1.69-dev`.
+`versionCode=108`, `versionName=0.1.72-dev`.
 
-**Tree state (2026-06-10):** the working tree compiles and
+**Tree state (2026-06-11):** the working tree compiles and
 `./scripts/check.sh` is fully green, including the Java compile gate added
 in Phase 0 (54 assistant files against android-35). Phases 0, A, and B of
-the spine-first plan are code-complete and device-validated, and the first
-five Phase C connector slices (calendar-from-message, model-backed
-semantic watcher evaluation, browser/page context deepening, model-backed
-AI Sheet screen answers, message-reply watchers) plus the AI Island
-8-state machine with YOLO visual state passed reviewed device smokes. See
+the spine-first plan are code-complete and device-validated, and seven
+Phase C connector slices (calendar-from-message, model-backed semantic
+watcher evaluation, browser/page context deepening, model-backed AI Sheet
+screen answers, message-reply watchers, the AI Island 8-state machine
+with YOLO visual state, and calendar depth —
+update/delete/check-availability) passed reviewed device smokes. See
 "Architecture Audit and Revised Direction" below for the full record.
 
-The last fully validated slice is the AI Island state machine v2
-(`.worktree/artifacts/tegu/OpenPhoneAssistant-island-states-v2.apk`,
-`sha256=a45c612fccc7e0382043bb12257e56f2ddbcc85c4a379c47b78b9c87158c03aa`,
-v105 0.1.69-dev, installed), with the device reset to
+The last fully validated slice is calendar depth v3
+(`.worktree/artifacts/tegu/OpenPhoneAssistant-calendar-depth-v3.apk`,
+`sha256=62fcf0047ab2784e0d088e21d67f2ee56172ff25f3c19da288732cac29a5e3f3`,
+v108 0.1.72-dev, installed, registry/model-tools/capabilities configs
+pushed to `/system_ext/etc/openphone/`), with the device reset to
 `openphone_autonomy_mode=reviewed`.
 
 Current physically validated Pixel 9a baseline:
@@ -1470,6 +1472,91 @@ Settings.Secure, smoke screenshots removed from `/data/local/tmp`,
 watcher table back to its pre-smoke census (4 active / 5 fired /
 3 stopped), adb unrooted.
 
+### Phase C calendar depth: update / delete / availability (2026-06-11)
+
+Deepens the calendar connector beyond search/create: the model can now
+move, change, or cancel existing events and answer free/busy questions,
+and every model prompt carries the real device time so unix-ms windows
+are computed instead of guessed.
+
+Implementation (registry-driven — 3 JSON entries + 3 executor cases,
+no schema duplication anywhere else):
+
+- `openphone_action_registry.json` + `openphone_model_tools.json`:
+  `calendar.update_event` / `calendar_update_event` (action, medium,
+  `calendar.write`, confirm; partial updates of title/description/
+  location/start_at/end_at/duration_minutes/all_day keyed by required
+  `event_id`), `calendar.delete_event` / `calendar_delete_event`
+  (action, **high**, new `calendar.delete` capability,
+  `explicit_confirm`), and `calendar.check_availability` /
+  `calendar_check_availability` (observe, medium, `calendar.read`,
+  confirm; busy/free interval computation over a bounded window).
+- `openphone_capabilities.json` + `PolicyEngine`: new `calendar.delete`
+  capability at risk `high` / default `explicit_confirm`. Because
+  `yoloAllows()` requires `confirm`+`medium`+yolo-eligible capability,
+  YOLO auto-runs updates but **always** stops for deletes — a
+  deliberate safety rail, not a keyword route.
+- `FrameworkToolExecutor`: `calendarUpdateEvent` (before/after
+  snapshots via `eventById`, preserved duration when only the start
+  moves, `calendar_end_before_start` /
+  `no_calendar_fields_to_update` errors), `calendarDeleteEvent`
+  (snapshot then delete, returns the deleted event),
+  `calendarCheckAvailability` (queries `CalendarContract.Instances`,
+  skips `AVAILABILITY_FREE`, merges overlapping busy intervals, emits
+  free gaps ≥ the requested slot, window clamped ≤31d). All calendar
+  tool outputs now carry human-readable `start_local`/`end_local`
+  alongside unix-ms — added after a v106 smoke showed the model
+  misconverting epoch ms into wrong clock times.
+- Device-time context: `deviceTimeContext()` ("EEE yyyy-MM-dd HH:mm
+  zzz (unix_ms N)") is injected into the orchestrator prompt, the
+  Responses multi-step agent prompt, and the Realtime
+  `initialTaskPrompt`/instructions. Root cause evidence: a v107
+  trajectory (`openphone-trajectories/.../events.jsonl`) showed the
+  Realtime agent guessing `start_at=1778150400000` (weeks in the past)
+  for "today", finding no events, and finishing with a false "Done".
+  With v108 the same goals compute correct windows.
+- `AssistantActivityBackend`: `calendar_check_availability` joins the
+  read-only dry-run preview list; update/delete join the high-risk
+  fallback action list; `capabilityForTool` maps the three new tools
+  (delete → `calendar.delete`).
+
+Artifacts: `OpenPhoneAssistant-calendar-depth-v1.apk` (v106, sha256
+`615028952641e35e0c3557189bdd0b949100213ce70ceb851f03cf7eef8a2505`),
+`-v2.apk` (v107 local-time fields, sha256
+`67b46ce88a07d90845efc84ca1ba29351acb1cbd6a1b1d9640764d596fe67f60`),
+`-v3.apk` (v108 0.1.72-dev device-time context, sha256
+`62fcf0047ab2784e0d088e21d67f2ee56172ff25f3c19da288732cac29a5e3f3`,
+installed). Screenshots `calendar-1-update-approval.png` …
+`calendar-9-reviewed-time-move-done.png` under
+`.worktree/artifacts/tegu/screens/`.
+
+Device acceptance (Pixel 9a, seeded local-calendar fixtures, dev key
+via harness intent only):
+
+1. **Reviewed update:** "move my Dentist appointment one hour later"
+   stopped at a "Risk: Medium / Approve calendar.update_event" card;
+   after approval `content query` showed the event row moved
+   (`calendar-1..3`).
+2. **Availability:** "when am I free today for an hour?" ran
+   `calendar_check_availability` behind confirm and (v108) answered
+   exactly right in local time — busy 14:00–14:30 and 15:00–16:00,
+   free gaps 08:00–14:00 and 16:00–18:00 (`calendar-6`).
+3. **YOLO update auto-runs:** in `yolo` mode a rename goal executed
+   `calendar_update_event` without an action approval card; the row's
+   title changed ("Team standup (moved rooms)", `calendar-7`).
+4. **YOLO delete blocked:** in the same mode a delete goal stopped at
+   a "Risk: High / Approve calendar.delete_event" `explicit_confirm`
+   card (`calendar-8-yolo-delete-blocked.png`); after manual approval
+   the row was really deleted.
+5. **Device-time correctness (v108):** reviewed goal "move my Team
+   standup to 5:00pm local time, keep 30 minutes" computed
+   `dtstart=1781186400000` / `dtend=1781188200000` (17:00–17:30
+   Asia/Jerusalem, exactly right) and the row updated after the Medium
+   approval (`calendar-9-reviewed-time-move-done.png`).
+
+Cleanup: fixture calendar events deleted, autonomy mode reset to
+`reviewed`, dev key confirmed null in Settings.Secure, adb unrooted.
+
 ## Not Yet Implemented
 
 - Hardware validation on the Pixel 9a. Full OpenPhone now boots and the
@@ -2192,13 +2279,16 @@ Pixel 9a assistant trajectory-export OTA evidence:
 
 ## Next Engineering Step
 
-Phases 0, A, and B plus six Phase C slices
+Phases 0, A, and B plus seven Phase C slices
 (`calendar.create_event_from_message`, model-backed semantic watcher
 evaluation, browser/page context deepening, model-backed AI Sheet
-screen answers, message-reply watchers, and the AI Island 8-state
-machine with YOLO visual state) are complete and device-validated (see
-the Phase C slice sections above). Continue Phase C: next up is the
-remaining messages/calendar/phone integration depth, then promotion of
+screen answers, message-reply watchers, the AI Island 8-state machine
+with YOLO visual state, and calendar depth —
+update/delete/check-availability) are complete and device-validated
+(see the Phase C slice sections above). Continue Phase C: next up is
+the remaining messages/phone integration depth (missed-call follow-ups,
+contact-name joins across call log/SMS, confirmation-number pulls,
+call context cards), then promotion of
 assistant-local stores into OS-owned services — one slice at a time,
 each closing with the standard EC2 build / install / reviewed + YOLO
 smoke / evidence flow.
