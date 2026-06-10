@@ -150,6 +150,18 @@ to code:
   (`OpenPhoneAssistant-message-reply-v1.apk`,
   `sha256=f2fb71cd9fa189d4dc5780a42618efcc5d7ea370eb548dc2ae979d6f60ca9af6`,
   v103).
+- The AI Island is a canonical 8-state machine
+  (`idle`/`listening`/`thinking`/`answer_ready`/`action_running`/
+  `watching`/`needs_review`/`error`) rendered by
+  `PointerOverlayController.setIslandState`, replacing ad-hoc status-text
+  matching. YOLO autonomy is always visible as an amber chip stroke plus a
+  "⚡" label prefix, the watching state shows the active watcher count
+  published from the watcher scheduler, and a single-island invariant
+  prevents stacked overlay windows across service/activity controller
+  instances. Device-validated 2026-06-10
+  (`OpenPhoneAssistant-island-states-v2.apk`,
+  `sha256=a45c612fccc7e0382043bb12257e56f2ddbcc85c4a379c47b78b9c87158c03aa`,
+  v105).
 - Browser/page context now has a first semantic connector:
   `browser_fetch_page` / `browser.fetch_page` fetches a URL through the
   assistant action layer, extracts bounded title/text metadata plus a heading

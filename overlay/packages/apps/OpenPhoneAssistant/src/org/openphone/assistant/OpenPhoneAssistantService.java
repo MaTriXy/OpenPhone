@@ -111,6 +111,7 @@ public final class OpenPhoneAssistantService extends Service {
     public void onCreate() {
         super.onCreate();
         mPointerOverlayController = new PointerOverlayController(this, this::answerScreenInOverlay);
+        refreshIslandAutonomy();
         mAgentManager = getSystemService(OpenPhoneAgentManager.class);
         OpenPhoneNotificationListenerService.ensureEnabled(this);
         if (mAgentManager == null) {
@@ -128,6 +129,7 @@ public final class OpenPhoneAssistantService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        refreshIslandAutonomy();
         String action = intent != null ? intent.getAction() : null;
         if (ACTION_HIDE_ISLAND.equals(action)) {
             mIslandHiddenByActivity = true;
@@ -209,6 +211,13 @@ public final class OpenPhoneAssistantService extends Service {
             }
             OpenPhoneNotificationController.showReady(this);
         }
+    }
+
+    private void refreshIslandAutonomy() {
+        String mode = Settings.Secure.getString(getContentResolver(),
+                "openphone_autonomy_mode");
+        mPointerOverlayController.setYoloActive(
+                mode != null && "yolo".equals(mode.trim().toLowerCase(Locale.US)));
     }
 
     private void answerScreenInOverlay(String prompt,

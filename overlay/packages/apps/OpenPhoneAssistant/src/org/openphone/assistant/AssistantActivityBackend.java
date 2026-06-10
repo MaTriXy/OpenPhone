@@ -357,6 +357,7 @@ public class AssistantActivityBackend extends ComponentActivity {
             Settings.Secure.putString(getContentResolver(), SECURE_AUTONOMY_MODE, mAutonomyMode);
         } catch (SecurityException ignored) {
         }
+        pushIslandAutonomy();
         updateIsland(autonomyModeLabel(mAutonomyMode) + " mode");
         setTaskText("Autonomy mode: " + autonomyModeLabel(mAutonomyMode));
     }
@@ -547,6 +548,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         mComposeShareGrant = grantDefault(PREF_GRANT_SHARE, SECURE_GRANT_SHARE, false);
         mComposeNetworkGrant = grantDefault(PREF_GRANT_NETWORK, SECURE_GRANT_NETWORK, false);
         mAutonomyMode = autonomyModeDefault();
+        pushIslandAutonomy();
         if (debugIntentExtrasAllowed()) {
             String apiKey = Settings.Secure.getString(getContentResolver(),
                     SECURE_DEV_OPENAI_API_KEY);
@@ -572,6 +574,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         String previous = mAutonomyMode;
         mAutonomyMode = autonomyModeDefault();
         if (!mAutonomyMode.equals(previous)) {
+            pushIslandAutonomy();
             pushComposeAutonomyMode();
         }
     }
@@ -1403,14 +1406,59 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     private void updateIsland(String text) {
         String status = text == null || text.isEmpty() ? "OpenPhone is ready" : text;
-        if (mPointerOverlayController != null
+        String islandState = islandStateForStatus(status);
+        if (mPointerOverlayController != null && islandState != null
                 && (mIslandVoiceLaunch || mActiveTaskId != null || mAgentThread != null)) {
-            mPointerOverlayController.setStatus(status);
+            mPointerOverlayController.setIslandState(islandState, status);
         }
         if (mComposeStateCallbacks != null) {
             mComposeStateCallbacks.setRuntimeStatus(status, mActiveTaskId,
                     mAgentThread != null || mChatThread != null,
                     mListening || mIslandVoiceLaunch);
+        }
+    }
+
+    private static String islandStateForStatus(String status) {
+        switch (status) {
+            case "Thinking":
+            case "Reading screen":
+                return "thinking";
+            case "Done":
+            case "Trace exported":
+            case "Audit exported":
+                return "answer_ready";
+            case "Needs review":
+            case "Approval needed":
+                return "needs_review";
+            case "Start failed":
+            case "Action failed":
+            case "Export failed":
+            case "Assistant unavailable":
+            case "Setup needed":
+            case "Mic blocked":
+            case "Try again":
+                return "error";
+            case "Listening...":
+                return "listening";
+            case "Working":
+            case "Waiting for task":
+            case "Agent active":
+            case "Agent is working":
+            case "Starting":
+            case "Continuing":
+                return "action_running";
+            case "Ready":
+            case "Stopped":
+            case "Denied":
+                return "idle";
+            default:
+                return null;
+        }
+    }
+
+    private void pushIslandAutonomy() {
+        if (mPointerOverlayController != null) {
+            mPointerOverlayController.setYoloActive("yolo".equals(mAutonomyMode));
         }
     }
 

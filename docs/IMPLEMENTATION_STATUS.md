@@ -5,7 +5,7 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=103`, `versionName=0.1.67-dev`.
+`versionCode=105`, `versionName=0.1.69-dev`.
 
 **Tree state (2026-06-10):** the working tree compiles and
 `./scripts/check.sh` is fully green, including the Java compile gate added
@@ -13,14 +13,15 @@ in Phase 0 (54 assistant files against android-35). Phases 0, A, and B of
 the spine-first plan are code-complete and device-validated, and the first
 five Phase C connector slices (calendar-from-message, model-backed
 semantic watcher evaluation, browser/page context deepening, model-backed
-AI Sheet screen answers, message-reply watchers) passed reviewed device
-smokes. See "Architecture Audit and Revised Direction" below for the full
-record.
+AI Sheet screen answers, message-reply watchers) plus the AI Island
+8-state machine with YOLO visual state passed reviewed device smokes. See
+"Architecture Audit and Revised Direction" below for the full record.
 
-The last fully validated connector slice is message-reply v1
-(`.worktree/artifacts/tegu/OpenPhoneAssistant-message-reply-v1.apk`,
-`sha256=f2fb71cd9fa189d4dc5780a42618efcc5d7ea370eb548dc2ae979d6f60ca9af6`),
-with the device reset to `openphone_autonomy_mode=reviewed`.
+The last fully validated slice is the AI Island state machine v2
+(`.worktree/artifacts/tegu/OpenPhoneAssistant-island-states-v2.apk`,
+`sha256=a45c612fccc7e0382043bb12257e56f2ddbcc85c4a379c47b78b9c87158c03aa`,
+v105 0.1.69-dev, installed), with the device reset to
+`openphone_autonomy_mode=reviewed`.
 
 Current physically validated Pixel 9a baseline:
 
@@ -1391,6 +1392,84 @@ Cleanup: smoke watchers 11–14 soft-deleted, simulated SMS rows removed,
 watcher notifications dismissed, dev key deleted from Settings.Secure,
 device reset to `openphone_autonomy_mode=reviewed`.
 
+### Phase C AI Island state machine + YOLO visual state (2026-06-10)
+
+Implements the master plan's AI Island spec: the island is now a
+canonical 8-state machine instead of ad-hoc status strings, with a
+distinct visual treatment per state and an always-visible YOLO
+indicator.
+
+Implementation:
+
+- `PointerOverlayController` (now `public`): replaced the legacy
+  text-matching `setStatus(String)` with a canonical
+  `setIslandState(state, detail)` API covering the plan's eight states
+  — `idle`, `listening`, `thinking`, `answer_ready`, `action_running`,
+  `watching`, `needs_review`, `error` — plus the existing `transcript`
+  interstitial. Each state renders distinct island text/glyph/colors:
+  idle "AI ◉" (teal), watching "AI ◎ N" (blue, N = active watcher
+  count when >1), thinking "Thinking …" (blue), action_running
+  "Talk/Stop" (red) with pointer layer + watchdog, answer_ready "OK ✓"
+  (green, auto-decays to idle/watching after 2.2s), needs_review
+  "Review !" (amber), error "Error !" (red), listening
+  "Listening/Stop" (red). Tap targets per state: running/thinking →
+  left=voice right=stop; listening → stop; needs_review/error → opens
+  the assistant; idle/watching → left=AI sheet right=voice. The AI
+  sheet status line mirrors all states incl. `mStateDetail` for
+  review/error.
+- YOLO visual state: `setYoloActive(boolean)` adds a 3px amber stroke
+  (`0xffffd166`) around the island chip and a "⚡ " prefix on the state
+  label in idle/watching/thinking/action_running. The backend pushes
+  it from every `mAutonomyMode` change (compose toggle, defaults load,
+  reload) and `OpenPhoneAssistantService` re-reads
+  `Settings.Secure openphone_autonomy_mode` on create/start.
+- Watching count: `OpenPhoneWatcherScheduler.scheduleNext` publishes
+  `WatcherStore.active(50).size()` through the static
+  `PointerOverlayController.publishWatchingCount`, so the island flips
+  idle↔watching as watchers are created/fired/stopped.
+- `AssistantActivityBackend.updateIsland` maps its existing status
+  strings to canonical states via `islandStateForStatus` (model
+  decides what runs; this mapping is presentation-only).
+- Single-island invariant: `ensureIslandWindow` now removes any island
+  owned by *other* controller instances (service vs activity) before
+  adding its own window — fixes a leak where up to three stacked
+  620x96 islands accumulated across force-stop/recreate cycles and a
+  stale YOLO stroke could outlive a mode switch.
+
+Artifacts: `OpenPhoneAssistant-island-states-v1.apk` (v104,
+sha256 `7078f9f951972064f9db5eb5e51c99820bc6aead1be518ad4d7c1d6562e52e31`)
+and the leak fix `OpenPhoneAssistant-island-states-v2.apk` (v105
+0.1.69-dev, sha256
+`a45c612fccc7e0382043bb12257e56f2ddbcc85c4a379c47b78b9c87158c03aa`,
+installed). Screenshots under `.worktree/artifacts/tegu/screens/`
+(`island-*.png`, `fast/montage.png`).
+
+Device acceptance (Pixel 9a, v104 visuals + v105 invariant):
+
+1. **Idle / watching / YOLO chrome:** reviewed idle island shows
+   "AI ◉"; with 4 active watchers it renders "AI ◎ 4"; switching
+   `openphone_autonomy_mode` to `yolo` adds the amber stroke + "⚡ "
+   prefix (`island-1-yolo-watching.png`, `island-7-pure-idle.png`).
+2. **Live state sequence:** a YOLO harness goal produced the full
+   visible arc — "⚡ Thinking …" → "⚡ Talk/Stop" (action_running with
+   pointer dot) → "OK ✓" → auto-decay back to "⚡ AI ◎ 4" — captured by
+   a 0.5s screencap loop (`fast/montage.png`); a calculator goal that
+   ended in review showed amber "Review !" (`island-6-running.png`).
+3. **Error rail:** voice capture without a configured key landed the
+   island in red "Error !" and tap opened the assistant
+   (`island-2-error.png`).
+4. **Single-island invariant (v105):** after
+   activity launch → home → service refresh and a
+   force-stop → service+activity recreate cycle, `dumpsys window`
+   shows exactly one `org.openphone.assistant` overlay window (was 3
+   on v104); YOLO→reviewed flip drops amber stroke pixels in the
+   island region from 2812 to 0 with no stale chrome.
+
+Cleanup: autonomy mode reset to `reviewed`, dev key deleted from
+Settings.Secure, smoke screenshots removed from `/data/local/tmp`,
+watcher table back to its pre-smoke census (4 active / 5 fired /
+3 stopped), adb unrooted.
+
 ## Not Yet Implemented
 
 - Hardware validation on the Pixel 9a. Full OpenPhone now boots and the
@@ -2113,15 +2192,16 @@ Pixel 9a assistant trajectory-export OTA evidence:
 
 ## Next Engineering Step
 
-Phases 0, A, and B plus the first five Phase C slices
+Phases 0, A, and B plus six Phase C slices
 (`calendar.create_event_from_message`, model-backed semantic watcher
 evaluation, browser/page context deepening, model-backed AI Sheet
-screen answers, and message-reply watchers) are complete and
-device-validated (see the Phase C slice sections above). Continue
-Phase C: next up is the remaining messages/calendar/phone integration
-depth, then promotion of assistant-local stores into OS-owned services —
-one slice at a time, each closing with the standard EC2 build / install /
-reviewed + YOLO smoke / evidence flow.
+screen answers, message-reply watchers, and the AI Island 8-state
+machine with YOLO visual state) are complete and device-validated (see
+the Phase C slice sections above). Continue Phase C: next up is the
+remaining messages/calendar/phone integration depth, then promotion of
+assistant-local stores into OS-owned services — one slice at a time,
+each closing with the standard EC2 build / install / reviewed + YOLO
+smoke / evidence flow.
 
 Standing workflow rules remain unchanged: use the privileged assistant APK
 push for assistant-only changes and full OTA only for framework/sepolicy/

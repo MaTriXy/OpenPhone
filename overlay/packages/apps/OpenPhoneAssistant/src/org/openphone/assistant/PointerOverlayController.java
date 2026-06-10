@@ -29,7 +29,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-final class PointerOverlayController {
+public final class PointerOverlayController {
     interface ScreenAnswerProvider {
         void answerScreen(String prompt, ScreenAnswerCallback callback);
     }
@@ -78,8 +78,11 @@ final class PointerOverlayController {
     private boolean mOpenAppHoldTriggered;
     private boolean mIslandSheetGesture;
     private boolean mSheetExpanded;
-    private String mMode = "mic";
+    private String mMode = "idle";
+    private String mStateDetail = "";
     private String mTranscriptText = "";
+    private boolean mYoloActive;
+    private int mWatchingCount;
 
     PointerOverlayController(Context context) {
         this(context, null);
@@ -95,7 +98,7 @@ final class PointerOverlayController {
 
     void show(String taskId) {
         mHandler.post(() -> {
-            mMode = "working";
+            mMode = "action_running";
             ensurePointerLayer();
             showPointerDot();
             ensureIslandWindow();
@@ -133,33 +136,90 @@ final class PointerOverlayController {
         });
     }
 
-    void setStatus(String text) {
+    void setIslandState(String state, String detail) {
         mHandler.post(() -> {
-            if ("Done".equals(text)) {
-                showDoneThenMic();
-            } else if ("Listening...".equals(text)) {
-                showListening();
-            } else if ("Agent is working".equals(text) || "Starting".equals(text)
-                    || "Waiting for task".equals(text)
-                    || "Continuing".equals(text)) {
-                mMode = "working";
-                ensurePointerLayer();
-                showPointerDot();
-                ensureIslandWindow();
-                updateIslandViews();
+            String clean = state == null ? "" : state.trim();
+            mStateDetail = detail == null ? "" : detail.trim();
+            switch (clean) {
+                case "idle":
+                    showMicButtonNow();
+                    return;
+                case "listening":
+                    showListeningNow();
+                    return;
+                case "thinking":
+                case "answer_ready":
+                case "needs_review":
+                case "error":
+                    mMode = clean;
+                    removeAllPointerLayers();
+                    ensureIslandWindow();
+                    updateIslandViews();
+                    mHandler.removeCallbacks(mWatchdogHide);
+                    if ("answer_ready".equals(clean)) {
+                        mHandler.postDelayed(this::showMicButtonNow, DONE_VISIBLE_MS);
+                    }
+                    return;
+                case "action_running":
+                    mMode = clean;
+                    ensurePointerLayer();
+                    showPointerDot();
+                    ensureIslandWindow();
+                    updateIslandViews();
+                    armWatchdog();
+                    return;
+                case "watching":
+                    // Watching is an idle variant: the agent is not running but
+                    // background watchers are. Stay interactive like idle.
+                    mMode = "watching";
+                    removeAllPointerLayers();
+                    ensureIslandWindow();
+                    updateIslandViews();
+                    mHandler.removeCallbacks(mWatchdogHide);
+                    return;
+                default:
             }
         });
     }
 
-    void showListening() {
+    void setYoloActive(boolean yoloActive) {
         mHandler.post(() -> {
-            mMode = "listening";
-            mTranscriptText = "";
-            ensurePointerLayer();
-            hidePointerDot();
-            ensureIslandWindow();
+            if (mYoloActive == yoloActive) {
+                return;
+            }
+            mYoloActive = yoloActive;
+            if (mIslandRoot != null) {
+                mIslandRoot.setBackground(chipBackground(mYoloActive));
+            }
             updateIslandViews();
         });
+    }
+
+    void setWatchingCount(int count) {
+        mHandler.post(() -> {
+            int bounded = Math.max(0, count);
+            if (mWatchingCount == bounded) {
+                return;
+            }
+            mWatchingCount = bounded;
+            if ("idle".equals(mMode) || "watching".equals(mMode)) {
+                mMode = bounded > 0 ? "watching" : "idle";
+            }
+            updateIslandViews();
+        });
+    }
+
+    void showListening() {
+        mHandler.post(this::showListeningNow);
+    }
+
+    private void showListeningNow() {
+        mMode = "listening";
+        mTranscriptText = "";
+        ensurePointerLayer();
+        hidePointerDot();
+        ensureIslandWindow();
+        updateIslandViews();
     }
 
     void showTranscript(String transcript) {
@@ -174,25 +234,27 @@ final class PointerOverlayController {
     }
 
     void showMicButton() {
-        mHandler.post(() -> {
-            mMode = "mic";
-            mTranscriptText = "";
-            removeAllPointerLayers();
-            ensureIslandWindow();
-            updateIslandViews();
-            mHandler.removeCallbacks(mWatchdogHide);
-        });
+        mHandler.post(this::showMicButtonNow);
     }
 
-    void showDoneThenMic() {
-        mHandler.post(() -> {
-            mMode = "done";
-            removeAllPointerLayers();
-            ensureIslandWindow();
-            updateIslandViews();
-            mHandler.removeCallbacks(mWatchdogHide);
-            mHandler.postDelayed(this::showMicButton, DONE_VISIBLE_MS);
-        });
+    private void showMicButtonNow() {
+        mMode = mWatchingCount > 0 ? "watching" : "idle";
+        mTranscriptText = "";
+        mStateDetail = "";
+        removeAllPointerLayers();
+        ensureIslandWindow();
+        updateIslandViews();
+        mHandler.removeCallbacks(mWatchdogHide);
+    }
+
+    public static void publishWatchingCount(int count) {
+        ArrayList<PointerOverlayController> controllers;
+        synchronized (sControllers) {
+            controllers = new ArrayList<>(sControllers);
+        }
+        for (PointerOverlayController controller : controllers) {
+            controller.setWatchingCount(count);
+        }
     }
 
     void pointerMove(float x, float y) {
@@ -304,13 +366,27 @@ final class PointerOverlayController {
         if (mWindowManager == null) {
             mWindowManager = mContext.getSystemService(WindowManager.class);
         }
-        if (mWindowManager == null || mIslandRoot != null) {
+        if (mWindowManager == null) {
+            return;
+        }
+        // Only one island may exist across all controller instances
+        // (service + activities); the latest claimant wins.
+        ArrayList<PointerOverlayController> controllers;
+        synchronized (sControllers) {
+            controllers = new ArrayList<>(sControllers);
+        }
+        for (PointerOverlayController other : controllers) {
+            if (other != this) {
+                other.removeIslandNow();
+            }
+        }
+        if (mIslandRoot != null) {
             return;
         }
         mIslandRoot = new FrameLayout(mContext);
         mIslandRoot.setClickable(true);
         mIslandRoot.setFocusable(false);
-        mIslandRoot.setBackground(chipBackground());
+        mIslandRoot.setBackground(chipBackground(mYoloActive));
         mIslandRoot.setPadding(10, 0, 10, 0);
         mIslandRoot.setOnTouchListener(new View.OnTouchListener() {
             private final Runnable mOpenApp = new Runnable() {
@@ -354,7 +430,7 @@ final class PointerOverlayController {
                                 > SHEET_SWIPE_THRESHOLD) {
                             showAiSheet(true);
                         } else if (!mOpenAppHoldTriggered) {
-                            if ("working".equals(mMode)) {
+                            if ("action_running".equals(mMode) || "thinking".equals(mMode)) {
                                 if (event.getX() < view.getWidth() / 2f) {
                                     launchVoiceCapture();
                                 } else {
@@ -362,6 +438,9 @@ final class PointerOverlayController {
                                 }
                             } else if ("listening".equals(mMode)) {
                                 launchStopAgent();
+                            } else if ("needs_review".equals(mMode)
+                                    || "error".equals(mMode)) {
+                                launchFullAssistant();
                             } else {
                                 if (event.getX() < view.getWidth() / 2f) {
                                     showAiSheet(false);
@@ -643,9 +722,38 @@ final class PointerOverlayController {
         mSheetActionRows = null;
     }
 
+    private void removeIslandNow() {
+        mHandler.removeCallbacks(mWatchdogHide);
+        if (mWindowManager == null) {
+            mWindowManager = mContext.getSystemService(WindowManager.class);
+        }
+        if (mWindowManager == null) {
+            return;
+        }
+        removePointerLayer();
+        if (mIslandRoot != null) {
+            try {
+                mWindowManager.removeView(mIslandRoot);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        removeAiSheet();
+        mRoot = null;
+        mIslandRoot = null;
+        mIslandParams = null;
+        mDot = null;
+        mGlowView = null;
+        mLeftIslandText = null;
+        mRightIslandText = null;
+        mActionLabel = null;
+    }
+
     private String sheetStatusText() {
-        if ("working".equals(mMode)) {
+        if ("action_running".equals(mMode)) {
             return "Agent running";
+        }
+        if ("thinking".equals(mMode)) {
+            return "Thinking";
         }
         if ("listening".equals(mMode)) {
             return "Listening";
@@ -654,8 +762,20 @@ final class PointerOverlayController {
             return mTranscriptText == null || mTranscriptText.isEmpty()
                     ? "Heard your request" : mTranscriptText;
         }
-        if ("done".equals(mMode)) {
+        if ("answer_ready".equals(mMode)) {
             return "Done";
+        }
+        if ("needs_review".equals(mMode)) {
+            return mStateDetail == null || mStateDetail.isEmpty()
+                    ? "Approval needed" : mStateDetail;
+        }
+        if ("error".equals(mMode)) {
+            return mStateDetail == null || mStateDetail.isEmpty()
+                    ? "Something failed" : mStateDetail;
+        }
+        if ("watching".equals(mMode)) {
+            return mWatchingCount > 1
+                    ? mWatchingCount + " watchers active" : "Watching in background";
         }
         return "Ready";
     }
@@ -675,7 +795,7 @@ final class PointerOverlayController {
         if (mLeftIslandText == null || mRightIslandText == null) {
             return;
         }
-        if ("done".equals(mMode)) {
+        if ("answer_ready".equals(mMode)) {
             mLeftIslandText.setText("OK");
             mRightIslandText.setText("✓");
             mRightIslandText.setTextColor(0xff20e36a);
@@ -687,18 +807,39 @@ final class PointerOverlayController {
             mLeftIslandText.setText("You said");
             mRightIslandText.setText(mTranscriptText == null ? "" : mTranscriptText);
             mRightIslandText.setTextColor(0xfff4f7f8);
-        } else if ("working".equals(mMode)) {
-            mLeftIslandText.setText("Talk");
+        } else if ("thinking".equals(mMode)) {
+            mLeftIslandText.setText(yoloPrefix() + "Thinking");
+            mRightIslandText.setText("…");
+            mRightIslandText.setTextColor(0xff9ab8ff);
+        } else if ("action_running".equals(mMode)) {
+            mLeftIslandText.setText(yoloPrefix() + "Talk");
             mRightIslandText.setText("Stop");
             mRightIslandText.setTextColor(0xffff6b6b);
+        } else if ("needs_review".equals(mMode)) {
+            mLeftIslandText.setText("Review");
+            mRightIslandText.setText("!");
+            mRightIslandText.setTextColor(0xffffd166);
+        } else if ("error".equals(mMode)) {
+            mLeftIslandText.setText("Error");
+            mRightIslandText.setText("!");
+            mRightIslandText.setTextColor(0xffff6b6b);
+        } else if ("watching".equals(mMode)) {
+            mLeftIslandText.setText(yoloPrefix() + "AI");
+            mRightIslandText.setText(mWatchingCount > 1
+                    ? "◎ " + mWatchingCount : "◎");
+            mRightIslandText.setTextColor(0xff9ab8ff);
         } else {
-            mLeftIslandText.setText("AI");
+            mLeftIslandText.setText(yoloPrefix() + "AI");
             mRightIslandText.setText("◉");
             mRightIslandText.setTextColor(0xff72e0c4);
         }
         if (mSheetRoot != null) {
             updateAiSheetViews(mSheetExpanded);
         }
+    }
+
+    private String yoloPrefix() {
+        return mYoloActive ? "⚡ " : "";
     }
 
     private void positionActionLabel() {
@@ -989,10 +1130,13 @@ final class PointerOverlayController {
         return view;
     }
 
-    private static GradientDrawable chipBackground() {
+    private static GradientDrawable chipBackground(boolean yoloActive) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(0xff000000);
         drawable.setCornerRadius(ISLAND_HEIGHT / 2f);
+        if (yoloActive) {
+            drawable.setStroke(3, 0xffffd166);
+        }
         return drawable;
     }
 

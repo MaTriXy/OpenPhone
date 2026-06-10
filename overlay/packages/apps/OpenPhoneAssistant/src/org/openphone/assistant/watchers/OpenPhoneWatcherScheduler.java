@@ -14,6 +14,7 @@ import android.util.Log;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.openphone.assistant.OpenPhoneNotificationController;
+import org.openphone.assistant.PointerOverlayController;
 import org.openphone.assistant.commitments.CommitmentRecord;
 import org.openphone.assistant.commitments.CommitmentStore;
 import org.openphone.assistant.model.ModelEndpointConfig;
@@ -561,6 +562,11 @@ public final class OpenPhoneWatcherScheduler {
 
     private static void scheduleNext(Context context, CommitmentStore store,
             WatcherStore watcherStore) {
+        try {
+            PointerOverlayController.publishWatchingCount(watcherStore.active(50).size());
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Failed to publish watcher count", e);
+        }
         AlarmManager alarms = context.getSystemService(AlarmManager.class);
         if (alarms == null) {
             return;
