@@ -1478,12 +1478,59 @@ public final class FrameworkToolExecutor {
         } else if ("notification".equals(source) || "notifications".equals(source)) {
             source = "notification";
             type = "notification";
+        } else if ("message".equals(source) || "messages".equals(source)
+                || "sms".equals(source) || "text".equals(source)) {
+            source = "message";
+            type = "message_reply";
         } else if ("time".equals(source)) {
             type = "time";
+        }
+        if ("message".equals(type) || "sms".equals(type) || "message_reply".equals(type)) {
+            type = "message_reply";
+            if (source.isEmpty()) {
+                source = "message";
+            }
         }
 
         if (!source.isEmpty()) {
             condition.put("source", source);
+        }
+        if ("message_reply".equals(type)) {
+            String address = firstNonEmpty(out.optString("address", ""),
+                    out.optString("phone", ""),
+                    out.optString("phone_number", ""),
+                    out.optString("sender", ""),
+                    out.optString("from", ""),
+                    condition.optString("address", ""),
+                    condition.optString("phone", ""),
+                    condition.optString("phone_number", ""),
+                    condition.optString("sender", ""),
+                    condition.optString("from", ""));
+            if (!address.isEmpty()) {
+                condition.put("address", address);
+            }
+            long threadId = firstPositive(out.optLong("thread_id", 0L),
+                    condition.optLong("thread_id", 0L));
+            if (threadId > 0) {
+                condition.put("thread_id", threadId);
+            }
+            long baseline = firstPositive(condition.optLong("baseline_ms", 0L),
+                    condition.optLong("since", 0L),
+                    out.optLong("since", 0L));
+            condition.put("baseline_ms",
+                    baseline > 0 ? baseline : System.currentTimeMillis());
+            long deadline = firstPositive(out.optLong("deadline_at", 0L),
+                    out.optLong("due_at", 0L),
+                    condition.optLong("deadline_at", 0L),
+                    condition.optLong("due_at", 0L));
+            if (deadline > 0) {
+                condition.put("deadline_at", deadline);
+            }
+            String notifyOn = firstNonEmpty(out.optString("notify_on", ""),
+                    condition.optString("notify_on", ""));
+            if (!notifyOn.isEmpty()) {
+                condition.put("notify_on", notifyOn.toLowerCase(Locale.US));
+            }
         }
         if (evaluator.isEmpty() && "web_change".equals(type)) {
             evaluator = query.isEmpty() ? "hash_change" : "text_contains";
@@ -1507,7 +1554,8 @@ public final class FrameworkToolExecutor {
 
         long nextRunAt = firstPositive(out.optLong("next_run_at", 0L),
                 schedule.optLong("next_run_at", 0L));
-        if (nextRunAt <= 0 && "web_change".equals(type)) {
+        if (nextRunAt <= 0
+                && ("web_change".equals(type) || "message_reply".equals(type))) {
             nextRunAt = System.currentTimeMillis() + 15_000L;
             schedule.put("next_run_at", nextRunAt);
         }

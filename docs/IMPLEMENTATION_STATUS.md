@@ -5,20 +5,21 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=102`, `versionName=0.1.66-dev`.
+`versionCode=103`, `versionName=0.1.67-dev`.
 
 **Tree state (2026-06-10):** the working tree compiles and
 `./scripts/check.sh` is fully green, including the Java compile gate added
 in Phase 0 (54 assistant files against android-35). Phases 0, A, and B of
 the spine-first plan are code-complete and device-validated, and the first
-four Phase C connector slices (calendar-from-message, model-backed
+five Phase C connector slices (calendar-from-message, model-backed
 semantic watcher evaluation, browser/page context deepening, model-backed
-AI Sheet screen answers) passed reviewed device smokes. See "Architecture
-Audit and Revised Direction" below for the full record.
+AI Sheet screen answers, message-reply watchers) passed reviewed device
+smokes. See "Architecture Audit and Revised Direction" below for the full
+record.
 
-The last fully validated connector slice is sheet-screen v1
-(`.worktree/artifacts/tegu/OpenPhoneAssistant-sheet-screen-v1.apk`,
-`sha256=cf7f57af32a6b524330980aee2b1e842128335d84c95fa17a43fc6580cac5bef`),
+The last fully validated connector slice is message-reply v1
+(`.worktree/artifacts/tegu/OpenPhoneAssistant-message-reply-v1.apk`,
+`sha256=f2fb71cd9fa189d4dc5780a42618efcc5d7ea370eb548dc2ae979d6f60ca9af6`),
 with the device reset to `openphone_autonomy_mode=reviewed`.
 
 Current physically validated Pixel 9a baseline:
@@ -1315,6 +1316,81 @@ Cleanup: dev key deleted from Settings.Secure, `http_proxy` cleared,
 reverse forwards removed, proxy process stopped, device left at
 `openphone_autonomy_mode=reviewed`.
 
+### Phase C message-reply watchers (2026-06-10)
+
+**Implementation.** The master plan's "Remind me if Sarah does not
+reply" scenario previously had no working trigger: the watcher runtime
+supported only `web_change`, `time`, and `notification`, so any
+message-type watcher failed as `unsupported_watcher_type`. The watcher
+subsystem now has a first-class `message_reply` type:
+
+- `FrameworkToolExecutor.normalizeWatcherArguments` maps
+  source `message`/`messages`/`sms`/`text` (and type `message`/`sms`)
+  to `type=message_reply`, normalizes `address`/`phone`/`sender`/`from`
+  and `thread_id` into the condition, records a `baseline_ms`
+  (defaulting to creation time) so only messages newer than the request
+  count as replies, and passes through optional `deadline_at` and
+  `notify_on` (`reply` default, or `no_reply`). Message watchers get the
+  same `now+15s` first poll as web watchers.
+- `OpenPhoneWatcherScheduler.fireWatcher` routes `message_reply` to
+  `runMessageReplyWatcher`, which queries the SMS inbox
+  (`Telephony.Sms.CONTENT_URI`, `TYPE=MESSAGE_TYPE_INBOX`,
+  `DATE > baseline_ms`, optional thread filter) and matches the watched
+  address via substring or `PhoneNumberUtils.compare`. Reply found →
+  `markFired` with `message_reply:<id>:<date>`; with
+  `notify_on=no_reply` the reminder is moot, so the watcher resolves
+  silently. No reply and `deadline_at` passed → `notify_on=no_reply`
+  fires the reminder notification, otherwise the watcher stops. No reply
+  and no deadline → `markNoop` and repoll (default 5 min interval,
+  deadline-clamped). Missing address+thread or SMS query errors go
+  through the standard `failWatcher` backoff
+  (`missing_message_watcher_target`, `messages_permission_denied:read`).
+- The registry `watchers.create` schema documents `source=message`,
+  `type=message_reply`, `address`, `thread_id`, `deadline_at`, and
+  `notify_on`; both Realtime prompts and the orchestrator `watch` mode
+  guidance describe the reply/no-reply forms. The model decides when to
+  create these watchers — no keyword routing was added.
+
+**Device acceptance: PASSED (2026-06-10, Pixel 9a).** Artifact
+`.worktree/artifacts/tegu/OpenPhoneAssistant-message-reply-v1.apk`
+(`sha256=f2fb71cd9fa189d4dc5780a42618efcc5d7ea370eb548dc2ae979d6f60ca9af6`,
+`versionCode=103` / `0.1.67-dev`), built on EC2, installed with
+`scripts/push-assistant-apk.sh`; registry/model-tools/capabilities
+pushed to `/system_ext/etc/openphone/{action_registry,model_tools,capabilities}.json`
+per the registry-push rule. The device has no SIM, so inbound replies
+were simulated with root `content insert --uri content://sms/inbox`.
+
+1. **Reviewed mode, reply alert:** goal "Tell me when +15550001111
+   replies to my last text" → orchestrator `watch` mode → Medium
+   "Approve watchers.create" card → approved → watcher id=11
+   `type=message_reply` with `address`, `baseline_ms`,
+   `notify_on=reply` (screenshots
+   `msgreply-0-unlock.png`/`msgreply-2-approved.png`). Forced check
+   before any reply → `message_reply:no_reply_yet` noop. Simulated
+   inbound SMS, forced due check → `status=fired`,
+   `last_result_hash=message_reply:2:1781091425100`, "Watcher fired /
+   Reply from +15550001111" notification posted.
+2. **YOLO mode, no-reply deadline:** goal "I texted +15550002222 about
+   dinner. Remind me if they do not reply by <unix ms>" →
+   `watcher_create` auto-executed with no approval card → watcher id=12
+   with `deadline_at`, `notify_on=no_reply`, and `next_run_at` clamped
+   to the deadline. No reply inserted; after the deadline the forced
+   check fired `message_reply:no_reply_by_deadline:<deadline>` and
+   posted "Remind if +15550002222 doesn't reply about dinner"
+   (screenshot `msgreply-4-noreply-create.png`).
+3. **Silent resolve:** seeded `notify_on=no_reply` watcher id=13 for
+   +15550003333, then inserted a reply *before* the deadline → watcher
+   `fired` with `message_reply:<id>:<date>` and zero notifications
+   posted — the reminder correctly dissolved when the reply arrived.
+4. **Failure rail:** seeded a `message_reply` watcher with an empty
+   condition → `failWatcher` backoff with
+   `missing_message_watcher_target`, `failure_count=1`, future
+   `next_run_at` — no crash, no notification.
+
+Cleanup: smoke watchers 11–14 soft-deleted, simulated SMS rows removed,
+watcher notifications dismissed, dev key deleted from Settings.Secure,
+device reset to `openphone_autonomy_mode=reviewed`.
+
 ## Not Yet Implemented
 
 - Hardware validation on the Pixel 9a. Full OpenPhone now boots and the
@@ -2037,14 +2113,15 @@ Pixel 9a assistant trajectory-export OTA evidence:
 
 ## Next Engineering Step
 
-Phases 0, A, and B plus the first four Phase C slices
+Phases 0, A, and B plus the first five Phase C slices
 (`calendar.create_event_from_message`, model-backed semantic watcher
-evaluation, browser/page context deepening, and model-backed AI Sheet
-screen answers) are complete and device-validated (see the Phase C slice
-sections above). Continue Phase C: next up is messages/calendar/phone
-integration depth, then promotion of assistant-local stores into
-OS-owned services — one slice at a time, each closing with the standard
-EC2 build / install / reviewed + YOLO smoke / evidence flow.
+evaluation, browser/page context deepening, model-backed AI Sheet
+screen answers, and message-reply watchers) are complete and
+device-validated (see the Phase C slice sections above). Continue
+Phase C: next up is the remaining messages/calendar/phone integration
+depth, then promotion of assistant-local stores into OS-owned services —
+one slice at a time, each closing with the standard EC2 build / install /
+reviewed + YOLO smoke / evidence flow.
 
 Standing workflow rules remain unchanged: use the privileged assistant APK
 push for assistant-only changes and full OTA only for framework/sepolicy/

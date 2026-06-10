@@ -137,6 +137,19 @@ to code:
   Device-validated 2026-06-10
   (`OpenPhoneAssistant-semantic-watcher-v1.apk`,
   `sha256=5a3db48df3bbeadc1c0768062dc47bbda99ff1072ce6cd08466c32390918575e`).
+- Message-reply watchers make "tell me when X replies" and "remind me if X
+  does not reply by <deadline>" real triggers instead of dead commitments:
+  `watcher_create` accepts `source=message` with `address`/`thread_id`,
+  optional `deadline_at` and `notify_on=reply|no_reply`, normalized into
+  `type=message_reply` records with a creation-time `baseline_ms`. The
+  scheduler polls the SMS inbox for inbound messages newer than the baseline
+  (substring or `PhoneNumberUtils.compare` address matching): a reply fires
+  the alert (or silently resolves a no-reply reminder), a passed deadline
+  with `notify_on=no_reply` fires the reminder, and errors route through the
+  standard watcher backoff. Device-validated 2026-06-10
+  (`OpenPhoneAssistant-message-reply-v1.apk`,
+  `sha256=f2fb71cd9fa189d4dc5780a42618efcc5d7ea370eb548dc2ae979d6f60ca9af6`,
+  v103).
 - Browser/page context now has a first semantic connector:
   `browser_fetch_page` / `browser.fetch_page` fetches a URL through the
   assistant action layer, extracts bounded title/text metadata plus a heading

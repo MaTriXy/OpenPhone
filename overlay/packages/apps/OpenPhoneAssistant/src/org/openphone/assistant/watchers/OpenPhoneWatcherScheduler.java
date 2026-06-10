@@ -4,8 +4,11 @@ import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
 import android.os.Build;
 import android.provider.Settings;
+import android.provider.Telephony;
+import android.telephony.PhoneNumberUtils;
 import android.util.Log;
 
 import org.json.JSONException;
@@ -42,6 +45,7 @@ public final class OpenPhoneWatcherScheduler {
     private static final long SNOOZE_MILLIS = 60L * 60L * 1000L;
     private static final long STUCK_TIMEOUT_MILLIS = 10L * 60L * 1000L;
     private static final long DEFAULT_WEB_INTERVAL_MILLIS = 15L * 60L * 1000L;
+    private static final long DEFAULT_MESSAGE_INTERVAL_MILLIS = 5L * 60L * 1000L;
     private static final int MAX_WEB_BYTES = 512 * 1024;
     private static final int MAX_JUDGMENT_CHARS = 24_000;
     private static final int MAX_DUE_PER_CHECK = 8;
@@ -154,12 +158,141 @@ public final class OpenPhoneWatcherScheduler {
             runWebChangeWatcher(context.getApplicationContext(), watcher);
             return;
         }
+        if ("message_reply".equals(watcher.type)) {
+            runMessageReplyWatcher(context, store, watcher, now);
+            return;
+        }
         if (!"time".equals(watcher.type)) {
             failWatcher(context, store, watcher, now, "unsupported_watcher_type:" + watcher.type);
             return;
         }
         store.markFired(watcher.id, watcher.type + ":" + watcher.title, now);
         OpenPhoneNotificationController.showWatcherFired(context, watcher);
+    }
+
+    private static void runMessageReplyWatcher(Context context, WatcherStore store,
+            WatcherRecord watcher, long now) {
+        JSONObject condition = parseOrEmpty(watcher.conditionJson);
+        JSONObject schedule = parseOrEmpty(watcher.scheduleJson);
+        String address = firstNonEmpty(condition.optString("address", ""),
+                condition.optString("phone", ""),
+                condition.optString("phone_number", ""),
+                condition.optString("sender", ""),
+                condition.optString("from", ""));
+        long threadId = condition.optLong("thread_id", 0L);
+        if (address.isEmpty() && threadId <= 0) {
+            failWatcher(context, store, watcher, now, "missing_message_watcher_target");
+            return;
+        }
+        long baseline = condition.optLong("baseline_ms", 0L);
+        if (baseline <= 0) {
+            baseline = watcher.createdAtMillis;
+        }
+        long deadline = condition.optLong("deadline_at", 0L);
+        String notifyOn = firstNonEmpty(condition.optString("notify_on", ""),
+                deadline > 0 ? "no_reply" : "reply");
+        InboundMessage reply;
+        try {
+            reply = findInboundMessage(context, address, threadId, baseline);
+        } catch (SecurityException e) {
+            failWatcher(context, store, watcher, now, "messages_permission_denied:read");
+            return;
+        } catch (RuntimeException e) {
+            failWatcher(context, store, watcher, now, "messages_query_failed:"
+                    + safeHashPart(e.getClass().getSimpleName()));
+            return;
+        }
+        if (reply != null) {
+            String resultHash = "message_reply:" + reply.messageId + ":" + reply.dateMillis;
+            store.markFired(watcher.id, resultHash, now);
+            if ("reply".equals(notifyOn)) {
+                OpenPhoneNotificationController.showWatcherFired(context, watcher);
+            }
+            // notify_on=no_reply: the reply arrived, so the reminder is moot —
+            // resolve the watcher silently.
+            return;
+        }
+        if (deadline > 0 && now >= deadline) {
+            if ("no_reply".equals(notifyOn)) {
+                store.markFired(watcher.id, "message_reply:no_reply_by_deadline:" + deadline,
+                        now);
+                OpenPhoneNotificationController.showWatcherFired(context, watcher);
+            } else {
+                store.stop(watcher.id);
+            }
+            return;
+        }
+        long interval = messageWatcherIntervalMillis(condition, schedule);
+        long nextRunAt = now + interval;
+        if (deadline > now) {
+            nextRunAt = Math.min(nextRunAt, Math.max(deadline, now + MIN_DELAY_MILLIS));
+        }
+        store.markNoop(watcher.id, nextRunAt, "message_reply:no_reply_yet:" + baseline, now);
+    }
+
+    private static InboundMessage findInboundMessage(Context context, String address,
+            long threadId, long baselineMillis) {
+        StringBuilder selection = new StringBuilder(
+                Telephony.Sms.TYPE + " = " + Telephony.Sms.MESSAGE_TYPE_INBOX
+                        + " AND " + Telephony.Sms.DATE + " > ?");
+        java.util.ArrayList<String> args = new java.util.ArrayList<>();
+        args.add(Long.toString(baselineMillis));
+        if (threadId > 0) {
+            selection.append(" AND ").append(Telephony.Sms.THREAD_ID).append(" = ?");
+            args.add(Long.toString(threadId));
+        }
+        String[] projection = new String[] {
+                Telephony.Sms._ID,
+                Telephony.Sms.ADDRESS,
+                Telephony.Sms.DATE
+        };
+        try (Cursor cursor = context.getContentResolver().query(
+                Telephony.Sms.CONTENT_URI, projection,
+                selection.toString(), args.toArray(new String[0]),
+                Telephony.Sms.DATE + " DESC")) {
+            if (cursor == null) {
+                throw new IllegalStateException("messages_query_null_cursor");
+            }
+            int scanned = 0;
+            while (cursor.moveToNext() && scanned < 100) {
+                scanned++;
+                String rowAddress = cursor.getString(1);
+                if (!address.isEmpty() && !addressMatches(rowAddress, address)) {
+                    continue;
+                }
+                return new InboundMessage(cursor.getLong(0), cursor.getLong(2));
+            }
+        }
+        return null;
+    }
+
+    private static boolean addressMatches(String rowAddress, String watchedAddress) {
+        if (containsNormalized(rowAddress, watchedAddress)) {
+            return true;
+        }
+        return PhoneNumberUtils.compare(safe(rowAddress), safe(watchedAddress));
+    }
+
+    private static long messageWatcherIntervalMillis(JSONObject condition, JSONObject schedule) {
+        long interval = firstPositive(
+                schedule.optLong("interval_ms", 0L),
+                schedule.optLong("interval_millis", 0L),
+                condition.optLong("interval_ms", 0L),
+                condition.optLong("interval_millis", 0L));
+        if (interval <= 0) {
+            interval = DEFAULT_MESSAGE_INTERVAL_MILLIS;
+        }
+        return Math.max(MIN_DELAY_MILLIS, Math.min(interval, 24L * 60L * 60L * 1000L));
+    }
+
+    private static final class InboundMessage {
+        final long messageId;
+        final long dateMillis;
+
+        InboundMessage(long messageId, long dateMillis) {
+            this.messageId = messageId;
+            this.dateMillis = dateMillis;
+        }
     }
 
     private static void runWebChangeWatcher(Context context, WatcherRecord watcher) {

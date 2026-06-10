@@ -1317,7 +1317,7 @@
         "properties": {
           "source": {
             "type": "string",
-            "description": "Generic source such as web, notification, time, or screen."
+            "description": "Generic source such as web, notification, message, time, or screen."
           },
           "evaluator": {
             "type": "string",
@@ -1333,7 +1333,23 @@
           },
           "type": {
             "type": "string",
-            "description": "Compatibility type: time, notification, or web_change."
+            "description": "Compatibility type: time, notification, web_change, or message_reply."
+          },
+          "address": {
+            "type": "string",
+            "description": "Phone number or sender to watch when source is message."
+          },
+          "thread_id": {
+            "type": "integer",
+            "description": "SMS thread id to watch when source is message."
+          },
+          "deadline_at": {
+            "type": "integer",
+            "description": "Unix milliseconds deadline for message watchers; with notify_on no_reply, fires if no reply arrived by then."
+          },
+          "notify_on": {
+            "type": "string",
+            "description": "For message watchers: reply (default; alert when a reply arrives) or no_reply (alert only if the deadline passes without a reply)."
           },
           "title": {
             "type": "string",
