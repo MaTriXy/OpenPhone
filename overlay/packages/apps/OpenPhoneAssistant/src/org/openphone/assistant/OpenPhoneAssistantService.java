@@ -2,18 +2,30 @@ package org.openphone.assistant;
 
 import android.app.Service;
 import android.content.Intent;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.openphone.OpenPhoneAgentManager;
+import android.provider.Settings;
 import android.util.Log;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.openphone.assistant.agent.ActionExecution;
 import org.openphone.assistant.agent.AgentOrchestrator;
 import org.openphone.assistant.agent.ScreenUnderstanding;
 import org.openphone.assistant.agent.TaskRegistry;
+import org.openphone.assistant.model.ModelEndpointConfig;
+import org.openphone.assistant.model.OpenAiResponsesAgentAdapter;
 import org.openphone.assistant.policy.AuditLog;
 import org.openphone.assistant.policy.PolicyDecision;
 import org.openphone.assistant.policy.PolicyEngine;
+import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
+
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Set;
 
 public final class OpenPhoneAssistantService extends Service {
     private static final String TAG = "OpenPhoneAssistant";
@@ -98,17 +110,20 @@ public final class OpenPhoneAssistantService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        mPointerOverlayController = new PointerOverlayController(this);
+        mPointerOverlayController = new PointerOverlayController(this, this::answerScreenInOverlay);
         mAgentManager = getSystemService(OpenPhoneAgentManager.class);
+        OpenPhoneNotificationListenerService.ensureEnabled(this);
         if (mAgentManager == null) {
             Log.w(TAG, "OpenPhone framework service is not available");
             OpenPhoneNotificationController.showReady(this);
+            OpenPhoneWatcherScheduler.checkNow(this);
             return;
         }
         Log.i(TAG, "OpenPhone framework service status: " + mAgentManager.getServiceStatus());
         Log.i(TAG, "OpenPhone assistant service created");
         mPointerOverlayController.showMicButton();
         OpenPhoneNotificationController.showReady(this);
+        OpenPhoneWatcherScheduler.checkNow(this);
     }
 
     @Override
@@ -139,6 +154,7 @@ public final class OpenPhoneAssistantService extends Service {
             mPointerOverlayController.showMicButton();
         }
         OpenPhoneNotificationController.showReady(this);
+        OpenPhoneWatcherScheduler.checkNow(this);
         return START_STICKY;
     }
 
@@ -193,5 +209,187 @@ public final class OpenPhoneAssistantService extends Service {
             }
             OpenPhoneNotificationController.showReady(this);
         }
+    }
+
+    private void answerScreenInOverlay(String prompt,
+            PointerOverlayController.ScreenAnswerCallback callback) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                callback.onAnswer(readScreenAnswer(prompt));
+            }
+        }, "OpenPhoneSheetScreenAnswer").start();
+    }
+
+    private String readScreenAnswer(String prompt) {
+        if (mAgentManager == null) {
+            return "Screen reading is unavailable because the OpenPhone framework service is not ready.";
+        }
+        ModelEndpointConfig endpointConfig = sheetModelEndpointConfig();
+        String taskId = null;
+        try {
+            String response = mAgentManager.startTask("{"
+                    + "\"goal\":\"" + jsonEscape(prompt) + "\","
+                    + "\"user_visible\":true,"
+                    + "\"background_allowed\":false,"
+                    + "\"approved_capabilities\":[\"screen.read.visible\",\"tasks.observe\"]"
+                    + "}");
+            taskId = parseString(response, "task_id");
+            if (taskId == null || taskId.isEmpty()) {
+                return "I could not start a screen observation.";
+            }
+            if (endpointConfig.isConfigured()) {
+                String screenJson = mAgentManager.getScreen(taskId,
+                        "{\"include_screenshot\":true,\"include_activity\":true,"
+                                + "\"include_ui_tree\":true,\"max_dimension\":512,"
+                                + "\"quality\":65,"
+                                + "\"reason\":\"answer from AI Sheet\"}");
+                return new OpenAiResponsesAgentAdapter(endpointConfig)
+                        .answerScreenQuestion(prompt
+                                + " (Ignore the small OpenPhone assistant sheet overlay with"
+                                + " its Reading screen card; answer about the app underneath.)",
+                                screenJson);
+            }
+            String screenJson = mAgentManager.getScreen(taskId,
+                    "{\"include_screenshot\":false,\"include_activity\":true,"
+                            + "\"include_ui_tree\":false,"
+                            + "\"reason\":\"answer from AI Sheet\"}");
+            return summarizeScreen(prompt, screenJson, OpenPhoneAccessibilityService.snapshotJson());
+        } catch (RuntimeException e) {
+            return "I could not read the screen: " + e.getClass().getSimpleName();
+        } finally {
+            if (taskId != null && !taskId.isEmpty()) {
+                try {
+                    mAgentManager.stopTask(taskId, "{\"reason\":\"ai_sheet_screen_answer_complete\"}");
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+    }
+
+    private ModelEndpointConfig sheetModelEndpointConfig() {
+        // Sheet answers run in the assistant service with no activity-held dev key,
+        // so the Secure setting is the only credential source (dev builds only) —
+        // same pattern as background watcher evaluation.
+        if (!"userdebug".equals(Build.TYPE) && !"eng".equals(Build.TYPE)) {
+            return ModelEndpointConfig.directOpenAi("");
+        }
+        String apiKey = Settings.Secure.getString(getContentResolver(),
+                "openphone_dev_openai_api_key");
+        return ModelEndpointConfig.directOpenAi(apiKey == null ? "" : apiKey);
+    }
+
+    private static String summarizeScreen(String prompt, String screenJson, String uiTreeJson) {
+        try {
+            JSONObject screen = new JSONObject(screenJson == null ? "{}" : screenJson);
+            JSONObject uiTree = new JSONObject(uiTreeJson == null ? "{}" : uiTreeJson);
+            JSONArray text = uiTree.optJSONArray("visible_text");
+            if (text != null && text.length() > 0) {
+                StringBuilder builder = new StringBuilder();
+                builder.append(isSummaryPrompt(prompt)
+                        ? "Visible screen summary: " : "On screen: ");
+                Set<String> seen = new LinkedHashSet<>();
+                int appended = 0;
+                for (int i = 0; i < text.length() && appended < 6; i++) {
+                    String[] parts = text.optString(i, "").split("[;|]");
+                    for (String part : parts) {
+                        String value = part.trim();
+                        String normalized = normalizeVisibleText(value);
+                        if (value.isEmpty() || value.length() > 80
+                                || !hasLetterOrDigit(value)
+                                || shouldSkipOverlayText(normalized)
+                                || !seen.add(normalized)) {
+                            continue;
+                        }
+                        if (appended > 0) {
+                            builder.append("; ");
+                        }
+                        builder.append(value);
+                        appended++;
+                        if (appended >= 6) {
+                            break;
+                        }
+                    }
+                }
+                if (appended > 0) {
+                    return builder.toString();
+                }
+            }
+            JSONObject context = screen.optJSONObject("context");
+            if (context != null) {
+                String pkg = context.optString("package",
+                        context.optString("package_name", "")).trim();
+                String activity = context.optString("activity", "").trim();
+                if (!pkg.isEmpty() || !activity.isEmpty()) {
+                    return "The current foreground surface appears to be "
+                            + (pkg.isEmpty() ? "an app" : pkg)
+                            + (activity.isEmpty() ? "." : " / " + activity + ".");
+                }
+            }
+        } catch (JSONException ignored) {
+        }
+        return "I can see the current surface, but there is not enough readable text to summarize locally.";
+    }
+
+    private static boolean isSummaryPrompt(String prompt) {
+        String text = prompt == null ? "" : prompt.toLowerCase(Locale.US);
+        return text.contains("summarize") || text.contains("summarise");
+    }
+
+    private static String normalizeVisibleText(String value) {
+        String text = value == null ? "" : value.trim().toLowerCase(Locale.US);
+        while (text.contains("  ")) {
+            text = text.replace("  ", " ");
+        }
+        return text;
+    }
+
+    private static boolean shouldSkipOverlayText(String value) {
+        if (value.isEmpty()) {
+            return true;
+        }
+        if (value.equals("ai")
+                || value.equals("ask openphone")
+                || value.equals("close")
+                || value.equals("ready")
+                || value.equals("screen answer")
+                || value.equals("reading screen")
+                || value.equals("talk")
+                || value.equals("stop")
+                || value.equals("chat")
+                || value.equals("screen")
+                || value.equals("summarize")
+                || value.equals("summarise")
+                || value.equals("search")
+                || value.equals("notifications")
+                || value.equals("settings")
+                || value.equals("refresh")
+                || value.equals("more")) {
+            return true;
+        }
+        return value.contains("looking at the current screen")
+                || value.startsWith("on screen:")
+                || value.startsWith("visible screen summary:");
+    }
+
+    private static boolean hasLetterOrDigit(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (Character.isLetterOrDigit(value.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String parseString(String json, String key) {
+        try {
+            return new JSONObject(json == null ? "{}" : json).optString(key, "");
+        } catch (JSONException e) {
+            return "";
+        }
+    }
+
+    private static String jsonEscape(String text) {
+        return JSONObject.quote(text == null ? "" : text).replaceAll("^\"|\"$", "");
     }
 }

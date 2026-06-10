@@ -24,6 +24,9 @@ public final class OpenAiSpeechTranscriber {
     private static final int SPEECH_RMS_THRESHOLD = 900;
 
     private final ModelEndpointConfig mEndpointConfig;
+    private volatile boolean mCancelled;
+    private volatile AudioRecord mCurrentRecorder;
+    private volatile HttpURLConnection mCurrentConnection;
 
     public OpenAiSpeechTranscriber(String apiKey) {
         this(ModelEndpointConfig.directOpenAi(apiKey));
@@ -52,10 +55,29 @@ public final class OpenAiSpeechTranscriber {
             throw new IOException(mEndpointConfig.missingCredentialReason());
         }
         byte[] wav = recordWav(maxMillis);
+        if (mCancelled) {
+            throw new IOException("voice_cancelled");
+        }
         return transcribe(wav);
     }
 
-    private static byte[] recordWav(int maxMillis) throws IOException {
+    public void cancel() {
+        mCancelled = true;
+        AudioRecord recorder = mCurrentRecorder;
+        if (recorder != null) {
+            try {
+                recorder.stop();
+            } catch (IllegalStateException ignored) {
+            }
+            recorder.release();
+        }
+        HttpURLConnection connection = mCurrentConnection;
+        if (connection != null) {
+            connection.disconnect();
+        }
+    }
+
+    private byte[] recordWav(int maxMillis) throws IOException {
         int minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
         int bufferSize = Math.max(minBuffer, SAMPLE_RATE / 5);
@@ -74,8 +96,9 @@ public final class OpenAiSpeechTranscriber {
         long lastVoiceAt = 0;
         boolean heardVoice = false;
         try {
+            mCurrentRecorder = recorder;
             recorder.startRecording();
-            while (System.currentTimeMillis() < endAt) {
+            while (!mCancelled && System.currentTimeMillis() < endAt) {
                 int read = recorder.read(buffer, 0, buffer.length);
                 if (read > 0) {
                     pcm.write(buffer, 0, read);
@@ -99,7 +122,16 @@ public final class OpenAiSpeechTranscriber {
                 recorder.stop();
             } catch (IllegalStateException ignored) {
             }
-            recorder.release();
+            try {
+                recorder.release();
+            } catch (RuntimeException ignored) {
+            }
+            if (mCurrentRecorder == recorder) {
+                mCurrentRecorder = null;
+            }
+        }
+        if (mCancelled) {
+            throw new IOException("voice_cancelled");
         }
         return wavFromPcm(pcm.toByteArray());
     }
@@ -123,6 +155,7 @@ public final class OpenAiSpeechTranscriber {
         HttpURLConnection connection = (HttpURLConnection) new URL(
                 mEndpointConfig.transcriptionsUrl())
                 .openConnection();
+        mCurrentConnection = connection;
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(60000);
         connection.setRequestMethod("POST");
@@ -142,16 +175,25 @@ public final class OpenAiSpeechTranscriber {
             output.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
         }
 
-        int status = connection.getResponseCode();
-        String body = readAll(status >= 200 && status < 300
-                ? connection.getInputStream() : connection.getErrorStream());
-        if (status < 200 || status >= 300) {
-            throw new IOException("OpenAI HTTP " + status + ": " + summarizeError(body));
-        }
         try {
-            return new JSONObject(body).optString("text", "").trim();
-        } catch (JSONException e) {
-            throw new IOException("bad_transcription_response", e);
+            int status = connection.getResponseCode();
+            String body = readAll(status >= 200 && status < 300
+                    ? connection.getInputStream() : connection.getErrorStream());
+            if (mCancelled) {
+                throw new IOException("voice_cancelled");
+            }
+            if (status < 200 || status >= 300) {
+                throw new IOException("OpenAI HTTP " + status + ": " + summarizeError(body));
+            }
+            try {
+                return new JSONObject(body).optString("text", "").trim();
+            } catch (JSONException e) {
+                throw new IOException("bad_transcription_response", e);
+            }
+        } finally {
+            if (mCurrentConnection == connection) {
+                mCurrentConnection = null;
+            }
         }
     }
 

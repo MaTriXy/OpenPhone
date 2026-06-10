@@ -1,20 +1,68 @@
 package org.openphone.assistant.agent;
 
+import android.Manifest;
+import android.content.ContentUris;
+import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.database.Cursor;
 import android.openphone.OpenPhoneAgentManager;
+import android.net.Uri;
+import android.provider.CalendarContract;
+import android.provider.CallLog;
+import android.provider.ContactsContract;
+import android.provider.Telephony;
+import android.telephony.SmsManager;
+import android.telecom.TelecomManager;
 
 import org.json.JSONException;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.openphone.assistant.OpenPhoneAccessibilityService;
+import org.openphone.assistant.OpenPhoneNotificationListenerService;
+import org.openphone.assistant.actions.ActionRegistry;
+import org.openphone.assistant.actions.ToolCatalog;
+import org.openphone.assistant.commitments.CommitmentStore;
+import org.openphone.assistant.context.ContextEvent;
+import org.openphone.assistant.context.ContextIndexStore;
+import org.openphone.assistant.memory.MemoryStore;
+import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
+import org.openphone.assistant.watchers.WatcherStore;
+
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.TimeZone;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class FrameworkToolExecutor {
     private final Context mContext;
     private final OpenPhoneAgentManager mAgentManager;
+    private final CommitmentStore mCommitmentStore;
+    private final ContextIndexStore mContextIndexStore;
+    private final MemoryStore mMemoryStore;
+    private final WatcherStore mWatcherStore;
+    private final ActionRegistry mActionRegistry;
 
     public FrameworkToolExecutor(Context context, OpenPhoneAgentManager agentManager) {
         mContext = context;
         mAgentManager = agentManager;
+        mCommitmentStore = new CommitmentStore(context);
+        mContextIndexStore = new ContextIndexStore(context);
+        mMemoryStore = new MemoryStore(context);
+        mWatcherStore = new WatcherStore(context);
+        mActionRegistry = ActionRegistry.load();
     }
 
     public String execute(String taskId, String toolName, JSONObject arguments) {
@@ -27,14 +75,70 @@ public final class FrameworkToolExecutor {
         if (requiresModelReason(toolName) && arguments.optString("reason", "").trim().isEmpty()) {
             return error("missing_reason:" + toolName);
         }
+        if (mActionRegistry.isLoaded() && !mActionRegistry.hasTool(toolName)) {
+            return error("action_registry_missing_tool:" + toolName);
+        }
         try {
             switch (toolName) {
+                case "context_search":
+                    return contextSearch(arguments);
+                case "notifications_list":
+                case "notifications_search":
+                    return notificationsSearch(arguments);
+                case "notifications_summary":
+                    return notificationsSummary(arguments);
+                case "notifications_open":
+                    return notificationsOpen(arguments);
+                case "calendar_search":
+                    return calendarSearch(arguments);
+                case "calendar_create_event":
+                    return calendarCreateEvent(arguments);
+                case "message_calendar_event_create":
+                    return messageCalendarEventCreate(arguments);
+                case "contacts_search":
+                    return contactsSearch(arguments);
+                case "messages_search":
+                    return messagesSearch(arguments);
+                case "messages_summary":
+                    return messagesSummary(arguments);
+                case "messages_draft":
+                    return messagesDraft(arguments);
+                case "messages_send":
+                    return messagesSend(arguments);
+                case "calls_search":
+                    return callsSearch(arguments);
+                case "phone_context":
+                    return phoneContext(arguments);
+                case "calls_place":
+                    return callsPlace(arguments);
+                case "apps_search":
+                    return appsSearch(arguments);
+                case "memory_search":
+                    return memorySearch(arguments);
+                case "memory_save":
+                    return memorySave(arguments);
+                case "commitment_search":
+                    return commitmentSearch(arguments);
+                case "commitment_create":
+                    return commitmentCreate(arguments);
+                case "notification_commitment_create":
+                    return notificationCommitmentCreate(arguments);
+                case "message_commitment_create":
+                    return messageCommitmentCreate(arguments);
+                case "commitment_update_status":
+                    return commitmentUpdateStatus(arguments);
+                case "watcher_create":
+                    return watcherCreate(arguments);
+                case "watcher_list":
+                    return watcherList(arguments);
+                case "watcher_stop":
+                    return watcherStop(arguments);
                 case "get_screen":
                     return getScreen(taskId, arguments);
                 case "watch_screen":
                     return watchScreen(taskId, arguments);
                 case "open_app":
-                    String requestedPackage = packageName(arguments.optString("package",
+                    String requestedPackage = resolvePackageOrLabel(arguments.optString("package",
                             arguments.optString("package_or_label")));
                     return mAgentManager.executeAction(taskId, action("open_app")
                             .put("package", requestedPackage)
@@ -45,6 +149,10 @@ public final class FrameworkToolExecutor {
                     return mAgentManager.executeAction(taskId, action("open_url")
                             .put("url", normalizedUrl(arguments.optString("url")))
                             .put("reason", arguments.optString("reason")).toString());
+                case "browser_search":
+                    return browserSearch(taskId, arguments);
+                case "browser_fetch_page":
+                    return browserFetchPage(arguments);
                 case "tap":
                     return mAgentManager.executeAction(taskId, action("tap")
                             .put("target", point(arguments.optDouble("x"), arguments.optDouble("y")))
@@ -114,27 +222,1363 @@ public final class FrameworkToolExecutor {
     }
 
     private static boolean requiresModelReason(String toolName) {
-        switch (toolName) {
-            case "get_screen":
-            case "watch_screen":
-            case "open_app":
-            case "open_url":
-            case "tap":
-            case "tap_element":
-            case "long_press":
-            case "long_press_element":
-            case "swipe":
-            case "type_text":
-            case "press_key":
-            case "set_clipboard":
-            case "paste":
-            case "share_text":
-            case "wait":
-            case "ask_user_confirmation":
-                return true;
-            default:
-                return false;
+        return ToolCatalog.get().requiresReason(toolName);
+    }
+
+    private String contextSearch(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "");
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        JSONObject result = new JSONObject(mContextIndexStore.searchJson(query, limit));
+        result.put("status", "context.search.results")
+                .put("query", query)
+                .put("limit", limit);
+        return result.toString();
+    }
+
+    private String notificationsSearch(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "");
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        JSONObject result = new JSONObject(mContextIndexStore.notificationsJson(query, limit));
+        result.put("status", "notification.search.results")
+                .put("query", query)
+                .put("limit", limit);
+        return result.toString();
+    }
+
+    private String notificationsSummary(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "");
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 20), 50));
+        long since = arguments.optLong("since", 0L);
+        List<ContextEvent> events = mContextIndexStore.notifications(query, limit);
+        Map<String, NotificationGroup> groupsByKey = new LinkedHashMap<>();
+        for (ContextEvent event : events) {
+            if (since > 0L && event.observedAtMillis < since) {
+                continue;
+            }
+            String title = cleanNotificationField(event.title);
+            String text = cleanNotificationField(event.text);
+            String app = cleanNotificationField(event.sourceApp);
+            if (title.isEmpty() && text.isEmpty()) {
+                continue;
+            }
+            String key = app + "\n" + title;
+            NotificationGroup group = groupsByKey.get(key);
+            if (group == null) {
+                group = new NotificationGroup(app, title);
+                groupsByKey.put(key, group);
+            }
+            group.count++;
+            group.latestAt = Math.max(group.latestAt, event.observedAtMillis);
+            if (group.sampleText.isEmpty() && !text.isEmpty()) {
+                group.sampleText = text;
+            }
         }
+        JSONArray groups = new JSONArray();
+        StringBuilder summary = new StringBuilder();
+        int emitted = 0;
+        for (NotificationGroup group : groupsByKey.values()) {
+            if (emitted >= 8) {
+                break;
+            }
+            groups.put(group.toJson());
+            if (summary.length() > 0) {
+                summary.append("; ");
+            }
+            summary.append(group.app.isEmpty() ? "Unknown app" : group.app);
+            if (!group.title.isEmpty()) {
+                summary.append(": ").append(group.title);
+            }
+            if (group.count > 1) {
+                summary.append(" (").append(group.count).append(" updates)");
+            }
+            if (!group.sampleText.isEmpty()) {
+                summary.append(" - ").append(group.sampleText);
+            }
+            emitted++;
+        }
+        if (summary.length() == 0) {
+            summary.append(query.trim().isEmpty()
+                    ? "No recent indexed notifications."
+                    : "No recent indexed notifications matched \"" + query.trim() + "\".");
+        }
+        return new JSONObject()
+                .put("status", "notifications.summary")
+                .put("summary", summary.toString())
+                .put("groups", groups)
+                .put("query", query)
+                .put("limit", limit)
+                .put("since", since)
+                .toString();
+    }
+
+    private String notificationsOpen(JSONObject arguments) throws JSONException {
+        String key = arguments.optString("notification_key",
+                arguments.optString("key", ""));
+        String packageName = arguments.optString("package",
+                arguments.optString("package_name", ""));
+        String query = arguments.optString("query", "");
+        if (key.trim().isEmpty() && packageName.trim().isEmpty() && query.trim().isEmpty()) {
+            return error("empty_notification_selector");
+        }
+        String status = OpenPhoneNotificationListenerService.openMatchingNotification(
+                key, packageName, query);
+        return new JSONObject()
+                .put("status", status)
+                .put("notification_key", key)
+                .put("package", packageName)
+                .put("query", query)
+                .toString();
+    }
+
+    private String calendarSearch(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.READ_CALENDAR)) {
+            return error("calendar_permission_denied:read");
+        }
+        long now = System.currentTimeMillis();
+        long startAt = arguments.optLong("start_at", 0L);
+        long endAt = arguments.optLong("end_at", 0L);
+        if (startAt <= 0) {
+            startAt = now - 24L * 60L * 60L * 1000L;
+        }
+        if (endAt <= startAt) {
+            endAt = now + 90L * 24L * 60L * 60L * 1000L;
+        }
+        long maxWindowMs = 366L * 24L * 60L * 60L * 1000L;
+        if (endAt - startAt > maxWindowMs) {
+            endAt = startAt + maxWindowMs;
+        }
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        String query = arguments.optString("query", "").trim().toLowerCase(Locale.US);
+        JSONArray events = new JSONArray();
+        Uri.Builder builder = CalendarContract.Instances.CONTENT_URI.buildUpon();
+        ContentUris.appendId(builder, startAt);
+        ContentUris.appendId(builder, endAt);
+        String[] projection = new String[] {
+                CalendarContract.Instances.EVENT_ID,
+                CalendarContract.Instances.BEGIN,
+                CalendarContract.Instances.END,
+                CalendarContract.Instances.TITLE,
+                CalendarContract.Instances.DESCRIPTION,
+                CalendarContract.Instances.EVENT_LOCATION,
+                CalendarContract.Instances.CALENDAR_DISPLAY_NAME,
+                CalendarContract.Instances.ALL_DAY
+        };
+        try (Cursor cursor = mContext.getContentResolver().query(builder.build(), projection,
+                null, null, CalendarContract.Instances.BEGIN + " ASC")) {
+            if (cursor == null) {
+                return error("calendar_query_failed");
+            }
+            while (cursor.moveToNext() && events.length() < limit) {
+                long eventId = cursor.getLong(0);
+                long begin = cursor.getLong(1);
+                long end = cursor.getLong(2);
+                String title = stringAt(cursor, 3);
+                String description = stringAt(cursor, 4);
+                String location = stringAt(cursor, 5);
+                String calendarName = stringAt(cursor, 6);
+                boolean allDay = cursor.getInt(7) != 0;
+                if (!query.isEmpty()) {
+                    String haystack = (title + " " + description + " " + location + " "
+                            + calendarName).toLowerCase(Locale.US);
+                    if (!haystack.contains(query)) {
+                        continue;
+                    }
+                }
+                events.put(new JSONObject()
+                        .put("event_id", eventId)
+                        .put("start_at", begin)
+                        .put("end_at", end)
+                        .put("title", title)
+                        .put("description", description)
+                        .put("location", location)
+                        .put("calendar", calendarName)
+                        .put("all_day", allDay));
+            }
+        } catch (SecurityException e) {
+            return error("calendar_permission_denied:read");
+        } catch (RuntimeException e) {
+            return error("calendar_query_failed:" + e.getClass().getSimpleName());
+        }
+        return new JSONObject()
+                .put("status", "calendar.search.results")
+                .put("query", query)
+                .put("start_at", startAt)
+                .put("end_at", endAt)
+                .put("limit", limit)
+                .put("events", events)
+                .toString();
+    }
+
+    private String calendarCreateEvent(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.WRITE_CALENDAR)) {
+            return error("calendar_permission_denied:write");
+        }
+        String title = arguments.optString("title", "").trim();
+        long startAt = arguments.optLong("start_at", 0L);
+        if (title.isEmpty()) {
+            return error("empty_calendar_title");
+        }
+        if (startAt <= 0) {
+            return error("missing_calendar_start_at");
+        }
+        long endAt = arguments.optLong("end_at", 0L);
+        int durationMinutes = Math.max(1, Math.min(arguments.optInt("duration_minutes", 60),
+                24 * 60));
+        if (endAt <= startAt) {
+            endAt = startAt + durationMinutes * 60L * 1000L;
+        }
+        long calendarId = arguments.optLong("calendar_id", -1L);
+        if (calendarId <= 0) {
+            calendarId = firstWritableCalendarId();
+        }
+        if (calendarId <= 0) {
+            return error("no_writable_calendar");
+        }
+        ContentValues values = new ContentValues();
+        values.put(CalendarContract.Events.CALENDAR_ID, calendarId);
+        values.put(CalendarContract.Events.TITLE, title);
+        values.put(CalendarContract.Events.DESCRIPTION, arguments.optString("description", ""));
+        values.put(CalendarContract.Events.EVENT_LOCATION, arguments.optString("location", ""));
+        values.put(CalendarContract.Events.DTSTART, startAt);
+        values.put(CalendarContract.Events.DTEND, endAt);
+        values.put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().getID());
+        values.put(CalendarContract.Events.ALL_DAY, arguments.optBoolean("all_day", false) ? 1 : 0);
+        try {
+            Uri uri = mContext.getContentResolver().insert(CalendarContract.Events.CONTENT_URI,
+                    values);
+            long eventId = uri == null ? -1L : ContentUris.parseId(uri);
+            return new JSONObject()
+                    .put("status", eventId >= 0 ? "calendar.event_created"
+                            : "calendar.create_failed")
+                    .put("event_id", eventId)
+                    .put("calendar_id", calendarId)
+                    .put("title", title)
+                    .put("start_at", startAt)
+                    .put("end_at", endAt)
+                    .toString();
+        } catch (SecurityException e) {
+            return error("calendar_permission_denied:write");
+        } catch (RuntimeException e) {
+            return error("calendar_create_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private String messageCalendarEventCreate(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.READ_SMS)) {
+            return error("messages_permission_denied:read");
+        }
+        if (!hasPermission(Manifest.permission.WRITE_CALENDAR)) {
+            return error("calendar_permission_denied:write");
+        }
+        JSONObject message = firstMatchingSms(arguments.optString("query", "").trim(),
+                arguments.optLong("thread_id", 0L));
+        if (message == null) {
+            return error(arguments.optString("query", "").trim().isEmpty()
+                    && arguments.optLong("thread_id", 0L) <= 0
+                    ? "no_sms_messages" : "no_matching_sms_message");
+        }
+        JSONObject create = new JSONObject(arguments.toString());
+        String originalDescription = create.optString("description", "").trim();
+        StringBuilder description = new StringBuilder();
+        if (!originalDescription.isEmpty()) {
+            description.append(originalDescription).append("\n\n");
+        }
+        description.append("Source message: ")
+                .append(message.optString("body", ""))
+                .append("\nFrom: ")
+                .append(message.optString("address", ""))
+                .append("\nMessage id: ")
+                .append(message.optLong("message_id", 0L))
+                .append("\nThread id: ")
+                .append(message.optLong("thread_id", 0L))
+                .append("\nMessage date: ")
+                .append(message.optLong("date", 0L));
+        create.put("description", description.toString());
+        JSONObject result = new JSONObject(calendarCreateEvent(create));
+        if ("calendar.event_created".equals(result.optString("status", ""))) {
+            result.put("status", "calendar.event_created_from_message")
+                    .put("message", messageEvidence(message));
+        }
+        return result.toString();
+    }
+
+    private long firstWritableCalendarId() {
+        if (!hasPermission(Manifest.permission.READ_CALENDAR)) {
+            return -1L;
+        }
+        String[] projection = new String[] {
+                CalendarContract.Calendars._ID,
+                CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
+                CalendarContract.Calendars.VISIBLE
+        };
+        String selection = CalendarContract.Calendars.VISIBLE + "!=0 AND "
+                + CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL + ">="
+                + CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR;
+        try (Cursor cursor = mContext.getContentResolver().query(
+                CalendarContract.Calendars.CONTENT_URI, projection, selection, null,
+                CalendarContract.Calendars.IS_PRIMARY + " DESC, "
+                        + CalendarContract.Calendars._ID + " ASC")) {
+            if (cursor != null && cursor.moveToFirst()) {
+                return cursor.getLong(0);
+            }
+        } catch (SecurityException ignored) {
+        } catch (RuntimeException ignored) {
+        }
+        return -1L;
+    }
+
+    private boolean hasPermission(String permission) {
+        return mContext.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private static String stringAt(Cursor cursor, int index) {
+        return cursor.isNull(index) ? "" : cursor.getString(index);
+    }
+
+    private String contactsSearch(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.READ_CONTACTS)) {
+            return error("contacts_permission_denied:read");
+        }
+        String query = arguments.optString("query", "").trim();
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        boolean includeDetails = arguments.optBoolean("include_details", true);
+        JSONArray contacts = new JSONArray();
+        Uri uri = query.isEmpty()
+                ? ContactsContract.Contacts.CONTENT_URI
+                : Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_FILTER_URI,
+                        Uri.encode(query));
+        String[] projection = new String[] {
+                ContactsContract.Contacts._ID,
+                ContactsContract.Contacts.LOOKUP_KEY,
+                ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
+                ContactsContract.Contacts.HAS_PHONE_NUMBER,
+                ContactsContract.Contacts.STARRED
+        };
+        try (Cursor cursor = mContext.getContentResolver().query(uri, projection, null, null,
+                ContactsContract.Contacts.DISPLAY_NAME_PRIMARY + " ASC")) {
+            if (cursor == null) {
+                return error("contacts_query_failed");
+            }
+            while (cursor.moveToNext() && contacts.length() < limit) {
+                long contactId = cursor.getLong(0);
+                String lookupKey = stringAt(cursor, 1);
+                String displayName = stringAt(cursor, 2);
+                boolean hasPhone = cursor.getInt(3) != 0;
+                JSONObject contact = new JSONObject()
+                        .put("contact_id", contactId)
+                        .put("lookup_key", lookupKey)
+                        .put("display_name", displayName)
+                        .put("starred", cursor.getInt(4) != 0);
+                if (includeDetails) {
+                    contact.put("phones", hasPhone ? contactPhones(contactId) : new JSONArray())
+                            .put("emails", contactEmails(contactId));
+                } else {
+                    contact.put("has_phone", hasPhone);
+                }
+                contacts.put(contact);
+            }
+        } catch (SecurityException e) {
+            return error("contacts_permission_denied:read");
+        } catch (RuntimeException e) {
+            return error("contacts_query_failed:" + e.getClass().getSimpleName());
+        }
+        return new JSONObject()
+                .put("status", "contacts.search.results")
+                .put("query", query)
+                .put("limit", limit)
+                .put("contacts", contacts)
+                .toString();
+    }
+
+    private String messagesSearch(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.READ_SMS)) {
+            return error("messages_permission_denied:read");
+        }
+        String query = arguments.optString("query", "").trim();
+        long threadId = arguments.optLong("thread_id", 0L);
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        JSONArray messages = new JSONArray();
+        String[] projection = new String[] {
+                Telephony.Sms._ID,
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.ADDRESS,
+                Telephony.Sms.BODY,
+                Telephony.Sms.DATE,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.READ
+        };
+        SmsSelection smsSelection = smsSelection(query, threadId);
+        try (Cursor cursor = mContext.getContentResolver().query(
+                Telephony.Sms.CONTENT_URI, projection,
+                smsSelection.selection, smsSelection.selectionArgs,
+                Telephony.Sms.DATE + " DESC")) {
+            if (cursor == null) {
+                return error("messages_query_failed");
+            }
+            while (cursor.moveToNext() && messages.length() < limit) {
+                messages.put(new JSONObject()
+                        .put("message_id", cursor.getLong(0))
+                        .put("thread_id", cursor.getLong(1))
+                        .put("address", stringAt(cursor, 2))
+                        .put("body", stringAt(cursor, 3))
+                        .put("date", cursor.getLong(4))
+                        .put("type", smsTypeLabel(cursor.getInt(5)))
+                        .put("read", cursor.getInt(6) != 0));
+            }
+        } catch (SecurityException e) {
+            return error("messages_permission_denied:read");
+        } catch (RuntimeException e) {
+            return error("messages_query_failed:" + e.getClass().getSimpleName());
+        }
+        return new JSONObject()
+                .put("status", "messages.search.results")
+                .put("query", query)
+                .put("thread_id", threadId)
+                .put("limit", limit)
+                .put("messages", messages)
+                .toString();
+    }
+
+    private String messagesSummary(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.READ_SMS)) {
+            return error("messages_permission_denied:read");
+        }
+        String query = arguments.optString("query", "").trim();
+        long threadId = arguments.optLong("thread_id", 0L);
+        long since = arguments.optLong("since", 0L);
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 30), 80));
+        String[] projection = new String[] {
+                Telephony.Sms._ID,
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.ADDRESS,
+                Telephony.Sms.BODY,
+                Telephony.Sms.DATE,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.READ
+        };
+        SmsSelection smsSelection = smsSelection(query, threadId);
+        Map<Long, MessageThreadGroup> groupsByThread = new LinkedHashMap<>();
+        try (Cursor cursor = mContext.getContentResolver().query(
+                Telephony.Sms.CONTENT_URI, projection,
+                smsSelection.selection, smsSelection.selectionArgs,
+                Telephony.Sms.DATE + " DESC")) {
+            if (cursor == null) {
+                return error("messages_query_failed");
+            }
+            int seen = 0;
+            while (cursor.moveToNext() && seen < limit) {
+                long date = cursor.getLong(4);
+                if (since > 0L && date < since) {
+                    continue;
+                }
+                long currentThreadId = cursor.getLong(1);
+                MessageThreadGroup group = groupsByThread.get(currentThreadId);
+                if (group == null) {
+                    group = new MessageThreadGroup(currentThreadId, stringAt(cursor, 2));
+                    groupsByThread.put(currentThreadId, group);
+                }
+                String body = stringAt(cursor, 3);
+                int type = cursor.getInt(5);
+                group.count++;
+                group.latestAt = Math.max(group.latestAt, date);
+                if (Telephony.Sms.MESSAGE_TYPE_INBOX == type) {
+                    group.inboxCount++;
+                } else if (Telephony.Sms.MESSAGE_TYPE_SENT == type) {
+                    group.sentCount++;
+                }
+                if (cursor.getInt(6) == 0) {
+                    group.unreadCount++;
+                }
+                if (group.samples.length() < 3 && !body.trim().isEmpty()) {
+                    group.samples.put(new JSONObject()
+                            .put("message_id", cursor.getLong(0))
+                            .put("date", date)
+                            .put("type", smsTypeLabel(type))
+                            .put("body", body));
+                }
+                seen++;
+            }
+        } catch (SecurityException e) {
+            return error("messages_permission_denied:read");
+        } catch (RuntimeException e) {
+            return error("messages_query_failed:" + e.getClass().getSimpleName());
+        }
+        JSONArray threads = new JSONArray();
+        StringBuilder summary = new StringBuilder();
+        int emitted = 0;
+        for (MessageThreadGroup group : groupsByThread.values()) {
+            if (emitted >= 8) {
+                break;
+            }
+            threads.put(group.toJson());
+            if (summary.length() > 0) {
+                summary.append("; ");
+            }
+            summary.append(group.address.isEmpty() ? "Unknown sender" : group.address)
+                    .append(": ").append(group.count).append(" message");
+            if (group.count != 1) {
+                summary.append("s");
+            }
+            if (group.unreadCount > 0) {
+                summary.append(", ").append(group.unreadCount).append(" unread");
+            }
+            JSONObject sample = group.samples.optJSONObject(0);
+            if (sample != null) {
+                summary.append(" - ").append(sample.optString("body", ""));
+            }
+            emitted++;
+        }
+        if (summary.length() == 0) {
+            summary.append(query.isEmpty()
+                    ? "No recent SMS messages were available."
+                    : "No recent SMS messages matched \"" + query + "\".");
+        }
+        return new JSONObject()
+                .put("status", "messages.summary")
+                .put("query", query)
+                .put("thread_id", threadId)
+                .put("limit", limit)
+                .put("summary", summary.toString())
+                .put("threads", threads)
+                .toString();
+    }
+
+    private String messagesDraft(JSONObject arguments) throws JSONException {
+        String body = arguments.optString("body", "").trim();
+        String to = arguments.optString("to", "").trim();
+        String contactQuery = arguments.optString("contact_query", "").trim();
+        if (body.isEmpty()) {
+            return error("empty_message_body");
+        }
+        if (to.isEmpty() && !contactQuery.isEmpty()) {
+            to = firstPhoneForContactQuery(contactQuery);
+        }
+        JSONObject draft = new JSONObject()
+                .put("to", to)
+                .put("body", body)
+                .put("contact_query", contactQuery);
+        return new JSONObject()
+                .put("status", "messages.draft_ready")
+                .put("draft", draft)
+                .put("requires_review_before_send", true)
+                .toString();
+    }
+
+    private String messagesSend(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.SEND_SMS)) {
+            return error("messages_permission_denied:send");
+        }
+        String to = arguments.optString("to", "").trim();
+        String body = arguments.optString("body", "").trim();
+        if (to.isEmpty()) {
+            return error("empty_message_recipient");
+        }
+        if (body.isEmpty()) {
+            return error("empty_message_body");
+        }
+        try {
+            SmsManager.getDefault().sendTextMessage(to, null, body, null, null);
+            return new JSONObject()
+                    .put("status", "messages.sent")
+                    .put("to", to)
+                    .put("body_length", body.length())
+                    .toString();
+        } catch (SecurityException e) {
+            return error("messages_permission_denied:send");
+        } catch (RuntimeException e) {
+            return error("messages_send_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private static final class SmsSelection {
+        final String selection;
+        final String[] selectionArgs;
+
+        SmsSelection(String selection, String[] selectionArgs) {
+            this.selection = selection;
+            this.selectionArgs = selectionArgs;
+        }
+    }
+
+    /**
+     * Matches each whitespace-separated query token against address or body
+     * so natural phrases ("team dinner Luigi Trattoria") still match messages
+     * with extra words in between ("Team dinner at Luigi Trattoria").
+     */
+    private static SmsSelection smsSelection(String query, long threadId) {
+        StringBuilder selection = new StringBuilder();
+        List<String> args = new ArrayList<>();
+        if (threadId > 0) {
+            selection.append(Telephony.Sms.THREAD_ID).append("=?");
+            args.add(Long.toString(threadId));
+        }
+        if (!query.isEmpty()) {
+            for (String token : query.split("\\s+")) {
+                if (token.isEmpty()) {
+                    continue;
+                }
+                if (selection.length() > 0) {
+                    selection.append(" AND ");
+                }
+                selection.append('(')
+                        .append(Telephony.Sms.ADDRESS).append(" LIKE ? OR ")
+                        .append(Telephony.Sms.BODY).append(" LIKE ?)");
+                String like = "%" + token + "%";
+                args.add(like);
+                args.add(like);
+            }
+        }
+        if (selection.length() == 0) {
+            return new SmsSelection(null, null);
+        }
+        return new SmsSelection(selection.toString(),
+                args.toArray(new String[0]));
+    }
+
+    private JSONObject firstMatchingSms(String query, long threadId) throws JSONException {
+        String[] projection = new String[] {
+                Telephony.Sms._ID,
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.ADDRESS,
+                Telephony.Sms.BODY,
+                Telephony.Sms.DATE,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.READ
+        };
+        SmsSelection smsSelection = smsSelection(query, threadId);
+        try (Cursor cursor = mContext.getContentResolver().query(
+                Telephony.Sms.CONTENT_URI, projection,
+                smsSelection.selection, smsSelection.selectionArgs,
+                Telephony.Sms.DATE + " DESC")) {
+            if (cursor == null) {
+                return null;
+            }
+            while (cursor.moveToNext()) {
+                String body = stringAt(cursor, 3);
+                String address = stringAt(cursor, 2);
+                if (body.trim().isEmpty() && address.trim().isEmpty()) {
+                    continue;
+                }
+                return new JSONObject()
+                        .put("message_id", cursor.getLong(0))
+                        .put("thread_id", cursor.getLong(1))
+                        .put("address", address)
+                        .put("body", body)
+                        .put("date", cursor.getLong(4))
+                        .put("type", smsTypeLabel(cursor.getInt(5)))
+                        .put("read", cursor.getInt(6) != 0);
+            }
+        } catch (SecurityException e) {
+            throw e;
+        } catch (RuntimeException ignored) {
+        }
+        return null;
+    }
+
+    private String callsSearch(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.READ_CALL_LOG)) {
+            return error("calls_permission_denied:read");
+        }
+        String query = arguments.optString("query", "").trim();
+        long since = arguments.optLong("since", 0L);
+        long until = arguments.optLong("until", 0L);
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        JSONArray calls = new JSONArray();
+        String[] projection = new String[] {
+                CallLog.Calls._ID,
+                CallLog.Calls.NUMBER,
+                CallLog.Calls.CACHED_NAME,
+                CallLog.Calls.TYPE,
+                CallLog.Calls.DATE,
+                CallLog.Calls.DURATION,
+                CallLog.Calls.PHONE_ACCOUNT_COMPONENT_NAME
+        };
+        StringBuilder selection = new StringBuilder();
+        java.util.ArrayList<String> selectionArgs = new java.util.ArrayList<>();
+        if (!query.isEmpty()) {
+            selection.append("(")
+                    .append(CallLog.Calls.NUMBER).append(" LIKE ? OR ")
+                    .append(CallLog.Calls.CACHED_NAME).append(" LIKE ?)");
+            String like = "%" + query + "%";
+            selectionArgs.add(like);
+            selectionArgs.add(like);
+        }
+        if (since > 0) {
+            appendAnd(selection);
+            selection.append(CallLog.Calls.DATE).append(">=?");
+            selectionArgs.add(Long.toString(since));
+        }
+        if (until > 0) {
+            appendAnd(selection);
+            selection.append(CallLog.Calls.DATE).append("<=?");
+            selectionArgs.add(Long.toString(until));
+        }
+        try (Cursor cursor = mContext.getContentResolver().query(
+                CallLog.Calls.CONTENT_URI, projection,
+                selection.length() == 0 ? null : selection.toString(),
+                selectionArgs.isEmpty() ? null : selectionArgs.toArray(new String[0]),
+                CallLog.Calls.DATE + " DESC")) {
+            if (cursor == null) {
+                return error("calls_query_failed");
+            }
+            while (cursor.moveToNext() && calls.length() < limit) {
+                calls.put(new JSONObject()
+                        .put("call_id", cursor.getLong(0))
+                        .put("number", stringAt(cursor, 1))
+                        .put("name", stringAt(cursor, 2))
+                        .put("type", callTypeLabel(cursor.getInt(3)))
+                        .put("date", cursor.getLong(4))
+                        .put("duration_seconds", cursor.getLong(5))
+                        .put("phone_account", stringAt(cursor, 6)));
+            }
+        } catch (SecurityException e) {
+            return error("calls_permission_denied:read");
+        } catch (RuntimeException e) {
+            return error("calls_query_failed:" + e.getClass().getSimpleName());
+        }
+        return new JSONObject()
+                .put("status", "calls.search.results")
+                .put("query", query)
+                .put("since", since)
+                .put("until", until)
+                .put("limit", limit)
+                .put("calls", calls)
+                .toString();
+    }
+
+    private String phoneContext(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "").trim();
+        String number = arguments.optString("number", "").trim();
+        String search = number.isEmpty() ? query : number;
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 5), 10));
+
+        JSONObject calls = new JSONObject(callsSearch(new JSONObject()
+                .put("query", search)
+                .put("limit", limit)
+                .put("reason", arguments.optString("reason", ""))));
+        JSONObject contacts = new JSONObject(contactsSearch(new JSONObject()
+                .put("query", search)
+                .put("limit", Math.min(limit, 5))
+                .put("include_details", true)
+                .put("reason", arguments.optString("reason", ""))));
+        JSONObject messages = new JSONObject(messagesSearch(new JSONObject()
+                .put("query", search)
+                .put("limit", Math.min(limit * 2, 12))
+                .put("reason", arguments.optString("reason", ""))));
+        JSONObject calendar = new JSONObject(calendarSearch(new JSONObject()
+                .put("query", search)
+                .put("limit", Math.min(limit, 5))
+                .put("reason", arguments.optString("reason", ""))));
+
+        JSONArray messageRows = messages.optJSONArray("messages");
+        JSONArray eventRows = calendar.optJSONArray("events");
+        JSONArray codes = new JSONArray();
+        collectConfirmationCodes(codes, "message", messageRows, "body");
+        collectConfirmationCodes(codes, "calendar", eventRows, "description");
+        collectConfirmationCodes(codes, "calendar", eventRows, "title");
+
+        StringBuilder summary = new StringBuilder();
+        int callCount = calls.optJSONArray("calls") == null ? 0 : calls.optJSONArray("calls").length();
+        int contactCount = contacts.optJSONArray("contacts") == null
+                ? 0 : contacts.optJSONArray("contacts").length();
+        int messageCount = messageRows == null ? 0 : messageRows.length();
+        int eventCount = eventRows == null ? 0 : eventRows.length();
+        summary.append("Found ").append(callCount).append(" calls, ")
+                .append(contactCount).append(" contacts, ")
+                .append(messageCount).append(" messages, and ")
+                .append(eventCount).append(" calendar events");
+        if (!search.isEmpty()) {
+            summary.append(" matching ").append(search);
+        }
+        if (codes.length() > 0) {
+            summary.append(". Possible confirmation code: ")
+                    .append(codes.optJSONObject(0).optString("code", ""));
+        }
+
+        return new JSONObject()
+                .put("status", "phone.context")
+                .put("query", query)
+                .put("number", number)
+                .put("summary", summary.toString())
+                .put("calls", calls.optJSONArray("calls") == null
+                        ? new JSONArray() : calls.optJSONArray("calls"))
+                .put("contacts", contacts.optJSONArray("contacts") == null
+                        ? new JSONArray() : contacts.optJSONArray("contacts"))
+                .put("messages", messageRows == null ? new JSONArray() : messageRows)
+                .put("calendar", eventRows == null ? new JSONArray() : eventRows)
+                .put("confirmation_codes", codes)
+                .put("sources", new JSONObject()
+                        .put("calls_status", calls.optString("status", ""))
+                        .put("contacts_status", contacts.optString("status", ""))
+                        .put("messages_status", messages.optString("status", ""))
+                        .put("calendar_status", calendar.optString("status", "")))
+                .toString();
+    }
+
+    private String callsPlace(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.CALL_PHONE)) {
+            return error("calls_permission_denied:place");
+        }
+        String number = arguments.optString("number", "").trim();
+        String contactQuery = arguments.optString("contact_query", "").trim();
+        if (number.isEmpty() && !contactQuery.isEmpty()) {
+            number = firstPhoneForContactQuery(contactQuery);
+        }
+        if (number.isEmpty()) {
+            return error("empty_call_number");
+        }
+        TelecomManager telecomManager = mContext.getSystemService(TelecomManager.class);
+        if (telecomManager == null) {
+            return error("telecom_unavailable");
+        }
+        try {
+            telecomManager.placeCall(Uri.fromParts("tel", number, null), null);
+            return new JSONObject()
+                    .put("status", "calls.placed")
+                    .put("number", number)
+                    .put("contact_query", contactQuery)
+                    .toString();
+        } catch (SecurityException e) {
+            return error("calls_permission_denied:place");
+        } catch (RuntimeException e) {
+            return error("calls_place_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private String appsSearch(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "").trim();
+        String normalizedQuery = query.toLowerCase(Locale.US);
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 12), 50));
+        boolean includeSystem = arguments.optBoolean("include_system", true);
+        PackageManager packageManager = mContext.getPackageManager();
+        Intent launcherIntent = new Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> launchables = packageManager.queryIntentActivities(launcherIntent, 0);
+        JSONArray apps = new JSONArray();
+        for (ResolveInfo resolveInfo : launchables) {
+            if (resolveInfo == null || resolveInfo.activityInfo == null) {
+                continue;
+            }
+            String packageName = resolveInfo.activityInfo.packageName == null
+                    ? "" : resolveInfo.activityInfo.packageName;
+            if (packageName.isEmpty()) {
+                continue;
+            }
+            ApplicationInfo appInfo = resolveInfo.activityInfo.applicationInfo;
+            boolean systemApp = appInfo != null
+                    && (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+            if (!includeSystem && systemApp) {
+                continue;
+            }
+            CharSequence labelSeq = resolveInfo.loadLabel(packageManager);
+            String label = labelSeq == null ? packageName : labelSeq.toString();
+            String activityName = resolveInfo.activityInfo.name == null
+                    ? "" : resolveInfo.activityInfo.name;
+            String haystack = (label + " " + packageName + " " + activityName)
+                    .toLowerCase(Locale.US);
+            if (!normalizedQuery.isEmpty() && !haystack.contains(normalizedQuery)) {
+                continue;
+            }
+            apps.put(new JSONObject()
+                    .put("label", label)
+                    .put("package", packageName)
+                    .put("activity", activityName)
+                    .put("system", systemApp)
+                    .put("launchable", true));
+            if (apps.length() >= limit) {
+                break;
+            }
+        }
+        return new JSONObject()
+                .put("status", "apps.search.results")
+                .put("query", query)
+                .put("limit", limit)
+                .put("include_system", includeSystem)
+                .put("apps", apps)
+                .toString();
+    }
+
+    private static void appendAnd(StringBuilder selection) {
+        if (selection.length() > 0) {
+            selection.append(" AND ");
+        }
+    }
+
+    private static String callTypeLabel(int type) {
+        switch (type) {
+            case CallLog.Calls.INCOMING_TYPE:
+                return "incoming";
+            case CallLog.Calls.OUTGOING_TYPE:
+                return "outgoing";
+            case CallLog.Calls.MISSED_TYPE:
+                return "missed";
+            case CallLog.Calls.VOICEMAIL_TYPE:
+                return "voicemail";
+            case CallLog.Calls.REJECTED_TYPE:
+                return "rejected";
+            case CallLog.Calls.BLOCKED_TYPE:
+                return "blocked";
+            case CallLog.Calls.ANSWERED_EXTERNALLY_TYPE:
+                return "answered_externally";
+            default:
+                return "unknown";
+        }
+    }
+
+    private String firstPhoneForContactQuery(String query) {
+        if (!hasPermission(Manifest.permission.READ_CONTACTS)) {
+            return "";
+        }
+        Uri uri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_FILTER_URI,
+                Uri.encode(query));
+        String[] projection = new String[] {
+                ContactsContract.Contacts._ID,
+                ContactsContract.Contacts.HAS_PHONE_NUMBER
+        };
+        try (Cursor cursor = mContext.getContentResolver().query(uri, projection, null, null,
+                ContactsContract.Contacts.DISPLAY_NAME_PRIMARY + " ASC")) {
+            if (cursor == null) {
+                return "";
+            }
+            while (cursor.moveToNext()) {
+                if (cursor.getInt(1) == 0) {
+                    continue;
+                }
+                JSONArray phones = contactPhones(cursor.getLong(0));
+                if (phones.length() > 0) {
+                    return phones.optJSONObject(0) == null ? ""
+                            : phones.optJSONObject(0).optString("number", "");
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return "";
+    }
+
+    private static String smsTypeLabel(int type) {
+        switch (type) {
+            case Telephony.Sms.MESSAGE_TYPE_INBOX:
+                return "inbox";
+            case Telephony.Sms.MESSAGE_TYPE_SENT:
+                return "sent";
+            case Telephony.Sms.MESSAGE_TYPE_DRAFT:
+                return "draft";
+            case Telephony.Sms.MESSAGE_TYPE_OUTBOX:
+                return "outbox";
+            case Telephony.Sms.MESSAGE_TYPE_FAILED:
+                return "failed";
+            case Telephony.Sms.MESSAGE_TYPE_QUEUED:
+                return "queued";
+            default:
+                return "unknown";
+        }
+    }
+
+    private JSONArray contactPhones(long contactId) {
+        JSONArray phones = new JSONArray();
+        String[] projection = new String[] {
+                ContactsContract.CommonDataKinds.Phone.NUMBER,
+                ContactsContract.CommonDataKinds.Phone.TYPE,
+                ContactsContract.CommonDataKinds.Phone.LABEL
+        };
+        String selection = ContactsContract.CommonDataKinds.Phone.CONTACT_ID + "=?";
+        String[] selectionArgs = new String[] { Long.toString(contactId) };
+        try (Cursor cursor = mContext.getContentResolver().query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI, projection, selection,
+                selectionArgs, null)) {
+            if (cursor == null) {
+                return phones;
+            }
+            while (cursor.moveToNext() && phones.length() < 5) {
+                phones.put(new JSONObject()
+                        .put("number", stringAt(cursor, 0))
+                        .put("type", ContactsContract.CommonDataKinds.Phone.getTypeLabel(
+                                mContext.getResources(), cursor.getInt(1), stringAt(cursor, 2))
+                                .toString()));
+            }
+        } catch (JSONException | RuntimeException ignored) {
+        }
+        return phones;
+    }
+
+    private JSONArray contactEmails(long contactId) {
+        JSONArray emails = new JSONArray();
+        String[] projection = new String[] {
+                ContactsContract.CommonDataKinds.Email.ADDRESS,
+                ContactsContract.CommonDataKinds.Email.TYPE,
+                ContactsContract.CommonDataKinds.Email.LABEL
+        };
+        String selection = ContactsContract.CommonDataKinds.Email.CONTACT_ID + "=?";
+        String[] selectionArgs = new String[] { Long.toString(contactId) };
+        try (Cursor cursor = mContext.getContentResolver().query(
+                ContactsContract.CommonDataKinds.Email.CONTENT_URI, projection, selection,
+                selectionArgs, null)) {
+            if (cursor == null) {
+                return emails;
+            }
+            while (cursor.moveToNext() && emails.length() < 5) {
+                emails.put(new JSONObject()
+                        .put("address", stringAt(cursor, 0))
+                        .put("type", ContactsContract.CommonDataKinds.Email.getTypeLabel(
+                                mContext.getResources(), cursor.getInt(1), stringAt(cursor, 2))
+                                .toString()));
+            }
+        } catch (JSONException | RuntimeException ignored) {
+        }
+        return emails;
+    }
+
+    private String memorySearch(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "");
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        JSONObject result = new JSONObject(mMemoryStore.searchJson(query, limit));
+        result.put("status", "memory.search.results")
+                .put("query", query)
+                .put("limit", limit);
+        return result.toString();
+    }
+
+    private String memorySave(JSONObject arguments) throws JSONException {
+        String text = arguments.optString("text", "").trim();
+        if (text.isEmpty()) {
+            return error("empty_memory");
+        }
+        JSONObject evidence = new JSONObject()
+                .put("source", "model_tool")
+                .put("reason", arguments.optString("reason", ""))
+                .put("type", arguments.optString("type", "fact"))
+                .put("subject", arguments.optString("subject", "user"));
+        long id = mMemoryStore.saveMemory(arguments.optString("type", "fact"),
+                arguments.optString("subject", "user"), text,
+                (float) arguments.optDouble("confidence", 0.8), evidence.toString());
+        return new JSONObject()
+                .put("status", id >= 0 ? "memory.saved" : "memory.save_failed")
+                .put("memory_id", id)
+                .put("text", text)
+                .toString();
+    }
+
+    private String commitmentSearch(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "");
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        JSONObject result = new JSONObject(mCommitmentStore.searchJson(query, limit));
+        result.put("status", "commitment.search.results")
+                .put("query", query)
+                .put("limit", limit);
+        return result.toString();
+    }
+
+    private String commitmentCreate(JSONObject arguments) throws JSONException {
+        String title = arguments.optString("title", "").trim();
+        if (title.isEmpty()) {
+            return error("empty_commitment");
+        }
+        JSONObject evidence = new JSONObject()
+                .put("source", "model_tool")
+                .put("reason", arguments.optString("reason", ""));
+        long id = mCommitmentStore.createCommitment(title,
+                arguments.optString("description", title),
+                arguments.optString("trigger_type", "manual"),
+                arguments.optJSONObject("trigger_spec") == null
+                        ? "{}" : arguments.optJSONObject("trigger_spec").toString(),
+                arguments.optLong("due_at", 0L),
+                arguments.optLong("expires_at", 0L),
+                (float) arguments.optDouble("confidence", 0.8),
+                evidence.toString());
+        return new JSONObject()
+                .put("status", id >= 0 ? "commitment.created" : "commitment.create_failed")
+                .put("commitment_id", id)
+                .put("title", title)
+                .toString();
+    }
+
+    private String notificationCommitmentCreate(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "");
+        List<ContextEvent> notifications = mContextIndexStore.notifications(query, 10);
+        ContextEvent source = null;
+        for (ContextEvent event : notifications) {
+            if (!cleanNotificationField(event.title).isEmpty()
+                    || !cleanNotificationField(event.text).isEmpty()) {
+                source = event;
+                break;
+            }
+        }
+        if (source == null) {
+            return error(query.trim().isEmpty()
+                    ? "no_indexed_notifications" : "no_matching_notification");
+        }
+        String sourceTitle = cleanNotificationField(source.title);
+        String sourceText = cleanNotificationField(source.text);
+        String title = arguments.optString("title", "").trim();
+        if (title.isEmpty()) {
+            title = sourceTitle.isEmpty()
+                    ? "Follow up on notification"
+                    : "Follow up: " + sourceTitle;
+        }
+        String description = arguments.optString("description", "").trim();
+        if (description.isEmpty()) {
+            description = sourceText.isEmpty() ? sourceTitle : sourceText;
+        }
+        JSONObject trigger = new JSONObject()
+                .put("source", "notification")
+                .put("notification_key", source.sourceRecordId)
+                .put("package", source.sourceApp)
+                .put("observed_at", source.observedAtMillis);
+        JSONObject evidence = new JSONObject()
+                .put("source", "notification")
+                .put("reason", arguments.optString("reason", ""))
+                .put("notification", notificationEvidence(source));
+        long id = mCommitmentStore.createCommitment(title,
+                description,
+                arguments.optLong("due_at", 0L) > 0 ? "time" : "manual",
+                trigger.toString(),
+                arguments.optLong("due_at", 0L),
+                0L,
+                0.75f,
+                evidence.toString());
+        return new JSONObject()
+                .put("status", id >= 0 ? "notification.commitment_created"
+                        : "notification.commitment_create_failed")
+                .put("commitment_id", id)
+                .put("title", title)
+                .put("notification", notificationEvidence(source))
+                .toString();
+    }
+
+    private String messageCommitmentCreate(JSONObject arguments) throws JSONException {
+        if (!hasPermission(Manifest.permission.READ_SMS)) {
+            return error("messages_permission_denied:read");
+        }
+        String query = arguments.optString("query", "").trim();
+        long threadId = arguments.optLong("thread_id", 0L);
+        JSONObject message = firstMatchingSms(query, threadId);
+        if (message == null) {
+            return error(query.isEmpty() && threadId <= 0
+                    ? "no_sms_messages" : "no_matching_sms_message");
+        }
+        String address = message.optString("address", "");
+        String body = message.optString("body", "");
+        String title = arguments.optString("title", "").trim();
+        if (title.isEmpty()) {
+            title = address.isEmpty() ? "Follow up on message" : "Follow up: " + address;
+        }
+        String description = arguments.optString("description", "").trim();
+        if (description.isEmpty()) {
+            description = body.isEmpty() ? title : body;
+        }
+        JSONObject trigger = new JSONObject()
+                .put("source", "message")
+                .put("message_id", message.optLong("message_id", 0L))
+                .put("thread_id", message.optLong("thread_id", 0L))
+                .put("address", address)
+                .put("date", message.optLong("date", 0L));
+        JSONObject evidence = new JSONObject()
+                .put("source", "message")
+                .put("reason", arguments.optString("reason", ""))
+                .put("message", messageEvidence(message));
+        long id = mCommitmentStore.createCommitment(title,
+                description,
+                arguments.optLong("due_at", 0L) > 0 ? "time" : "manual",
+                trigger.toString(),
+                arguments.optLong("due_at", 0L),
+                0L,
+                0.75f,
+                evidence.toString());
+        return new JSONObject()
+                .put("status", id >= 0 ? "message.commitment_created"
+                        : "message.commitment_create_failed")
+                .put("commitment_id", id)
+                .put("title", title)
+                .put("message", messageEvidence(message))
+                .toString();
+    }
+
+    private String commitmentUpdateStatus(JSONObject arguments) throws JSONException {
+        long id = arguments.optLong("commitment_id", -1L);
+        String status = arguments.optString("status", "").trim();
+        if (id <= 0 || status.isEmpty()) {
+            return error("bad_commitment_update");
+        }
+        boolean updated = mCommitmentStore.updateStatus(id, status);
+        return new JSONObject()
+                .put("status", updated ? "commitment.updated" : "commitment.not_found")
+                .put("commitment_id", id)
+                .put("new_status", status)
+                .toString();
+    }
+
+    private String watcherCreate(JSONObject arguments) throws JSONException {
+        JSONObject normalized = normalizeWatcherArguments(arguments);
+        String title = normalized.optString("title", "").trim();
+        if (title.isEmpty()) {
+            return error("empty_watcher");
+        }
+        JSONObject condition = normalized.optJSONObject("condition");
+        JSONObject schedule = normalized.optJSONObject("schedule");
+        JSONObject delivery = normalized.optJSONObject("delivery");
+        long nextRunAt = normalized.optLong("next_run_at", 0L);
+        if (nextRunAt <= 0 && schedule != null) {
+            nextRunAt = schedule.optLong("next_run_at", 0L);
+        }
+        long id = mWatcherStore.createWatcher(
+                normalized.optString("type", "time"),
+                title,
+                condition == null ? "{}" : condition.toString(),
+                schedule == null ? "{}" : schedule.toString(),
+                normalized.optString("session_target", ""),
+                delivery == null ? "{\"surface\":\"notification\"}" : delivery.toString(),
+                nextRunAt);
+        if (id >= 0) {
+            OpenPhoneWatcherScheduler.scheduleNext(mContext);
+        }
+        return new JSONObject()
+                .put("status", id >= 0 ? "watcher.created" : "watcher.create_failed")
+                .put("watcher_id", id)
+                .put("title", title)
+                .put("type", normalized.optString("type", "time"))
+                .put("condition", condition == null ? new JSONObject() : condition)
+                .put("next_run_at", nextRunAt)
+                .toString();
+    }
+
+    private static JSONObject normalizeWatcherArguments(JSONObject arguments) throws JSONException {
+        JSONObject out = new JSONObject(arguments == null ? "{}" : arguments.toString());
+        JSONObject condition = out.optJSONObject("condition");
+        if (condition == null) {
+            condition = new JSONObject();
+        }
+        JSONObject schedule = out.optJSONObject("schedule");
+        if (schedule == null) {
+            schedule = new JSONObject();
+        }
+
+        String source = firstNonEmpty(out.optString("source", ""),
+                condition.optString("source", ""));
+        String url = firstNonEmpty(out.optString("url", ""),
+                condition.optString("url", ""),
+                condition.optString("uri", ""));
+        String evaluator = firstNonEmpty(out.optString("evaluator", ""),
+                condition.optString("evaluator", ""),
+                condition.optString("operator", ""));
+        String query = firstNonEmpty(out.optString("query", ""),
+                out.optString("condition_text", ""),
+                condition.optString("query", ""),
+                condition.optString("condition_text", ""),
+                condition.optString("text", ""),
+                condition.optString("contains", ""),
+                condition.optString("needle", ""));
+
+        String type = firstNonEmpty(out.optString("type", ""), "time");
+        if (!url.isEmpty()) {
+            source = "web";
+            type = "web_change";
+            condition.put("url", normalizedUrl(url));
+        } else if ("web".equals(source)) {
+            type = "web_change";
+        } else if ("notification".equals(source) || "notifications".equals(source)) {
+            source = "notification";
+            type = "notification";
+        } else if ("time".equals(source)) {
+            type = "time";
+        }
+
+        if (!source.isEmpty()) {
+            condition.put("source", source);
+        }
+        if (evaluator.isEmpty() && "web_change".equals(type)) {
+            evaluator = query.isEmpty() ? "hash_change" : "text_contains";
+        }
+        if (!evaluator.isEmpty()) {
+            condition.put("evaluator", normalizeWatcherEvaluator(evaluator));
+        }
+        if (!query.isEmpty()) {
+            condition.put("query", query);
+            condition.put("condition_text", query);
+        }
+
+        long intervalMs = firstPositive(out.optLong("interval_ms", 0L),
+                out.optLong("interval_millis", 0L),
+                condition.optLong("interval_ms", 0L),
+                condition.optLong("interval_millis", 0L));
+        if (intervalMs > 0) {
+            condition.put("interval_ms", intervalMs);
+            schedule.put("interval_ms", intervalMs);
+        }
+
+        long nextRunAt = firstPositive(out.optLong("next_run_at", 0L),
+                schedule.optLong("next_run_at", 0L));
+        if (nextRunAt <= 0 && "web_change".equals(type)) {
+            nextRunAt = System.currentTimeMillis() + 15_000L;
+            schedule.put("next_run_at", nextRunAt);
+        }
+        if (nextRunAt > 0) {
+            out.put("next_run_at", nextRunAt);
+        }
+
+        out.put("type", type);
+        out.put("condition", condition);
+        out.put("schedule", schedule);
+        return out;
+    }
+
+    private static String normalizeWatcherEvaluator(String evaluator) {
+        String clean = evaluator == null ? "" : evaluator.trim().toLowerCase(Locale.US);
+        if ("contains".equals(clean) || "text".equals(clean) || "text_match".equals(clean)) {
+            return "text_contains";
+        }
+        if ("semantic".equals(clean) || "semantic_contains".equals(clean)) {
+            return "semantic_match";
+        }
+        if ("change".equals(clean) || "hash".equals(clean)) {
+            return "hash_change";
+        }
+        return clean;
+    }
+
+    private static String firstNonEmpty(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private static long firstPositive(long... values) {
+        if (values == null) {
+            return 0L;
+        }
+        for (long value : values) {
+            if (value > 0L) {
+                return value;
+            }
+        }
+        return 0L;
+    }
+
+    private String watcherList(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "");
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        JSONObject result = new JSONObject(mWatcherStore.listJson(query, limit));
+        result.put("status", "watcher.list.results")
+                .put("query", query)
+                .put("limit", limit);
+        return result.toString();
+    }
+
+    private String watcherStop(JSONObject arguments) throws JSONException {
+        long id = arguments.optLong("watcher_id", -1L);
+        if (id <= 0) {
+            return error("bad_watcher_stop");
+        }
+        OpenPhoneWatcherScheduler.stopWatcher(mContext, id);
+        return new JSONObject()
+                .put("status", "watcher.stopped")
+                .put("watcher_id", id)
+                .toString();
     }
 
     private String getScreen(String taskId, JSONObject arguments) throws JSONException {
@@ -240,6 +1684,215 @@ public final class FrameworkToolExecutor {
         return normalizedUrl;
     }
 
+    private String browserFetchPage(JSONObject arguments) throws JSONException {
+        String url = normalizedUrl(arguments.optString("url"));
+        int maxChars = Math.max(500, Math.min(arguments.optInt("max_chars", 4000), 12000));
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(url).openConnection();
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(10000);
+            connection.setRequestProperty("User-Agent", "OpenPhoneAssistant/1.0");
+            int statusCode = connection.getResponseCode();
+            String contentType = connection.getContentType();
+            byte[] bytes = readBounded(connection, 512 * 1024);
+            String html = new String(bytes, StandardCharsets.UTF_8);
+            String finalUrl = connection.getURL() == null ? url
+                    : connection.getURL().toString();
+            String title = extractTitle(html);
+            String fullText = extractReadableText(html, Integer.MAX_VALUE);
+            String text = fullText.length() > maxChars
+                    ? fullText.substring(0, maxChars).trim() : fullText;
+            return new JSONObject()
+                    .put("status", "browser.page_fetched")
+                    .put("url", url)
+                    .put("final_url", finalUrl)
+                    .put("http_status", statusCode)
+                    .put("content_type", contentType == null ? "" : contentType)
+                    .put("title", title)
+                    .put("text", text)
+                    .put("headings", extractHeadings(html))
+                    .put("links", extractLinks(html, finalUrl))
+                    .put("truncated", fullText.length() > maxChars)
+                    .toString();
+        } catch (RuntimeException e) {
+            return error("browser_fetch_failed:" + e.getClass().getSimpleName());
+        } catch (java.io.IOException e) {
+            return error("browser_fetch_failed:" + e.getClass().getSimpleName());
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private String browserSearch(String taskId, JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "").trim();
+        if (query.isEmpty()) {
+            return error("empty_browser_search_query");
+        }
+        String engine = arguments.optString("engine", "duckduckgo").trim().toLowerCase(Locale.US);
+        Uri.Builder builder;
+        if ("google".equals(engine)) {
+            builder = new Uri.Builder()
+                    .scheme("https")
+                    .authority("www.google.com")
+                    .path("search")
+                    .appendQueryParameter("q", query);
+        } else {
+            engine = "duckduckgo";
+            builder = new Uri.Builder()
+                    .scheme("https")
+                    .authority("duckduckgo.com")
+                    .path("/")
+                    .appendQueryParameter("q", query);
+        }
+        String url = builder.build().toString();
+        return mAgentManager.executeAction(taskId, action("open_url")
+                .put("url", url)
+                .put("search_query", query)
+                .put("search_engine", engine)
+                .put("reason", arguments.optString("reason")).toString());
+    }
+
+    private static byte[] readBounded(HttpURLConnection connection, int maxBytes)
+            throws java.io.IOException {
+        try (BufferedInputStream input = new BufferedInputStream(
+                connection.getInputStream());
+                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int total = 0;
+            int count;
+            while ((count = input.read(buffer)) != -1 && total < maxBytes) {
+                int allowed = Math.min(count, maxBytes - total);
+                output.write(buffer, 0, allowed);
+                total += allowed;
+            }
+            return output.toByteArray();
+        }
+    }
+
+    private static String extractTitle(String html) {
+        if (html == null) {
+            return "";
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?is)<title[^>]*>(.*?)</title>")
+                .matcher(html);
+        if (!matcher.find()) {
+            return "";
+        }
+        return decodeHtmlEntities(collapseWhitespace(matcher.group(1))).trim();
+    }
+
+    private static String extractReadableText(String html, int maxChars) {
+        if (html == null || html.isEmpty()) {
+            return "";
+        }
+        String text = html
+                .replaceAll("(?is)<script[^>]*>.*?</script>", " ")
+                .replaceAll("(?is)<style[^>]*>.*?</style>", " ")
+                .replaceAll("(?is)<noscript[^>]*>.*?</noscript>", " ")
+                .replaceAll("(?is)<[^>]+>", " ");
+        text = decodeHtmlEntities(collapseWhitespace(text)).trim();
+        if (text.length() > maxChars) {
+            return text.substring(0, maxChars).trim();
+        }
+        return text;
+    }
+
+    private static JSONArray extractHeadings(String html) {
+        JSONArray headings = new JSONArray();
+        if (html == null || html.isEmpty()) {
+            return headings;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?is)<h([1-4])[^>]*>(.*?)</h\\1>")
+                .matcher(html);
+        while (matcher.find() && headings.length() < 24) {
+            String text = decodeHtmlEntities(collapseWhitespace(
+                    matcher.group(2).replaceAll("(?is)<[^>]+>", " "))).trim();
+            if (text.isEmpty()) {
+                continue;
+            }
+            try {
+                headings.put(new JSONObject()
+                        .put("level", Integer.parseInt(matcher.group(1)))
+                        .put("text", text.length() > 160 ? text.substring(0, 160) : text));
+            } catch (JSONException ignored) {
+                // skip malformed heading
+            }
+        }
+        return headings;
+    }
+
+    private static JSONArray extractLinks(String html, String baseUrl) {
+        JSONArray links = new JSONArray();
+        if (html == null || html.isEmpty()) {
+            return links;
+        }
+        java.net.URL base = null;
+        try {
+            base = new java.net.URL(baseUrl);
+        } catch (java.net.MalformedURLException ignored) {
+            // fall back to absolute links only
+        }
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?is)<a\\b[^>]*?href=[\"']([^\"'#]+)[\"'][^>]*>(.*?)</a>")
+                .matcher(html);
+        while (matcher.find() && links.length() < 40) {
+            String href = matcher.group(1).trim();
+            String lowered = href.toLowerCase(Locale.US);
+            if (lowered.startsWith("javascript:") || lowered.startsWith("mailto:")
+                    || lowered.startsWith("tel:") || lowered.startsWith("data:")) {
+                continue;
+            }
+            String resolved = href;
+            if (!lowered.startsWith("http://") && !lowered.startsWith("https://")) {
+                if (base == null) {
+                    continue;
+                }
+                try {
+                    resolved = new java.net.URL(base, href).toString();
+                } catch (java.net.MalformedURLException e) {
+                    continue;
+                }
+            }
+            String text = decodeHtmlEntities(collapseWhitespace(
+                    matcher.group(2).replaceAll("(?is)<[^>]+>", " "))).trim();
+            if (text.isEmpty() || !seen.add(resolved)) {
+                continue;
+            }
+            try {
+                links.put(new JSONObject()
+                        .put("text", text.length() > 120 ? text.substring(0, 120) : text)
+                        .put("url", resolved));
+            } catch (JSONException ignored) {
+                // skip malformed link
+            }
+        }
+        return links;
+    }
+
+    private static String collapseWhitespace(String text) {
+        return text == null ? "" : text.replaceAll("\\s+", " ");
+    }
+
+    private static String decodeHtmlEntities(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        return text.replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&apos;", "'");
+    }
+
     private String pressKey(String taskId, JSONObject arguments) throws JSONException {
         String key = arguments.optString("key", "back").trim().toLowerCase();
         String reason = arguments.optString("reason");
@@ -294,6 +1947,50 @@ public final class FrameworkToolExecutor {
         throw new JSONException("element_not_found:" + elementId);
     }
 
+    private String resolvePackageOrLabel(String packageOrLabel) {
+        if (packageOrLabel == null || packageOrLabel.trim().isEmpty()) {
+            return "";
+        }
+        String value = packageOrLabel.trim();
+        if (value.indexOf('.') >= 0
+                && mContext.getPackageManager().getLaunchIntentForPackage(value) != null) {
+            return value;
+        }
+        String packageName = launchablePackageForLabel(value);
+        return packageName.isEmpty() ? packageName(value) : packageName;
+    }
+
+    private String launchablePackageForLabel(String labelOrPackage) {
+        String query = labelOrPackage == null ? "" : labelOrPackage.trim().toLowerCase(Locale.US);
+        if (query.isEmpty()) {
+            return "";
+        }
+        PackageManager packageManager = mContext.getPackageManager();
+        Intent launcherIntent = new Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> launchables = packageManager.queryIntentActivities(launcherIntent, 0);
+        String containsMatch = "";
+        for (ResolveInfo resolveInfo : launchables) {
+            if (resolveInfo == null || resolveInfo.activityInfo == null) {
+                continue;
+            }
+            String packageName = resolveInfo.activityInfo.packageName == null
+                    ? "" : resolveInfo.activityInfo.packageName;
+            CharSequence labelSeq = resolveInfo.loadLabel(packageManager);
+            String label = labelSeq == null ? packageName : labelSeq.toString();
+            String normalizedLabel = label.toLowerCase(Locale.US);
+            String normalizedPackage = packageName.toLowerCase(Locale.US);
+            if (query.equals(normalizedLabel) || query.equals(normalizedPackage)) {
+                return packageName;
+            }
+            if (containsMatch.isEmpty()
+                    && (normalizedLabel.contains(query) || normalizedPackage.contains(query))) {
+                containsMatch = packageName;
+            }
+        }
+        return containsMatch;
+    }
+
     private static String packageName(String packageOrLabel) {
         if (packageOrLabel == null) {
             return "";
@@ -323,6 +2020,122 @@ public final class FrameworkToolExecutor {
             return "org.openphone.assistant";
         }
         return value;
+    }
+
+    private static String cleanNotificationField(String value) {
+        String clean = value == null ? "" : value.trim();
+        while (clean.contains("  ")) {
+            clean = clean.replace("  ", " ");
+        }
+        if (clean.length() > 120) {
+            clean = clean.substring(0, 120);
+        }
+        return clean;
+    }
+
+    private static JSONObject notificationEvidence(ContextEvent event) throws JSONException {
+        return new JSONObject()
+                .put("id", event.id)
+                .put("source_type", event.sourceType)
+                .put("source_app", event.sourceApp)
+                .put("source_record_id", event.sourceRecordId)
+                .put("observed_at", event.observedAtMillis)
+                .put("title", cleanNotificationField(event.title))
+                .put("text", cleanNotificationField(event.text));
+    }
+
+    private static JSONObject messageEvidence(JSONObject message) throws JSONException {
+        return new JSONObject()
+                .put("message_id", message.optLong("message_id", 0L))
+                .put("thread_id", message.optLong("thread_id", 0L))
+                .put("address", message.optString("address", ""))
+                .put("body", message.optString("body", ""))
+                .put("date", message.optLong("date", 0L))
+                .put("type", message.optString("type", ""))
+                .put("read", message.optBoolean("read", false));
+    }
+
+    private static void collectConfirmationCodes(JSONArray out, String source,
+            JSONArray rows, String field) throws JSONException {
+        if (rows == null || out.length() >= 8) {
+            return;
+        }
+        Pattern pattern = Pattern.compile(
+                "(?i)(?:code|confirmation|confirm|pin|otp|verification)[^A-Z0-9]{0,12}"
+                        + "([A-Z0-9][A-Z0-9-]{3,11})");
+        for (int i = 0; i < rows.length() && out.length() < 8; i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) {
+                continue;
+            }
+            String text = row.optString(field, "");
+            if (text.isEmpty()) {
+                continue;
+            }
+            Matcher matcher = pattern.matcher(text);
+            while (matcher.find() && out.length() < 8) {
+                String code = matcher.group(1).replace("-", "").trim();
+                if (code.length() < 4) {
+                    continue;
+                }
+                out.put(new JSONObject()
+                        .put("source", source)
+                        .put("field", field)
+                        .put("code", code)
+                        .put("text", text)
+                        .put("row", row));
+            }
+        }
+    }
+
+    private static final class NotificationGroup {
+        final String app;
+        final String title;
+        int count;
+        long latestAt;
+        String sampleText = "";
+
+        NotificationGroup(String app, String title) {
+            this.app = app == null ? "" : app;
+            this.title = title == null ? "" : title;
+        }
+
+        JSONObject toJson() throws JSONException {
+            return new JSONObject()
+                    .put("app", app)
+                    .put("title", title)
+                    .put("sample_text", sampleText)
+                    .put("count", count)
+                    .put("latest_at", latestAt);
+        }
+    }
+
+    private static final class MessageThreadGroup {
+        final long threadId;
+        final String address;
+        final JSONArray samples = new JSONArray();
+        int count;
+        int inboxCount;
+        int sentCount;
+        int unreadCount;
+        long latestAt;
+
+        MessageThreadGroup(long threadId, String address) {
+            this.threadId = threadId;
+            this.address = address == null ? "" : address;
+        }
+
+        JSONObject toJson() throws JSONException {
+            return new JSONObject()
+                    .put("thread_id", threadId)
+                    .put("address", address)
+                    .put("count", count)
+                    .put("inbox_count", inboxCount)
+                    .put("sent_count", sentCount)
+                    .put("unread_count", unreadCount)
+                    .put("latest_at", latestAt)
+                    .put("sample_messages", samples);
+        }
     }
 
     private static String error(String reason) {

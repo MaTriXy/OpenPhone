@@ -2,20 +2,42 @@ package org.openphone.assistant;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.BlurMaskFilter;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.RoundedCorner;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Set;
+import java.util.WeakHashMap;
+
 final class PointerOverlayController {
+    interface ScreenAnswerProvider {
+        void answerScreen(String prompt, ScreenAnswerCallback callback);
+    }
+
+    interface ScreenAnswerCallback {
+        void onAnswer(String answer);
+    }
+
     private static final int CURSOR_SIZE = 34;
     private static final int RIPPLE_SIZE = 96;
     private static final int ISLAND_WIDTH = 620;
@@ -23,89 +45,62 @@ final class PointerOverlayController {
     private static final int CAMERA_RESERVED_WIDTH = 134;
     private static final int CAMERA_ISLAND_FALLBACK_TOP = 8;
     private static final int ACTION_LABEL_GAP = 12;
+    private static final int SHEET_WIDTH_MARGIN = 42;
+    private static final int SHEET_TOP_GAP = 18;
+    private static final int SHEET_SWIPE_THRESHOLD = 54;
+    private static final int GLOW_STROKE_WIDTH = 76;
+    private static final int GLOW_BLUR_RADIUS = 118;
+    private static final int GLOW_CORE_STROKE_WIDTH = 8;
+    private static final int GLOW_EDGE_INSET = 1;
     private static final long OPEN_APP_HOLD_MS = 5000;
     private static final long MAX_VISIBLE_MS = 5 * 60 * 1000;
     private static final long DONE_VISIBLE_MS = 2200;
+    private static final Set<PointerOverlayController> sControllers =
+            Collections.newSetFromMap(new WeakHashMap<>());
 
     private final Context mContext;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Runnable mWatchdogHide = this::hide;
+    private final ScreenAnswerProvider mScreenAnswerProvider;
     private WindowManager mWindowManager;
     private FrameLayout mRoot;
     private FrameLayout mIslandRoot;
+    private FrameLayout mSheetRoot;
     private WindowManager.LayoutParams mIslandParams;
+    private WindowManager.LayoutParams mSheetParams;
+    private GlowBorderView mGlowView;
     private View mDot;
     private TextView mLeftIslandText;
     private TextView mRightIslandText;
+    private TextView mSheetStatusText;
+    private LinearLayout mSheetActionRows;
     private TextView mActionLabel;
     private boolean mOpenAppHoldTriggered;
+    private boolean mIslandSheetGesture;
+    private boolean mSheetExpanded;
     private String mMode = "mic";
     private String mTranscriptText = "";
 
     PointerOverlayController(Context context) {
+        this(context, null);
+    }
+
+    PointerOverlayController(Context context, ScreenAnswerProvider screenAnswerProvider) {
         mContext = context.getApplicationContext();
+        mScreenAnswerProvider = screenAnswerProvider;
+        synchronized (sControllers) {
+            sControllers.add(this);
+        }
     }
 
     void show(String taskId) {
         mHandler.post(() -> {
             mMode = "working";
-            if (mRoot != null) {
-                ensureIslandWindow();
-                updateIslandViews();
-                showPointerDot();
-                armWatchdog();
-                return;
-            }
-            mWindowManager = mContext.getSystemService(WindowManager.class);
-            if (mWindowManager == null) {
-                return;
-            }
-            mRoot = new FrameLayout(mContext);
-            mRoot.setClickable(false);
-            mRoot.setFocusable(false);
-
-            mActionLabel = new TextView(mContext);
-            mActionLabel.setTextColor(0xff101418);
-            mActionLabel.setTextSize(12);
-            mActionLabel.setTypeface(Typeface.DEFAULT_BOLD);
-            mActionLabel.setGravity(Gravity.CENTER);
-            mActionLabel.setBackground(actionBackground());
-            mActionLabel.setPadding(24, 10, 24, 10);
-            mActionLabel.setAlpha(0f);
-            FrameLayout.LayoutParams actionParams = new FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT);
-        actionParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-            actionParams.topMargin = ISLAND_HEIGHT + ACTION_LABEL_GAP + CAMERA_ISLAND_FALLBACK_TOP;
-            mRoot.addView(mActionLabel, actionParams);
-
-            mDot = new View(mContext);
-            mDot.setBackground(cursorBackground());
-            FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(
-                    CURSOR_SIZE, CURSOR_SIZE);
-            dotParams.leftMargin = 200;
-            dotParams.topMargin = 400;
-            mRoot.addView(mDot, dotParams);
+            ensurePointerLayer();
             showPointerDot();
-
-            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                    PixelFormat.TRANSLUCENT);
-            params.gravity = Gravity.TOP | Gravity.LEFT;
-            params.layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
-            try {
-                mWindowManager.addView(mRoot, params);
-                ensureIslandWindow();
-                armWatchdog();
-            } catch (RuntimeException ignored) {
-                mRoot = null;
-            }
+            ensureIslandWindow();
+            updateIslandViews();
+            armWatchdog();
         });
     }
 
@@ -122,12 +117,18 @@ final class PointerOverlayController {
                 } catch (RuntimeException ignored) {
                 }
             }
+            removeAiSheet();
             mRoot = null;
             mIslandRoot = null;
+            mSheetRoot = null;
             mIslandParams = null;
+            mSheetParams = null;
             mDot = null;
+            mGlowView = null;
             mLeftIslandText = null;
             mRightIslandText = null;
+            mSheetStatusText = null;
+            mSheetActionRows = null;
             mActionLabel = null;
         });
     }
@@ -142,6 +143,8 @@ final class PointerOverlayController {
                     || "Waiting for task".equals(text)
                     || "Continuing".equals(text)) {
                 mMode = "working";
+                ensurePointerLayer();
+                showPointerDot();
                 ensureIslandWindow();
                 updateIslandViews();
             }
@@ -152,6 +155,8 @@ final class PointerOverlayController {
         mHandler.post(() -> {
             mMode = "listening";
             mTranscriptText = "";
+            ensurePointerLayer();
+            hidePointerDot();
             ensureIslandWindow();
             updateIslandViews();
         });
@@ -161,6 +166,8 @@ final class PointerOverlayController {
         mHandler.post(() -> {
             mMode = "transcript";
             mTranscriptText = transcript == null ? "" : transcript.trim();
+            ensurePointerLayer();
+            hidePointerDot();
             ensureIslandWindow();
             updateIslandViews();
         });
@@ -170,7 +177,7 @@ final class PointerOverlayController {
         mHandler.post(() -> {
             mMode = "mic";
             mTranscriptText = "";
-            removePointerLayer();
+            removeAllPointerLayers();
             ensureIslandWindow();
             updateIslandViews();
             mHandler.removeCallbacks(mWatchdogHide);
@@ -180,7 +187,7 @@ final class PointerOverlayController {
     void showDoneThenMic() {
         mHandler.post(() -> {
             mMode = "done";
-            removePointerLayer();
+            removeAllPointerLayers();
             ensureIslandWindow();
             updateIslandViews();
             mHandler.removeCallbacks(mWatchdogHide);
@@ -229,6 +236,70 @@ final class PointerOverlayController {
         mHandler.postDelayed(mWatchdogHide, MAX_VISIBLE_MS);
     }
 
+    private void ensurePointerLayer() {
+        if (mWindowManager == null) {
+            mWindowManager = mContext.getSystemService(WindowManager.class);
+        }
+        if (mWindowManager == null) {
+            return;
+        }
+        if (mRoot == null) {
+            mRoot = new FrameLayout(mContext);
+            mRoot.setClickable(false);
+            mRoot.setFocusable(false);
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_SYSTEM_ERROR,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT);
+            params.gravity = Gravity.TOP | Gravity.LEFT;
+            params.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            try {
+                mWindowManager.addView(mRoot, params);
+            } catch (RuntimeException ignored) {
+                mRoot = null;
+                return;
+            }
+        }
+
+        if (mGlowView == null) {
+            mGlowView = new GlowBorderView(mContext);
+            mRoot.addView(mGlowView, 0, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+        }
+        if (mActionLabel == null) {
+            mActionLabel = new TextView(mContext);
+            mActionLabel.setTextColor(0xff101418);
+            mActionLabel.setTextSize(12);
+            mActionLabel.setTypeface(Typeface.DEFAULT_BOLD);
+            mActionLabel.setGravity(Gravity.CENTER);
+            mActionLabel.setBackground(actionBackground());
+            mActionLabel.setPadding(24, 10, 24, 10);
+            mActionLabel.setAlpha(0f);
+            FrameLayout.LayoutParams actionParams = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT);
+            actionParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+            actionParams.topMargin = ISLAND_HEIGHT + ACTION_LABEL_GAP
+                    + CAMERA_ISLAND_FALLBACK_TOP;
+            mRoot.addView(mActionLabel, actionParams);
+        }
+        if (mDot == null) {
+            mDot = new View(mContext);
+            mDot.setBackground(cursorBackground());
+            FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(
+                    CURSOR_SIZE, CURSOR_SIZE);
+            dotParams.leftMargin = 200;
+            dotParams.topMargin = 400;
+            mRoot.addView(mDot, dotParams);
+        }
+    }
+
     private void ensureIslandWindow() {
         if (mWindowManager == null) {
             mWindowManager = mContext.getSystemService(WindowManager.class);
@@ -255,11 +326,34 @@ final class PointerOverlayController {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
                         mOpenAppHoldTriggered = false;
+                        mIslandSheetGesture = false;
                         mHandler.postDelayed(mOpenApp, OPEN_APP_HOLD_MS);
+                        view.setTag(Float.valueOf(event.getRawY()));
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        Object downY = view.getTag();
+                        if (downY instanceof Float
+                                && event.getRawY() - ((Float) downY).floatValue()
+                                > SHEET_SWIPE_THRESHOLD) {
+                            mHandler.removeCallbacks(mOpenApp);
+                            showAiSheet(true);
+                            mIslandSheetGesture = true;
+                            view.setTag(null);
+                        }
                         return true;
                     case MotionEvent.ACTION_UP:
                         mHandler.removeCallbacks(mOpenApp);
-                        if (!mOpenAppHoldTriggered) {
+                        Object startY = view.getTag();
+                        view.setTag(null);
+                        if (mIslandSheetGesture) {
+                            mIslandSheetGesture = false;
+                            return true;
+                        }
+                        if (!mOpenAppHoldTriggered && startY instanceof Float
+                                && event.getRawY() - ((Float) startY).floatValue()
+                                > SHEET_SWIPE_THRESHOLD) {
+                            showAiSheet(true);
+                        } else if (!mOpenAppHoldTriggered) {
                             if ("working".equals(mMode)) {
                                 if (event.getX() < view.getWidth() / 2f) {
                                     launchVoiceCapture();
@@ -269,12 +363,18 @@ final class PointerOverlayController {
                             } else if ("listening".equals(mMode)) {
                                 launchStopAgent();
                             } else {
-                                launchVoiceCapture();
+                                if (event.getX() < view.getWidth() / 2f) {
+                                    showAiSheet(false);
+                                } else {
+                                    launchVoiceCapture();
+                                }
                             }
                         }
                         return true;
                     case MotionEvent.ACTION_CANCEL:
                         mHandler.removeCallbacks(mOpenApp);
+                        mIslandSheetGesture = false;
+                        view.setTag(null);
                         return true;
                     default:
                         return true;
@@ -323,6 +423,243 @@ final class PointerOverlayController {
         }
     }
 
+    private void showAiSheet(boolean expanded) {
+        ensureIslandWindow();
+        ensureAiSheetWindow(expanded);
+        updateAiSheetViews(expanded);
+    }
+
+    private void ensureAiSheetWindow(boolean expanded) {
+        if (mWindowManager == null) {
+            mWindowManager = mContext.getSystemService(WindowManager.class);
+        }
+        if (mWindowManager == null) {
+            return;
+        }
+        mSheetExpanded = expanded;
+        if (mSheetRoot != null) {
+            return;
+        }
+        mSheetRoot = new FrameLayout(mContext);
+        mSheetRoot.setClickable(true);
+        mSheetRoot.setFocusable(false);
+        mSheetRoot.setBackground(sheetBackground());
+        mSheetRoot.setPadding(28, 22, 28, 22);
+
+        LinearLayout content = new LinearLayout(mContext);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+        mSheetRoot.addView(content, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout header = new LinearLayout(mContext);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        content.addView(header, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        TextView title = sheetTitle("Ask OpenPhone");
+        header.addView(title, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView close = sheetButton("Close");
+        close.setOnClickListener(view -> removeAiSheet());
+        header.addView(close, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        mSheetStatusText = sheetStatus();
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        statusParams.topMargin = 12;
+        content.addView(mSheetStatusText, statusParams);
+
+        mSheetActionRows = new LinearLayout(mContext);
+        mSheetActionRows.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        actionsParams.topMargin = 16;
+        content.addView(mSheetActionRows, actionsParams);
+
+        mSheetParams = new WindowManager.LayoutParams(
+                Math.max(1, displayWidth() - SHEET_WIDTH_MARGIN * 2),
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_SYSTEM_ERROR,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        mSheetParams.gravity = Gravity.TOP | Gravity.LEFT;
+        mSheetParams.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        mSheetParams.x = SHEET_WIDTH_MARGIN;
+        mSheetParams.y = CAMERA_ISLAND_FALLBACK_TOP + ISLAND_HEIGHT + SHEET_TOP_GAP;
+        try {
+            mWindowManager.addView(mSheetRoot, mSheetParams);
+        } catch (RuntimeException ignored) {
+            mSheetRoot = null;
+            mSheetParams = null;
+            mSheetStatusText = null;
+            mSheetActionRows = null;
+        }
+    }
+
+    private void updateAiSheetViews(boolean expanded) {
+        if (mSheetRoot == null || mSheetActionRows == null) {
+            return;
+        }
+        mSheetExpanded = expanded;
+        if (mSheetStatusText != null) {
+            mSheetStatusText.setText(sheetStatusText());
+        }
+        mSheetActionRows.removeAllViews();
+        addSheetRow(sheetButton("Talk", view -> {
+            removeAiSheet();
+            launchVoiceCapture();
+        }), sheetButton("Stop", view -> {
+            removeAiSheet();
+            launchStopAgent();
+        }));
+        addSheetRow(sheetButton("Chat", view -> {
+            removeAiSheet();
+            launchFullAssistant();
+        }), sheetButton("Screen", view -> {
+            requestScreenAnswer("What's on my screen?");
+        }));
+        if (expanded) {
+            addSheetRow(sheetButton("Summarize", view -> {
+                requestScreenAnswer("Summarize what is visible on my screen.");
+            }), sheetButton("Search", view -> {
+                removeAiSheet();
+                launchGoal("Search the web for what I ask next.");
+            }));
+            addSheetRow(sheetButton("Notifications", view -> {
+                removeAiSheet();
+                launchGoal("Review my current notifications and tell me what needs attention.");
+            }), sheetButton("Settings", view -> {
+                removeAiSheet();
+                launchFullAssistant();
+            }));
+        } else {
+            TextView expand = sheetButton("More");
+            expand.setOnClickListener(view -> updateAiSheetViews(true));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            params.topMargin = 10;
+            mSheetActionRows.addView(expand, params);
+        }
+    }
+
+    private void requestScreenAnswer(String prompt) {
+        if (mScreenAnswerProvider == null) {
+            removeAiSheet();
+            launchGoal(prompt);
+            return;
+        }
+        ensureAiSheetWindow(true);
+        mSheetExpanded = true;
+        if (mSheetStatusText != null) {
+            mSheetStatusText.setText("Reading screen");
+        }
+        if (mSheetActionRows != null) {
+            mSheetActionRows.removeAllViews();
+            mSheetActionRows.addView(sheetAnswerCard("Looking at the current screen..."),
+                    fullWidthSheetParams(0));
+        }
+        mScreenAnswerProvider.answerScreen(prompt, answer ->
+                mHandler.post(() -> showScreenAnswer(prompt, answer)));
+    }
+
+    private void showScreenAnswer(String prompt, String answer) {
+        ensureAiSheetWindow(true);
+        if (mSheetStatusText != null) {
+            mSheetStatusText.setText("Screen answer");
+        }
+        if (mSheetActionRows == null) {
+            return;
+        }
+        mSheetActionRows.removeAllViews();
+        mSheetActionRows.addView(sheetAnswerCard(answer == null || answer.trim().isEmpty()
+                ? "I could not read enough from this screen." : answer.trim()),
+                fullWidthSheetParams(0));
+        addSheetRow(sheetButton("Refresh", view -> requestScreenAnswer(prompt)),
+                sheetButton("Chat", view -> {
+                    removeAiSheet();
+                    launchFullAssistant();
+                }));
+        TextView close = sheetButton("Close");
+        close.setOnClickListener(view -> removeAiSheet());
+        mSheetActionRows.addView(close, fullWidthSheetParams(10));
+    }
+
+    private void addSheetRow(TextView first, TextView second) {
+        if (mSheetActionRows == null) {
+            return;
+        }
+        LinearLayout row = new LinearLayout(mContext);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowParams.topMargin = mSheetActionRows.getChildCount() == 0 ? 0 : 10;
+        mSheetActionRows.addView(row, rowParams);
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        row.addView(first, buttonParams);
+        LinearLayout.LayoutParams secondParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        secondParams.leftMargin = 10;
+        row.addView(second, secondParams);
+    }
+
+    private static LinearLayout.LayoutParams fullWidthSheetParams(int topMargin) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        params.topMargin = topMargin;
+        return params;
+    }
+
+    private void removeAiSheet() {
+        if (mWindowManager == null || mSheetRoot == null) {
+            mSheetRoot = null;
+            mSheetParams = null;
+            mSheetStatusText = null;
+            mSheetActionRows = null;
+            return;
+        }
+        try {
+            mWindowManager.removeView(mSheetRoot);
+        } catch (RuntimeException ignored) {
+        }
+        mSheetRoot = null;
+        mSheetParams = null;
+        mSheetStatusText = null;
+        mSheetActionRows = null;
+    }
+
+    private String sheetStatusText() {
+        if ("working".equals(mMode)) {
+            return "Agent running";
+        }
+        if ("listening".equals(mMode)) {
+            return "Listening";
+        }
+        if ("transcript".equals(mMode)) {
+            return mTranscriptText == null || mTranscriptText.isEmpty()
+                    ? "Heard your request" : mTranscriptText;
+        }
+        if ("done".equals(mMode)) {
+            return "Done";
+        }
+        return "Ready";
+    }
+
     private TextView islandText() {
         TextView view = new TextView(mContext);
         view.setTextColor(0xfff4f7f8);
@@ -358,6 +695,9 @@ final class PointerOverlayController {
             mLeftIslandText.setText("AI");
             mRightIslandText.setText("◉");
             mRightIslandText.setTextColor(0xff72e0c4);
+        }
+        if (mSheetRoot != null) {
+            updateAiSheetViews(mSheetExpanded);
         }
     }
 
@@ -499,7 +839,7 @@ final class PointerOverlayController {
         }
         for (int i = mRoot.getChildCount() - 1; i >= 0; i--) {
             View child = mRoot.getChildAt(i);
-            if (child != mActionLabel && child != mDot) {
+            if (child != mGlowView && child != mActionLabel && child != mDot) {
                 child.animate().cancel();
                 mRoot.removeViewAt(i);
             }
@@ -526,7 +866,18 @@ final class PointerOverlayController {
         }
         mRoot = null;
         mDot = null;
+        mGlowView = null;
         mActionLabel = null;
+    }
+
+    private static void removeAllPointerLayers() {
+        ArrayList<PointerOverlayController> controllers;
+        synchronized (sControllers) {
+            controllers = new ArrayList<>(sControllers);
+        }
+        for (PointerOverlayController controller : controllers) {
+            controller.mHandler.post(controller::removePointerLayer);
+        }
     }
 
     private void showPointerDot() {
@@ -543,10 +894,10 @@ final class PointerOverlayController {
     }
 
     private void launchVoiceCapture() {
-        Intent intent = new Intent(mContext, MainActivity.class);
+        Intent intent = new Intent(mContext, AgentControlActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
                 | Intent.FLAG_ACTIVITY_NO_ANIMATION);
-        intent.putExtra(MainActivity.EXTRA_START_VOICE, true);
+        intent.putExtra(AgentControlActivity.EXTRA_START_VOICE, true);
         try {
             mContext.startActivity(intent);
         } catch (RuntimeException ignored) {
@@ -554,10 +905,10 @@ final class PointerOverlayController {
     }
 
     private void launchStopAgent() {
-        Intent intent = new Intent(mContext, MainActivity.class);
+        Intent intent = new Intent(mContext, AgentControlActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
                 | Intent.FLAG_ACTIVITY_NO_ANIMATION);
-        intent.putExtra(MainActivity.EXTRA_STOP_AGENT, true);
+        intent.putExtra(AgentControlActivity.EXTRA_STOP_AGENT, true);
         try {
             mContext.startActivity(intent);
         } catch (RuntimeException ignored) {
@@ -571,6 +922,71 @@ final class PointerOverlayController {
             mContext.startActivity(intent);
         } catch (RuntimeException ignored) {
         }
+    }
+
+    private void launchGoal(String goal) {
+        Intent intent = new Intent(mContext, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.putExtra("org.openphone.assistant.extra.GOAL_BASE64",
+                Base64.encodeToString(goal.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        Base64.NO_WRAP));
+        intent.putExtra("org.openphone.assistant.extra.RUN", true);
+        try {
+            mContext.startActivity(intent);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private TextView sheetTitle(String text) {
+        TextView view = new TextView(mContext);
+        view.setText(text);
+        view.setTextColor(0xfff4f7f8);
+        view.setTextSize(18);
+        view.setTypeface(Typeface.DEFAULT_BOLD);
+        view.setSingleLine(true);
+        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        return view;
+    }
+
+    private TextView sheetStatus() {
+        TextView view = new TextView(mContext);
+        view.setTextColor(0xccf4f7f8);
+        view.setTextSize(13);
+        view.setSingleLine(true);
+        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        return view;
+    }
+
+    private TextView sheetButton(String text) {
+        return sheetButton(text, null);
+    }
+
+    private TextView sheetButton(String text, View.OnClickListener listener) {
+        TextView view = new TextView(mContext);
+        view.setText(text);
+        view.setTextColor(0xfff4f7f8);
+        view.setTextSize(14);
+        view.setTypeface(Typeface.DEFAULT_BOLD);
+        view.setGravity(Gravity.CENTER);
+        view.setSingleLine(true);
+        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        view.setPadding(18, 14, 18, 14);
+        view.setBackground(sheetButtonBackground());
+        if (listener != null) {
+            view.setOnClickListener(listener);
+        }
+        return view;
+    }
+
+    private TextView sheetAnswerCard(String text) {
+        TextView view = new TextView(mContext);
+        view.setText(text == null ? "" : text);
+        view.setTextColor(0xfff4f7f8);
+        view.setTextSize(14);
+        view.setLineSpacing(2f, 1.05f);
+        view.setPadding(20, 18, 20, 18);
+        view.setBackground(sheetAnswerBackground());
+        return view;
     }
 
     private static GradientDrawable chipBackground() {
@@ -596,6 +1012,30 @@ final class PointerOverlayController {
         return drawable;
     }
 
+    private static GradientDrawable sheetBackground() {
+        GradientDrawable drawable = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{0xee11161d, 0xee1b2330, 0xee101418});
+        drawable.setCornerRadius(34);
+        drawable.setStroke(2, 0x5572e0c4);
+        return drawable;
+    }
+
+    private static GradientDrawable sheetButtonBackground() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(0x332f3946);
+        drawable.setCornerRadius(24);
+        drawable.setStroke(1, 0x4472e0c4);
+        return drawable;
+    }
+
+    private static GradientDrawable sheetAnswerBackground() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(0x22364352);
+        drawable.setCornerRadius(24);
+        drawable.setStroke(1, 0x3372e0c4);
+        return drawable;
+    }
+
     private static GradientDrawable rippleBackground(boolean longPress) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setShape(GradientDrawable.OVAL);
@@ -609,5 +1049,89 @@ final class PointerOverlayController {
         drawable.setColor(0xcc72e0c4);
         drawable.setCornerRadius(12);
         return drawable;
+    }
+
+    private static final class GlowBorderView extends View {
+        private final Paint mBlurPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mCorePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF mBounds = new RectF();
+        private float mShift;
+
+        GlowBorderView(Context context) {
+            super(context);
+            setWillNotDraw(false);
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+            mBlurPaint.setStyle(Paint.Style.STROKE);
+            mBlurPaint.setStrokeWidth(GLOW_STROKE_WIDTH);
+            mBlurPaint.setStrokeCap(Paint.Cap.ROUND);
+            mBlurPaint.setStrokeJoin(Paint.Join.ROUND);
+            mBlurPaint.setMaskFilter(new BlurMaskFilter(GLOW_BLUR_RADIUS,
+                    BlurMaskFilter.Blur.NORMAL));
+
+            mCorePaint.setStyle(Paint.Style.STROKE);
+            mCorePaint.setStrokeWidth(GLOW_CORE_STROKE_WIDTH);
+            mCorePaint.setStrokeCap(Paint.Cap.ROUND);
+            mCorePaint.setStrokeJoin(Paint.Join.ROUND);
+            mCorePaint.setAlpha(255);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            int width = getWidth();
+            int height = getHeight();
+            if (width <= 0 || height <= 0) {
+                return;
+            }
+            Shader shader = gradient(width, height);
+            mBlurPaint.setShader(shader);
+            mCorePaint.setShader(shader);
+            float inset = GLOW_EDGE_INSET;
+            mBounds.set(inset, inset, width - inset, height - inset);
+            float radius = displayCornerRadius(width, height);
+            canvas.drawRoundRect(mBounds, radius, radius, mBlurPaint);
+            canvas.drawRoundRect(mBounds, radius, radius, mCorePaint);
+
+            mShift = (mShift + 0.008f) % 1f;
+            postInvalidateDelayed(16);
+        }
+
+        private Shader gradient(int width, int height) {
+            int[] colors = {
+                    Color.argb(255, 93, 220, 255),
+                    Color.argb(255, 148, 108, 255),
+                    Color.argb(255, 255, 86, 168),
+                    Color.argb(255, 255, 204, 108),
+                    Color.argb(255, 93, 220, 255)
+            };
+            float startX = -width * 0.4f + width * 1.8f * mShift;
+            float endX = startX + width * 1.2f;
+            return new LinearGradient(startX, 0, endX, height, colors, null,
+                    Shader.TileMode.MIRROR);
+        }
+
+        private float displayCornerRadius(int width, int height) {
+            float fallback = Math.min(145, Math.min(width, height) * 0.135f);
+            if (getRootWindowInsets() == null) {
+                return Math.max(1f, fallback - GLOW_CORE_STROKE_WIDTH / 2f);
+            }
+            float radius = 0f;
+            int[] positions = {
+                    RoundedCorner.POSITION_TOP_LEFT,
+                    RoundedCorner.POSITION_TOP_RIGHT,
+                    RoundedCorner.POSITION_BOTTOM_RIGHT,
+                    RoundedCorner.POSITION_BOTTOM_LEFT
+            };
+            for (int position : positions) {
+                RoundedCorner corner = getRootWindowInsets().getRoundedCorner(position);
+                if (corner != null) {
+                    radius = Math.max(radius, corner.getRadius());
+                }
+            }
+            if (radius <= 0f) {
+                radius = fallback;
+            }
+            return Math.max(1f, (radius * 1.40f) - GLOW_CORE_STROKE_WIDTH / 2f);
+        }
     }
 }

@@ -46,8 +46,15 @@ public final class PolicyEngine {
         risks.put("screen.read.visible", CapabilityRisk.LOW);
         risks.put("screen.capture", CapabilityRisk.MEDIUM);
         risks.put("input.perform", CapabilityRisk.MEDIUM);
+        risks.put("apps.read", CapabilityRisk.LOW);
         risks.put("apps.launch", CapabilityRisk.LOW);
         risks.put("tasks.observe", CapabilityRisk.LOW);
+        risks.put("memory.read", CapabilityRisk.LOW);
+        risks.put("memory.write", CapabilityRisk.MEDIUM);
+        risks.put("commitments.read", CapabilityRisk.LOW);
+        risks.put("commitments.write", CapabilityRisk.MEDIUM);
+        risks.put("watchers.read", CapabilityRisk.LOW);
+        risks.put("watchers.write", CapabilityRisk.MEDIUM);
         risks.put("notifications.read", CapabilityRisk.MEDIUM);
         risks.put("notifications.act", CapabilityRisk.MEDIUM);
         risks.put("clipboard.read", CapabilityRisk.MEDIUM);
@@ -57,8 +64,10 @@ public final class PolicyEngine {
         risks.put("contacts.read", CapabilityRisk.MEDIUM);
         risks.put("calendar.read", CapabilityRisk.MEDIUM);
         risks.put("calendar.write", CapabilityRisk.MEDIUM);
+        risks.put("messages.read", CapabilityRisk.MEDIUM);
         risks.put("messages.draft", CapabilityRisk.MEDIUM);
         risks.put("messages.send", CapabilityRisk.HIGH);
+        risks.put("calls.read", CapabilityRisk.MEDIUM);
         risks.put("calls.place", CapabilityRisk.HIGH);
         risks.put("settings.read", CapabilityRisk.LOW);
         risks.put("settings.write", CapabilityRisk.MEDIUM);

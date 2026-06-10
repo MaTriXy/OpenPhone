@@ -29,6 +29,7 @@ required=(
   docs/ROADMAP.md
   docs/releases/0.0.1.md
   docs/contracts/action-request.schema.json
+  docs/contracts/action-registry.schema.json
   docs/contracts/agent-eval-report.schema.json
   docs/contracts/agent-task.schema.json
   docs/contracts/app-policy.schema.json
@@ -80,6 +81,7 @@ required=(
   services/model-broker/providers.example.json
   overlay/vendor/openphone/AndroidProducts.mk
   overlay/vendor/openphone/config/openphone_capabilities.json
+  overlay/vendor/openphone/config/openphone_action_registry.json
   overlay/vendor/openphone/config/openphone_app_policy.json
   overlay/vendor/openphone/config/openphone_model_tools.json
   overlay/vendor/openphone/config/openphone_policy.json
@@ -205,7 +207,9 @@ if mismatched:
     raise SystemExit("PolicyEngine risk mismatch: " + "; ".join(mismatched))
 
 tool_path = root / "overlay/vendor/openphone/config/openphone_model_tools.json"
+action_registry_path = root / "overlay/vendor/openphone/config/openphone_action_registry.json"
 app_policy_path = root / "overlay/vendor/openphone/config/openphone_app_policy.json"
+action_registry_schema_path = root / "docs/contracts/action-registry.schema.json"
 action_schema_path = root / "docs/contracts/action-request.schema.json"
 audit_schema_path = root / "docs/contracts/audit-event.schema.json"
 screen_schema_path = root / "docs/contracts/screen-context.schema.json"
@@ -217,12 +221,15 @@ accessibility_path = root / "overlay/packages/apps/OpenPhoneAssistant/src/org/op
 ota_client_path = root / "overlay/packages/apps/OpenPhoneAssistant/src/org/openphone/assistant/ota/OtaUpdateClient.java"
 app_capability_policy_path = root / "overlay/packages/apps/OpenPhoneAssistant/src/org/openphone/assistant/policy/AppCapabilityPolicy.java"
 tool_config = json.loads(tool_path.read_text(encoding="utf-8"))
+action_registry_config = json.loads(action_registry_path.read_text(encoding="utf-8"))
 app_policy_config = json.loads(app_policy_path.read_text(encoding="utf-8"))
+action_registry_schema = json.loads(action_registry_schema_path.read_text(encoding="utf-8"))
 action_schema = json.loads(action_schema_path.read_text(encoding="utf-8"))
 audit_schema = json.loads(audit_schema_path.read_text(encoding="utf-8"))
 screen_schema = json.loads(screen_schema_path.read_text(encoding="utf-8"))
 trajectory_schema = json.loads(trajectory_schema_path.read_text(encoding="utf-8"))
 tools = tool_config.get("tools", [])
+actions = action_registry_config.get("actions", [])
 action_types = set(action_schema["properties"]["type"]["enum"])
 audit_event_types = set(audit_schema["properties"]["event_type"]["enum"])
 trajectory_event_types = set(trajectory_schema["properties"]["event"]["enum"])
@@ -245,6 +252,118 @@ for tool in tools:
         raise SystemExit(f"model tool {name} requires_reason must be boolean")
     tool_names[name] = tool
 
+if action_registry_config.get("version") != action_registry_schema["properties"]["version"]["const"]:
+    raise SystemExit("action registry version mismatch")
+valid_action_kinds = set(action_registry_schema["properties"]["actions"]["items"]
+                         ["properties"]["kind"]["enum"])
+valid_action_risks = set(action_registry_schema["properties"]["actions"]["items"]
+                         ["properties"]["risk_class"]["enum"])
+valid_authorization = set(action_registry_schema["properties"]["actions"]["items"]
+                          ["properties"]["authorization_policy"]["enum"])
+valid_callers = set(action_registry_schema["properties"]["actions"]["items"]
+                    ["properties"]["allowed_callers"]["items"]["enum"])
+action_names = {}
+tool_to_actions = {}
+for action in actions:
+    name = action.get("name")
+    model_tool = action.get("model_tool")
+    if not name:
+        raise SystemExit("action registry entry missing name")
+    if name in action_names:
+        raise SystemExit(f"duplicate action registry action: {name}")
+    if not re.match(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$", name):
+        raise SystemExit(f"invalid action registry action name: {name}")
+    if model_tool not in tool_names:
+        raise SystemExit(f"action {name} references unknown model tool: {model_tool}")
+    tool = tool_names[model_tool]
+    if action.get("kind") != tool.get("kind"):
+        raise SystemExit(f"action {name} kind mismatch with model tool {model_tool}")
+    required_capabilities = action.get("required_capabilities")
+    if not isinstance(required_capabilities, list) or not required_capabilities:
+        raise SystemExit(f"action {name} missing required capabilities")
+    if tool.get("capability") not in required_capabilities:
+        raise SystemExit(f"action {name} missing model tool capability "
+                         f"{tool.get('capability')}")
+    unknown_capabilities = sorted(set(required_capabilities) - tool_capabilities)
+    if unknown_capabilities:
+        raise SystemExit(f"action {name} references unknown capabilities: "
+                         + ", ".join(unknown_capabilities))
+    primary_capability = tool.get("capability")
+    capability_entry = next(
+        capability for capability in capabilities
+        if capability.get("id") == primary_capability)
+    if action.get("risk_class") != capability_entry.get("risk"):
+        raise SystemExit(f"action {name} risk mismatch for {primary_capability}: "
+                         f"action={action.get('risk_class')} "
+                         f"capability={capability_entry.get('risk')}")
+    if action.get("authorization_policy") != capability_entry.get("default"):
+        raise SystemExit(f"action {name} auth policy mismatch for {primary_capability}: "
+                         f"action={action.get('authorization_policy')} "
+                         f"capability={capability_entry.get('default')}")
+    if action.get("kind") not in valid_action_kinds:
+        raise SystemExit(f"action {name} invalid kind: {action.get('kind')}")
+    if action.get("risk_class") not in valid_action_risks:
+        raise SystemExit(f"action {name} invalid risk: {action.get('risk_class')}")
+    if action.get("authorization_policy") not in valid_authorization:
+        raise SystemExit(f"action {name} invalid auth policy")
+    callers = action.get("allowed_callers")
+    if not isinstance(callers, list) or not callers:
+        raise SystemExit(f"action {name} missing allowed callers")
+    unknown_callers = sorted(set(callers) - valid_callers)
+    if unknown_callers:
+        raise SystemExit(f"action {name} unknown callers: " + ", ".join(unknown_callers))
+    audit_type = action.get("audit_event_type")
+    if audit_type not in audit_event_types:
+        raise SystemExit(f"action {name} references unknown audit event: {audit_type}")
+    for schema_field in ("input_schema_json", "output_schema_json"):
+        schema_value = action.get(schema_field)
+        if not isinstance(schema_value, dict):
+            raise SystemExit(f"action {name} {schema_field} must be an object")
+    # The registry generates every model tool surface (prompt catalog,
+    # Realtime tool definitions, allowlists, reason enforcement), so input
+    # schemas must be complete and consistent with model_tools.json.
+    if not action.get("description"):
+        raise SystemExit(f"action {name} missing description")
+    input_schema = action["input_schema_json"]
+    input_properties = input_schema.get("properties")
+    if not isinstance(input_properties, dict):
+        raise SystemExit(f"action {name} input schema missing properties object")
+    input_required = input_schema.get("required")
+    if not isinstance(input_required, list):
+        raise SystemExit(f"action {name} input schema missing required array")
+    unknown_required = sorted(set(input_required) - set(input_properties))
+    if unknown_required:
+        raise SystemExit(f"action {name} requires unknown inputs: "
+                         + ", ".join(unknown_required))
+    for property_name, property_schema in input_properties.items():
+        if not isinstance(property_schema, dict) or not property_schema.get("type"):
+            raise SystemExit(f"action {name} input {property_name} missing type")
+        if not property_schema.get("description"):
+            raise SystemExit(f"action {name} input {property_name} missing description")
+    terminal_tools = {"finish_task", "fail_task"}
+    schema_requires_reason = "reason" in input_required and model_tool not in terminal_tools
+    if schema_requires_reason != tool["requires_reason"]:
+        raise SystemExit(
+            f"action {name} reason mismatch: input schema implies "
+            f"{schema_requires_reason} but model tool {model_tool} declares "
+            f"{tool['requires_reason']}")
+    if not action.get("executor_service"):
+        raise SystemExit(f"action {name} missing executor_service")
+    action_names[name] = action
+    tool_to_actions.setdefault(model_tool, []).append(name)
+
+missing_actions_for_tools = sorted(set(tool_names) - set(tool_to_actions))
+if missing_actions_for_tools:
+    raise SystemExit("action registry missing model tools: "
+                     + ", ".join(missing_actions_for_tools))
+duplicate_tool_actions = sorted(
+    f"{tool}: {', '.join(names)}"
+    for tool, names in tool_to_actions.items()
+    if len(names) != 1)
+if duplicate_tool_actions:
+    raise SystemExit("action registry must map each model tool exactly once: "
+                     + "; ".join(duplicate_tool_actions))
+
 executor_source = executor_path.read_text(encoding="utf-8")
 executor_cases = set(re.findall(r'case "([^"]+)":', executor_source))
 missing_executor = sorted(set(tool_names) - executor_cases)
@@ -252,19 +371,24 @@ if missing_executor:
     raise SystemExit("FrameworkToolExecutor missing model tools: "
                      + ", ".join(missing_executor))
 
+# Cloud adapters must derive tool surfaces from the action registry via
+# ToolCatalog instead of hand-maintained per-tool name allowlists.
+responses_adapter_path = (root / "overlay/packages/apps/OpenPhoneAssistant/src/org/"
+                          "openphone/assistant/model/OpenAiResponsesAgentAdapter.java")
+tool_catalog_path = (root / "overlay/packages/apps/OpenPhoneAssistant/src/org/"
+                     "openphone/assistant/actions/ToolCatalog.java")
+if not tool_catalog_path.exists():
+    raise SystemExit("ToolCatalog.java is missing; adapters need registry-driven tools")
+for adapter_file in (adapter_path, responses_adapter_path):
+    source = adapter_file.read_text(encoding="utf-8")
+    if "ToolCatalog" not in source:
+        raise SystemExit(f"{adapter_file.name} must use ToolCatalog for tool surfaces")
+    name_allowlist = re.findall(r'"([a-z_]+)"\.equals\(toolName\)\s*\|\|', source)
+    if len(set(name_allowlist)) > 8:
+        raise SystemExit(
+            f"{adapter_file.name} reintroduces a hardcoded tool-name allowlist "
+            f"({len(set(name_allowlist))} tools); derive it from the action registry")
 adapter_source = adapter_path.read_text(encoding="utf-8")
-allowed_tools = set(re.findall(r'"([^"]+)"\.equals\(toolName\)', adapter_source))
-terminal_tools = {"finish_task", "fail_task"}
-missing_adapter = sorted(set(tool_names) - allowed_tools - terminal_tools)
-if missing_adapter:
-    raise SystemExit("OpenAI adapter isAllowedTool missing model tools: "
-                     + ", ".join(missing_adapter))
-for terminal in terminal_tools:
-    if f'"{terminal}".equals(toolName)' not in adapter_source:
-        raise SystemExit(f"OpenAI adapter missing terminal tool handling: {terminal}")
-for name in tool_names:
-    if name not in adapter_source:
-        raise SystemExit(f"OpenAI adapter prompt/source missing model tool name: {name}")
 for stale_capability in ("content.share", "input.text"):
     if stale_capability in adapter_source:
         raise SystemExit(f"OpenAI adapter contains stale capability id: {stale_capability}")
@@ -272,13 +396,13 @@ if "Intent.ACTION_VIEW" in executor_source or "startActivity(" in executor_sourc
     raise SystemExit("FrameworkToolExecutor must not launch web intents directly")
 if "missing_reason:" not in executor_source or "requiresModelReason" not in executor_source:
     raise SystemExit("FrameworkToolExecutor must enforce reason-required model tools")
-for name, tool in sorted(tool_names.items()):
-    if tool["requires_reason"] and f'case "{name}":' not in executor_source:
-        raise SystemExit(f"FrameworkToolExecutor reason enforcement missing tool: {name}")
+if "ToolCatalog" not in executor_source:
+    raise SystemExit("FrameworkToolExecutor must derive reason enforcement from ToolCatalog")
 
 product_makefile = (root / "overlay/vendor/openphone/products/openphone_common.mk").read_text(
     encoding="utf-8")
 for copied_config in (
+        "openphone_action_registry.json",
         "openphone_app_policy.json",
         "openphone_capabilities.json",
         "openphone_model_tools.json",
@@ -716,5 +840,7 @@ if grep -R "SPDX-license-identifier-Apache-2.0" \
   printf 'OpenPhone-owned overlay modules must not be marked Apache-2.0\n' >&2
   exit 1
 fi
+
+"$root/scripts/check-assistant-java.sh"
 
 printf 'OpenPhone repo checks passed.\n'

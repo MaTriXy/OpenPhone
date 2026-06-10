@@ -5,7 +5,21 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=57`, `versionName=0.1.21-dev`.
+`versionCode=102`, `versionName=0.1.66-dev`.
+
+**Tree state (2026-06-10):** the working tree compiles and
+`./scripts/check.sh` is fully green, including the Java compile gate added
+in Phase 0 (54 assistant files against android-35). Phases 0, A, and B of
+the spine-first plan are code-complete and device-validated, and the first
+four Phase C connector slices (calendar-from-message, model-backed
+semantic watcher evaluation, browser/page context deepening, model-backed
+AI Sheet screen answers) passed reviewed device smokes. See "Architecture
+Audit and Revised Direction" below for the full record.
+
+The last fully validated connector slice is sheet-screen v1
+(`.worktree/artifacts/tegu/OpenPhoneAssistant-sheet-screen-v1.apk`,
+`sha256=cf7f57af32a6b524330980aee2b1e842128335d84c95fa17a43fc6580cac5bef`),
+with the device reset to `openphone_autonomy_mode=reviewed`.
 
 Current physically validated Pixel 9a baseline:
 
@@ -16,8 +30,22 @@ Current physically validated Pixel 9a baseline:
   `scripts/push-assistant-apk.sh`, and validated without a full OTA loop for
   assistant-only changes.
 - The latest assistant UI pass is installed on the connected Pixel 9a as
-  `.worktree/artifacts/tegu/OpenPhoneAssistant-v91-chat-icons.apk`.
-- The assistant main screen is now a clean chat-style surface with:
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-ai-sheet-screen-answer-v1.apk`
+  (`sha256=26fd4733ec20a422843e6dd472ee0365cf9a6f4a1979f4ed437d6a3cb1ee30f0`).
+  Visual smoke screenshots for compact tap, expanded swipe, and in-place
+  screen answer states are under `.worktree/artifacts/tegu/screens/`.
+- The latest assistant substrate pass is installed on the connected Pixel 9a as
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-notification-index-v1b.apk`
+  (`sha256=985d5cb68eed7fc275b05c56c4d21da0ee2ed5fde7e2bcb4a3fe522acfac660b`).
+- The latest assistant connector pass is installed on the connected Pixel 9a as
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-phone-context-v1.apk`
+  (`sha256=5bef9ef275d8a0433f53f0aa292e6bc0ba3a003d6cca33ef4eeb032ff99f0359`).
+- The latest assistant browser connector pass is installed on the connected
+  Pixel 9a as
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-browser-fetch-v1.apk`
+  (`sha256=66e08a1e19876c9982d8c02b031bf64e75591d9f90be99965b2ef4d8d40fcad2`).
+- The assistant main screen is now a Jetpack Compose / Material 3 chat-style
+  surface with:
   - one text composer;
   - a stateful icon action button: mic when empty, send when text is present,
     stop while listening or running;
@@ -26,10 +54,11 @@ Current physically validated Pixel 9a baseline:
   - outside-tap keyboard dismissal;
   - the service/dynamic island hidden while the app itself is foregrounded to
     avoid competing assistant surfaces.
-- On-device screenshots were captured for normal, keyboard-open, send-state,
-  and keyboard-dismissed states under `.worktree/artifacts/tegu/`; no recent
-  `FATAL EXCEPTION` / `AndroidRuntime` crash signatures appeared in logcat
-  after the UI exercise.
+- On-device screenshots were captured for home, keyboard-open/send-state,
+  Advanced, and Back-to-chat states under
+  `.worktree/reports/compose-smoke/`; no assistant `FATAL EXCEPTION`,
+  `AndroidRuntime` fatal, or ANR signatures appeared in logcat/process dumps
+  after the UI exercise and agent evals.
 - User-supplied MindTheGapps sideload after the OpenPhone OTA has been
   documented and validated as a developer-device path. OpenPhone still does not
   redistribute Google packages.
@@ -94,6 +123,15 @@ Current physically validated Pixel 9a baseline:
 - Assistant-owned cursor overlay now renders action-specific feedback: tap
   ripples, long-press emphasis, swipe trails, typing indication, and transient
   action labels while the agent is controlling the phone.
+- AI Sheet v1 is now an OS-native assistant overlay attached to the AI Island:
+  tapping the left idle island half opens a compact sheet, swiping down opens
+  an expanded sheet, and the right idle island half remains the voice entry.
+  The sheet provides Talk, Stop, Chat, Screen, Summarize, Search,
+  Notifications, and Settings actions. Screen/Summarize now run a transient
+  screen-read task from the persistent assistant service and render the answer
+  in the sheet itself instead of launching the chat app; the first local answer
+  card uses accessibility-visible text and foreground context, with OpenPhone
+  overlay controls filtered from the summary.
 - JSON contracts for tasks, screen context, action requests, and audit events.
 - Framework integration contract and first nine `frameworks/base` patch sets.
 - Framework `getScreen(...)`, `watchScreen(...)`, `stopTask(...)`, and
@@ -238,6 +276,550 @@ Current physically validated Pixel 9a baseline:
   request shapes to an OpenPhone-controlled endpoint with a session token, so
   provider API keys can stay server-side. Direct phone-to-OpenAI remains as a
   development option.
+- The assistant now has an `OpenPhoneOrchestrator` entry point for text, mic,
+  and debug sends. The deterministic development fallback no longer treats
+  ordinary greetings or screen questions as phone-control tasks, while explicit
+  action requests still route into the task path.
+- The assistant now has a local context index at
+  `/data/user/0/org.openphone.assistant/databases/openphone_context_index.db`.
+  It records assistant conversation messages and agent lifecycle events, backs
+  up existing chat history once, exposes FTS search, and registers a
+  `context_search` model tool.
+- The assistant now has a privileged notification listener path for context
+  indexing. `OpenPhoneNotificationListenerService` grants listener access using
+  `MANAGE_NOTIFICATION_LISTENERS` on OpenPhone builds, indexes active/posted/
+  removed notification metadata into `openphone_context_index.db`, redacts
+  secret notification title/text, and preserves source package plus
+  notification key provenance. Notification retrieval is now first-class:
+  `notifications_list`, `notifications_search`, and `notifications_summary`
+  are registered model tools mapped to `notifications.read`, and direct chat
+  prompts such as "show notifications" and "what did I miss?" read from the
+  notification-only context index. `notifications_summary` groups recent
+  indexed notifications by app/title and returns both structured groups and a
+  concise summary. The direct chat path was physically validated on the Pixel
+  9a by sending `show notifications` and receiving a `Recent notifications:`
+  reply containing indexed `org.openphone.assistant` and `android`
+  notifications. The listener itself was physically validated on the Pixel 9a:
+  `dumpsys notification` showed
+  `org.openphone.assistant/.OpenPhoneNotificationListenerService` as allowed,
+  enabled, and live; a due commitment posted `Open loop due` with text
+  `notification index smoke unique`; and FTS search in
+  `openphone_context_index.db` returned that notification row.
+  Notification summary v1 was physically validated with
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-notification-summary-v1.apk`
+  (`sha256=29b99c8a4b7144d7c099c207eb2d30a659eb26623075438005098590e09954f2`):
+  in reviewed mode, `scripts/run-assistant-task.sh --local --goal 'What did I
+  miss?' --wait 8` stopped at a Medium-risk approval card for
+  `notifications.summarize`; after switching to YOLO, the same goal completed
+  with a grouped notification summary. The YOLO trajectory
+  `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-220946-task-65387222728/events.jsonl`
+  records `notifications_summary` with `status=notifications.summary` and final
+  `task.finished`. The device was reset to reviewed mode after validation.
+- Notification-derived commitments are now implemented. The model/action
+  catalog includes `notification_commitment_create` /
+  `notifications.create_commitment`, mapped to `commitments.write`; the
+  framework executor selects a matching indexed notification, writes a durable
+  commitment with notification key/package/time evidence, and the local,
+  Responses, Realtime, reviewed/YOLO, and dry-run paths know about the tool.
+  This was physically validated on the Pixel 9a with
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-notification-commitment-v1.apk`
+  (`sha256=6ed204edc5a293408e6df0be92f0cb4214bcad9ed739974267e71eb7c19f4d0d`):
+  in reviewed mode, `scripts/run-assistant-task.sh --local --goal 'Create a
+  reminder from notification about OpenPhone Assistant' --wait 8` stopped at a
+  Medium-risk approval card for `notifications.create_commitment`; after
+  switching to YOLO, the same goal completed with `Created a commitment from
+  the matching notification.` The YOLO trajectory
+  `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-223138-task-42888115661/events.jsonl`
+  records `notification_commitment_create` with
+  `status=notification.commitment_created`, `commitment_id=2`, and
+  notification provenance from `org.openphone.assistant`. A root SQLite check
+  of `openphone_commitments.db` showed
+  `2|Follow up: OpenPhone Assistant|pending|manual`. The device was reset to
+  reviewed mode after validation, and `scripts/check.sh` passed.
+- The assistant now has a local memory store at
+  `/data/user/0/org.openphone.assistant/databases/openphone_memory.db`. It
+  supports explicit "remember that..." saves, recall questions, FTS search,
+  dedupe/update by normalized text, and `memory_search` / `memory_save` model
+  tools.
+- The assistant now has a local commitments store at
+  `/data/user/0/org.openphone.assistant/databases/openphone_commitments.db`.
+  It supports explicit commitment creation, listing, and completion from chat,
+  FTS search, readable due-date display, and
+  `commitment_search` / `commitment_create` /
+  `commitment_update_status` model tools. This was physically validated on the
+  Pixel 9a by creating "follow up with Sarah tomorrow", listing it as active,
+  and marking commitment `#1` complete.
+- The assistant now has the first local watcher substrate:
+  `OpenPhoneWatcherScheduler` checks due time-based commitments at assistant
+  startup/boot/package replacement, schedules the next due check with
+  `AlarmManager`, marks due commitments as `fired`, and publishes
+  `openphone_commitments` notification cards with Complete, Snooze, and Dismiss
+  actions. This was physically validated on the Pixel 9a by creating a
+  commitment, setting its due time into the past, starting the assistant
+  service, verifying the commitment changed from `pending` to `fired`, and
+  confirming Android's notification service held an `Open loop due`
+  notification for that commitment.
+- The assistant now also has a local durable watcher store at
+  `/data/user/0/org.openphone.assistant/databases/openphone_watchers.db`, plus
+  `watcher_create`, `watcher_list`, and `watcher_stop` model tools mapped to
+  `watchers.write` / `watchers.read`. Time-based watcher records are included
+  in the scheduler's next-run calculation and fire into `openphone_watchers`
+  notification cards. This was physically validated on the Pixel 9a by asking
+  chat to create "Tell me in 1 minute to test watcher chat", listing active
+  watchers, forcing the watcher's `next_run_at` into the past, broadcasting a
+  watcher check, verifying the watcher changed from `active` to `fired`,
+  confirming a `Watcher fired` notification, and then stopping watcher `#1`
+  through chat.
+- Notification-pattern watchers now run through the notification listener path.
+  Active `type=notification` watcher records match posted notification package,
+  title, and text constraints, refuse empty conditions, fire once, and publish
+  `openphone_watchers` cards. Direct chat parsing can create simple watcher
+  records from prompts such as "tell me when a notification mentions ...".
+  This was physically validated on the Pixel 9a by seeding an active
+  notification watcher for `org.openphone.assistant` text `Assistant ready`,
+  reposting the assistant foreground notification, verifying the watcher row
+  changed to `status=fired` with a notification result hash, and confirming
+  Android held an `openphone_watchers` notification record.
+- The first formal action registry now exists at
+  `overlay/vendor/openphone/config/openphone_action_registry.json`, with schema
+  `docs/contracts/action-registry.schema.json`. It maps every current
+  model-visible tool to a canonical action name, input/output schema, risk
+  class, required capability, authorization policy, allowed callers, executor
+  service, and audit event type. Repo checks enforce one-to-one model-tool
+  coverage plus risk/policy consistency with `openphone_capabilities.json`, and
+  `FrameworkToolExecutor` loads the installed registry from
+  `/system_ext/etc/openphone/action_registry.json` to reject unregistered tools
+  when the registry is present.
+- The assistant now has the first explicit autonomy-mode implementation:
+  `reviewed`, `yolo`, and `dry_run`. Advanced settings exposes a mode selector
+  through the Compose UI, the backend persists the selected mode under
+  `Settings.Secure.openphone_autonomy_mode` with app-private fallback, and
+  model-tool preflight consults `openphone_action_registry.json` before
+  execution. In reviewed mode, registered `confirm` / `explicit_confirm`
+  actions stop with the existing structured approval card. In YOLO mode,
+  registered medium-risk `confirm` actions in the bounded v1 profile
+  (`memory.write`, `commitments.write`, `watchers.write`,
+  `notifications.read`, `notifications.act`, `messages.read`,
+  `messages.draft`, `calls.read`, `settings.write`, `background.run`,
+  `network.use`) can execute without repeated review; high-risk /
+  `explicit_confirm`, denied app-policy, and disabled task-grant paths still
+  stop. This was physically
+  validated on the Pixel 9a with
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-yolo-policy-v1.apk`
+  (`sha256=aded51263712fe3e98bcc93fd9e71c54b4000bbb2db70b2b8e19d51ac975ee73`):
+  with `openphone_autonomy_mode=reviewed`,
+  `scripts/run-assistant-task.sh --local --goal 'please open notification
+  about Assistant ready' --wait 8` stopped at `Needs review` and showed an
+  approval card for `notifications.open` with `Risk: Medium`; with
+  `openphone_autonomy_mode=yolo`, the same command completed with `Done`
+  without an approval card. The device was reset to reviewed mode after the
+  smoke, and logcat showed no assistant fatal exception or
+  `action_registry_missing_tool`.
+- Dry-run mode is also implemented and physically validated on the Pixel 9a
+  with `.worktree/artifacts/tegu/OpenPhoneAssistant-dry-run-v2.apk`
+  (`sha256=2797726ee40ad01171e39937207e8fc3d1bf3a3be74901587e185323e2363cc3`).
+  The backend reloads `Settings.Secure.openphone_autonomy_mode` at task start
+  so an external mode change is honored by an already-running assistant
+  process. In `dry_run`, action/control tools return structured
+  `dry_run.preview` results before execution; observation tools such as
+  `get_screen`, search, list, and wait remain allowed. The cloud Responses and
+  Realtime adapters stop on `dry_run.preview`, and the local heuristic fallback
+  now also treats `dry_run.preview` / `confirmation_required` as terminal
+  instead of claiming a successful task. Pixel smoke: after clearing
+  `openphone_dev_openai_api_key`, setting
+  `openphone_autonomy_mode=dry_run`, and running
+  `scripts/run-assistant-task.sh --local --goal 'Press Back' --wait 8`, the
+  assistant stayed focused and displayed "Dry run previewed the next action
+  without executing it." The trajectory
+  `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-183234-task-13556934536/events.jsonl`
+  recorded `press_key` with `status=dry_run.preview`, `capability=input.perform`,
+  `risk=Medium`, and final agent result `status=dry_run.preview`. The device
+  was reset to reviewed mode after the smoke, and logcat showed no assistant
+  fatal exception or `NetworkOnMainThreadException`.
+- The first semantic notification connector is implemented:
+  `notifications_open` / `notifications.open`. The notification listener keeps
+  a live service instance, searches active notifications by key/package/query,
+  and sends the matching notification's content intent. This lets the assistant
+  open a notification without pulling down the shade or tapping coordinates;
+  direct chat supports prompts such as "open notification about ...", and the
+  local development agent loop now maps the same phrasing to the
+  `notifications_open` tool when a matching goal reaches task execution. This slice
+  was installed on the Pixel 9a as
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-notifications-open-v2.apk`
+  (`sha256=73f018291d407661847dc9d9ae9736baf9cd123cfd92f9a2b5b96feacb68d439`);
+  on-device hashes matched the local APK, `model_tools.json`
+  (`e49bd800888a704ebb1940cff2c05d68fb06a5dde9eca9f5812bc0ad54254084`), and
+  `action_registry.json`
+  (`984109b4ebe37e4f5a544e9f031646bff46d12a866b16d132b35fd45dcaea6de`).
+  `dumpsys notification` showed
+  `org.openphone.assistant/.OpenPhoneNotificationListenerService` as allowed,
+  enabled, and live; the normal debug harness with
+  `scripts/run-assistant-task.sh --local --goal 'Open notification about
+  Assistant ready' --wait 15` exercised the installed user-facing route and
+  produced an on-device assistant reply of `Opened notification matching:
+  Assistant ready`, with no assistant fatal exception, registry-load failure, or
+  `action_registry_missing_tool` in logcat.
+- Calendar connector v1 is implemented and physically validated on the Pixel
+  9a. The assistant now declares/grants `READ_CALENDAR` and `WRITE_CALENDAR`,
+  registers `calendar_search` / `calendar.search` and
+  `calendar_create_event` / `calendar.create_event` in
+  `openphone_model_tools.json` and `openphone_action_registry.json`, exposes the
+  tools to both Responses and Realtime adapters, and executes them through
+  `FrameworkToolExecutor` using Android `CalendarContract`. `calendar_search`
+  reads bounded `CalendarContract.Instances` windows with optional text
+  filtering; `calendar_create_event` inserts into a writable
+  `CalendarContract.Events` calendar with title, description, location,
+  start/end, duration, all-day flag, and optional calendar id. The local
+  heuristic fallback and `OpenPhoneOrchestrator` now route show/list/search
+  calendar requests to `calendar_search` and create/add/schedule calendar event
+  requests to `calendar_create_event`.
+  - Installed artifact:
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-calendar-v1f.apk`
+    (`sha256=7445b3dfa3aee0444dccfe3f067fb55ef40b49dc049c3005d00544cdb1f0665e`).
+  - Reviewed-mode create smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Create calendar event
+    OpenPhone calendar smoke' --wait 8` stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-185750-task-35962846493/events.jsonl`
+    recorded `calendar_create_event` with `status=confirmation_required`,
+    `action_name=calendar.create_event`, `capability=calendar.write`,
+    `risk=Medium`, and `autonomy_mode=reviewed`.
+  - Dry-run create smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Create calendar event
+    OpenPhone calendar dry run smoke' --wait 8` displayed "Dry run previewed
+    the next action without executing it"; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-185803-task-48728817487/events.jsonl`
+    recorded `calendar_create_event` with `status=dry_run.preview`,
+    `capability=calendar.write`, `risk=Medium`, and
+    `action_name=calendar.create_event`.
+  - Reviewed-mode read smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Show my calendar' --wait 8`
+    stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-190637-task-34658527359/events.jsonl`
+    recorded `calendar_search` with `status=confirmation_required`,
+    `action_name=calendar.search`, `capability=calendar.read`, `risk=Medium`,
+    and `autonomy_mode=reviewed`.
+  The device was reset to reviewed mode after validation. `./scripts/check.sh`
+  passed, EC2 focused app builds passed, and logcat showed no assistant fatal
+  exception, `NetworkOnMainThreadException`, or
+  `action_registry_missing_tool`.
+- Contacts connector v1 is implemented and physically validated on the Pixel
+  9a. The assistant now declares/grants `READ_CONTACTS`, registers
+  `contacts_search` / `contacts.search` in `openphone_model_tools.json` and
+  `openphone_action_registry.json`, exposes the tool to both Responses and
+  Realtime adapters, and executes it through `FrameworkToolExecutor` using
+  Android `ContactsContract`. The executor can search all contacts or a
+  filtered contact URI and can include bounded phone/email details when
+  requested. The local heuristic fallback and `OpenPhoneOrchestrator` route
+  show/list/search/find contact requests to `contacts_search`.
+  - Installed artifact:
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-contacts-v1.apk`
+    (`sha256=1f7bd2729d9d5c42bf71805e00418f2b66e7b95195625148cb4506b50ddfc97c`).
+  - Reviewed-mode read smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Show my contacts' --wait 8`
+    stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-191612-task-26301521699/events.jsonl`
+    recorded `contacts_search` with `status=confirmation_required`,
+    `action_name=contacts.search`, `capability=contacts.read`, `risk=Medium`,
+    and `autonomy_mode=reviewed`.
+  The device was reset to reviewed mode after validation. `./scripts/check.sh`
+  passed, the EC2 focused app build passed, and logcat showed no assistant
+  fatal exception, `NetworkOnMainThreadException`, or
+  `action_registry_missing_tool`.
+- Messages connector v1 is implemented and physically validated on the Pixel
+  9a. The assistant now declares/grants `READ_SMS` and `SEND_SMS`, registers
+  `messages_search` / `messages.search`, `messages_draft` /
+  `messages.draft`, and `messages_send` / `messages.send` in
+  `openphone_model_tools.json` and `openphone_action_registry.json`, exposes
+  the tools to both Responses and Realtime adapters, and executes them through
+  `FrameworkToolExecutor` using Android `Telephony.Sms` and `SmsManager`.
+  Message reads are medium-risk confirmed (`messages.read`), drafts are
+  medium-risk confirmed (`messages.draft`), and sends are high-risk
+  explicit-confirm (`messages.send`). The local heuristic fallback and
+  `OpenPhoneOrchestrator` route show/list/search message requests to
+  `messages_search`, draft/compose text requests to `messages_draft`, and
+  explicit send/text requests to `messages_send`.
+  Message summary v1 adds `messages_summary` / `messages.summarize` for
+  bounded thread/contact summaries over recent SMS rows. It groups by
+  `thread_id`, returns counts, inbox/sent/unread metadata, latest time, sample
+  messages, and a concise empty-state/human summary. The local heuristic
+  fallback routes "summarize my messages" and related prompts to this tool.
+  Message commitment v1 adds `message_commitment_create` /
+  `messages.create_commitment`, which selects the latest matching SMS by
+  optional query/thread id and creates a durable OpenPhone commitment with
+  message id, thread id, address, date, type, read state, and body evidence.
+  The local heuristic fallback routes prompts such as "Create a reminder from
+  message about ..." to this tool.
+  - Installed artifact:
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-message-commitment-v1.apk`
+    (`sha256=9efb6039c46bba606df2039d2427d0d5fde998d0d89c206e9a558fe4a3a7fae2`).
+  - Reviewed-mode read smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Show my messages' --wait 8`
+    stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-193459-task-69482642000/events.jsonl`
+    recorded `messages_search` with `status=confirmation_required`,
+    `action_name=messages.search`, `capability=messages.read`, `risk=Medium`,
+    and `autonomy_mode=reviewed`.
+  - Reviewed-mode summary smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Summarize my messages'
+    --wait 8` stopped at `Needs review` for `messages.summarize` with
+    `Risk: Medium`.
+  - YOLO summary smoke:
+    with `openphone_autonomy_mode=yolo`, the same summary goal completed with
+    the valid empty-state answer `No recent SMS messages were available.`
+    Trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-224723-task-75863605179/events.jsonl`
+    records `messages_summary` with `status=messages.summary`, `threads=[]`,
+    and final `task.finished`.
+  - Reviewed-mode message commitment smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Create a reminder from
+    message about OpenPhone' --wait 8` stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-225839-task-26229792573/events.jsonl`
+    recorded `message_commitment_create` with `status=confirmation_required`,
+    `action_name=messages.create_commitment`, `capability=commitments.write`,
+    `risk=Medium`, and `autonomy_mode=reviewed`.
+  - YOLO message commitment smoke:
+    after seeding a temporary SMS row with body `OpenPhone message commitment
+    smoke`, `scripts/run-assistant-task.sh --local --goal 'Create a reminder
+    from message about OpenPhone message commitment smoke' --wait 12`
+    completed with `Created a commitment from the matching message.`
+    Trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-230043-task-149704915680/events.jsonl`
+    records `message_commitment_create` with
+    `status=message.commitment_created`, `commitment_id=3`, and SMS evidence
+    for `message_id=1`, `thread_id=1`, address `+15550001111`, and body
+    `OpenPhone message commitment smoke`. A root SQLite check of
+    `openphone_commitments.db` showed
+    `3|Follow up: +15550001111|pending|manual`. The temporary SMS seed row was
+    deleted after validation.
+  - Dry-run draft smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Draft a text to Alice
+    saying Hello from OpenPhone' --wait 8` displayed "Dry run previewed the
+    next action without executing it"; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-193414-task-25274393688/events.jsonl`
+    recorded `messages_draft` with `status=dry_run.preview`,
+    `capability=messages.draft`, `risk=Medium`, and
+    `action_name=messages.draft`.
+  - Reviewed-mode send smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Send a text to 15551234567
+    saying Hello from OpenPhone' --wait 8` stopped at `Needs review`;
+    trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-193530-task-100978348152/events.jsonl`
+    recorded `messages_send` with `status=confirmation_required`,
+    `action_name=messages.send`, `capability=messages.send`, `risk=High`,
+    `reason=action_policy_explicit_confirm`, and `autonomy_mode=reviewed`.
+  The device was reset to reviewed mode after validation. `./scripts/check.sh`
+  passed, the EC2 focused app build passed, and logcat showed no assistant
+  fatal exception, `NetworkOnMainThreadException`, or
+  `action_registry_missing_tool`.
+- Phone connector v1 is implemented and physically validated on the Pixel 9a.
+  The assistant now declares/grants `READ_CALL_LOG` and `CALL_PHONE`, registers
+  `calls_search` / `phone.search_calls`, `phone_context` / `phone.context`,
+  and `calls_place` / `phone.call` in `openphone_model_tools.json` and
+  `openphone_action_registry.json`, exposes the tools to both Responses and
+  Realtime adapters, and executes them through `FrameworkToolExecutor` using
+  Android `CallLog.Calls`, `ContactsContract`, `Telephony.Sms`,
+  `CalendarContract`, and `TelecomManager.placeCall`. Call-log/context reads
+  are medium-risk confirmed (`calls.read`) and call placement is high-risk
+  explicit-confirm (`calls.place`). `phone_context` gathers a call context card
+  from recent calls, contacts, messages, and calendar events, and extracts
+  confirmation-code candidates from message/calendar text. The local heuristic
+  fallback and `OpenPhoneOrchestrator` route recent/missed/call-history
+  requests to `calls_search`, phone/call-context and confirmation-code
+  requests to `phone_context`, and explicit call/dial requests to `calls_place`.
+  - Installed artifact:
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-phone-context-v1.apk`
+    (`sha256=5bef9ef275d8a0433f53f0aa292e6bc0ba3a003d6cca33ef4eeb032ff99f0359`).
+  - Reviewed-mode call-log smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Show recent calls' --wait 8`
+    stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-194649-task-37882369443/events.jsonl`
+    recorded `calls_search` with `status=confirmation_required`,
+    `action_name=phone.search_calls`, `capability=calls.read`, `risk=Medium`,
+    and `autonomy_mode=reviewed`.
+  - Reviewed-mode phone context smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Show phone context for
+    OpenPhone' --wait 8` stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-231758-task-24240323904/events.jsonl`
+    recorded `phone_context` with `status=confirmation_required`,
+    `action_name=phone.context`, `capability=calls.read`, `risk=Medium`, and
+    `autonomy_mode=reviewed`.
+  - YOLO phone context smoke:
+    with `openphone_autonomy_mode=yolo`, the same goal executed
+    `phone_context` and returned `status=phone.context` with source statuses
+    for calls, contacts, messages, and calendar. Trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-231841-task-67142899568/events.jsonl`
+    recorded final `task.finished`. A temporary SMS smoke row visible in the
+    phone-context result was deleted after validation, and the device was reset
+    to reviewed mode.
+  - Reviewed-mode place-call smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Call 15551234567' --wait 8`
+    stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-194702-task-50867553979/events.jsonl`
+    recorded `calls_place` with `status=confirmation_required`,
+    `action_name=phone.call`, `capability=calls.place`, `risk=High`,
+    `reason=action_policy_explicit_confirm`, and `autonomy_mode=reviewed`.
+  The device was reset to reviewed mode after validation. `./scripts/check.sh`
+  passed, the EC2 focused app build passed, and logcat showed no assistant
+  fatal exception, `NetworkOnMainThreadException`, or
+  `action_registry_missing_tool`.
+- Browser fetch/page-context connector v1 is implemented and physically
+  validated on the Pixel 9a. The assistant registers `browser_fetch_page` /
+  `browser.fetch_page` in `openphone_model_tools.json` and
+  `openphone_action_registry.json`, exposes it to both Responses and Realtime
+  adapters, and executes it through `FrameworkToolExecutor` using a bounded
+  `HttpURLConnection` fetch. The executor reads at most 512 KB, strips
+  script/style/noscript blocks, extracts page title and readable text, and
+  returns bounded page metadata without opening a browser UI or using pointer
+  fallback. The tool is enforced as medium-risk `network.use`; the local
+  heuristic fallback and `OpenPhoneOrchestrator` route URL summarization/read/
+  fetch requests to `browser_fetch_page`.
+  - Installed artifact:
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-browser-fetch-v1.apk`
+    (`sha256=66e08a1e19876c9982d8c02b031bf64e75591d9f90be99965b2ef4d8d40fcad2`).
+  - Reviewed-mode URL fetch smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Summarize https://example.com' --wait 8`
+    stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-195754-task-30693918837/events.jsonl`
+    recorded `browser_fetch_page` with `status=confirmation_required`,
+    `action_name=browser.fetch_page`, `capability=network.use`, `risk=Medium`,
+    and `autonomy_mode=reviewed`.
+  - YOLO localhost fetch smoke:
+    a deterministic local page was served from `.worktree/browser-smoke/` on
+    `127.0.0.1:8765` and forwarded with `adb reverse tcp:8765 tcp:8765`.
+    `scripts/run-assistant-task.sh --local --goal 'Summarize
+    http://127.0.0.1:8765/index.html' --wait 8` completed; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-195840-task-77142304276/events.jsonl`
+    recorded `browser_fetch_page` with `status=browser.page_fetched`,
+    `http_status=200`, `title=OpenPhone Browser Smoke`, extracted page text,
+    and `truncated=false`.
+  The local smoke server was stopped and the device was reset to reviewed mode
+  after validation. `./scripts/check.sh` passed, the EC2 focused app build
+  passed, and logcat showed no assistant fatal exception,
+  `NetworkOnMainThreadException`, or `action_registry_missing_tool`.
+- Browser search connector v1 is implemented and physically validated on the
+  Pixel 9a. The assistant registers `browser_search` / `browser.search` in
+  `openphone_model_tools.json` and `openphone_action_registry.json`, exposes it
+  to both Responses and Realtime adapters, and executes it through
+  `FrameworkToolExecutor` by building a search URL and delegating to the
+  framework `open_url` action. This gives the agent a semantic browser-search
+  action without typing into the browser address bar or using pointer fallback.
+  The tool is enforced as medium-risk `network.use`; reviewed mode stops at an
+  approval card, and YOLO can execute it under the existing bounded
+  `network.use` allowlist.
+  - Installed artifact:
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-browser-search-v1b.apk`
+    (`sha256=800a8eb87d8fa21645717ea8bcbfd4b50c29f23181d8ba88930a6657dfc553d4`).
+  - Reviewed-mode search smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Search the web for
+    OpenPhone browser search smoke' --wait 8` stopped at `Needs review`;
+    trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-205033-task-35963917049/events.jsonl`
+    recorded `browser_search` with `status=confirmation_required`,
+    `action_name=browser.search`, `capability=network.use`, `risk=Medium`, and
+    `autonomy_mode=reviewed`.
+  - YOLO search smoke:
+    with `openphone_autonomy_mode=yolo`, the same goal opened Jelly to
+    `https://duckduckgo.com/?q=OpenPhone%20browser%20search%20smoke`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-205105-task-67389246003/events.jsonl`
+    recorded `browser_search` with `state=action.executed`,
+    `capability=network.use`, and the generated DuckDuckGo URL. The device was
+    reset to reviewed mode after validation. `./scripts/check.sh` passed, the
+    EC2 focused app build passed, and logcat showed no assistant fatal
+    exception, `NetworkOnMainThreadException`, or
+    `action_registry_missing_tool`.
+- Apps connector v1 is implemented and physically validated on the Pixel 9a.
+  The assistant now registers `apps_search` / `apps.search` in
+  `openphone_model_tools.json` and `openphone_action_registry.json`, adds a
+  low-risk `apps.read` capability, exposes the tool to both Responses and
+  Realtime adapters, and executes it through `FrameworkToolExecutor` using
+  `PackageManager` launchable-activity queries. `open_app` now resolves real
+  installed app labels/packages before falling back to the legacy alias map, so
+  the agent can search apps and then launch by canonical package.
+  - Installed artifact:
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-apps-search-v1.apk`
+    (`sha256=7f3568ade5bce689e6f3499fe4143cec9f02c7b1fae3846251a6fc72c9089eb3`).
+  - Reviewed-mode read smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Search apps for Settings'
+    --wait 8` completed without an approval card because `apps.read` is
+    low-risk task-scoped; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-203636-task-36435748390/events.jsonl`
+    recorded `apps_search` with `status=apps.search.results`, `query=Settings`,
+    and an app result `{label=Settings, package=com.android.settings,
+    activity=com.android.settings.Settings, system=true, launchable=true}`.
+    `./scripts/check.sh` passed, the EC2 focused app build passed, and logcat
+    showed no assistant fatal exception, `NetworkOnMainThreadException`, or
+    `action_registry_missing_tool`.
+- While validating the action-registry runtime path, the Pixel 9a exposed a
+  `NetworkOnMainThreadException` in Realtime cancellation during activity
+  teardown. `OpenAiRealtimeAdapter.cancel()` now moves WebSocket close I/O to a
+  background `OpenPhoneRealtimeClose` thread. The previous crash repro
+  (`scripts/run-assistant-task.sh --local --goal 'Press Back' --wait 5`) was
+  rerun on-device with no fatal exception, no registry-load failure, no
+  `action_registry_missing_tool`, and no `NetworkOnMainThreadException`.
+- Watcher runtime now uses its durability fields for basic production hygiene:
+  stale `running_at` rows are repaired after service death/reboot, failed
+  watcher checks are rescheduled with exponential backoff, no-op checks do not
+  notify, and repeated failures surface `Watcher needs attention` cards. This
+  was physically validated on the Pixel 9a by seeding a stale running watcher
+  and an unsupported `web_change` watcher, broadcasting a watcher check,
+  verifying the stale watcher was reset to `running_at=0` with
+  `failure_count=1` and `last_result_hash=stuck_running_repaired`, verifying
+  the unsupported watcher incremented to `failure_count=3` with
+  `last_result_hash=unsupported_watcher_type:web_change`, and confirming
+  Android held a `Watcher needs attention` notification for that failure.
+- The first browser/page watcher slice is implemented for `type=web_change`.
+  `OpenPhoneWatcherScheduler` runs web fetches off the main thread, bounds page
+  reads to 512 KB, stores a `web:<sha256>` baseline without notifying on the
+  first/no-op check, reschedules unchanged pages, and fires a normal
+  `openphone_watchers` card when the fetched content hash changes.
+  `AssistantActivityBackend` can create these watchers from direct prompts such
+  as "watch https://... for changes", and
+  `res/xml/openphone_network_security.xml` allows cleartext only for
+  localhost/127.0.0.1 so physical smoke tests can use `adb reverse` without
+  enabling global cleartext traffic. This was physically validated on the Pixel
+  9a with `.worktree/artifacts/tegu/OpenPhoneAssistant-web-watchers-v1b.apk`
+  (`sha256=cec1db749ce6e49ce25f8cfc7b77d0518bb949cd511361e331d5d72b9318065a`):
+  a local page served through `adb reverse tcp:8765 tcp:8765` first changed
+  watcher `#6` to `status=active`, `failure_count=0`, and
+  `last_result_hash=web:ad652b7f7740676d24628033d674839aa9a198300f24594e144e413a991adf3f`
+  with no fired watcher notification; after changing the page and forcing a
+  second check, watcher `#6` changed to `status=fired` with
+  `last_result_hash=web:c3819961b52ec342ba833fe596ec3fe96049461487c219141095ecc736ae9716`,
+  and Android held an `openphone_watchers` notification titled `Watcher fired`
+- Generic watcher evaluator v2 is in progress as a single watcher primitive,
+  not a family of one-off domain tools. `watcher_create` now accepts generic
+  `source`, `evaluator`, `url`, `query`, and `interval_ms` inputs and
+  normalizes them into the existing durable watcher store. Web watchers support
+  both `hash_change` and bounded `text_contains` evaluation; `semantic_match`
+  is accepted as semantic-lite and currently uses deterministic page-text
+  matching until model-backed background evaluation is added. The Responses and
+  Realtime tool descriptions, action registry schema, direct chat shortcut, and
+  local heuristic adapter all use the generic vocabulary.
+  - Installed artifact:
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-watcher-evaluator-v2c.apk`
+    (`sha256=a0352394bf0e00392c5961041b9ce325e22c206cffaa90f4fd39e75c2dd186eb`).
+  - Reviewed-mode smoke:
+    `scripts/run-assistant-task.sh --local --goal 'Set up monitoring
+    http://127.0.0.1:8765/THE_MASTER_PLAN.md for Generic watcher evaluator'
+    --wait 8` stopped at `Needs review`; trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-202437-task-21067986338/events.jsonl`
+    recorded `watcher_create` with `source=web`,
+    `evaluator=text_contains`, `query=Generic watcher evaluator`,
+    `action_name=watchers.create`, `capability=watchers.write`, and
+    `autonomy_mode=reviewed`.
+  - YOLO create/evaluate smoke:
+    with `openphone_autonomy_mode=yolo`, the same goal created watcher `#7`;
+    trajectory
+    `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-202500-task-44123775004/events.jsonl`
+    recorded `status=watcher.created`, `type=web_change`, and the normalized
+    web/text condition. After forcing `next_run_at=1` and broadcasting
+    `org.openphone.assistant.action.CHECK_WATCHERS`, watcher `#7` changed to
+    `status=fired` with
+    `last_result_hash=web_match:83e9418e477dddb92338461e96acb2d108bc47e400f5c0c03805382e3ada8b82`,
+    and Android held an `openphone_watchers` notification titled
+    `Watcher fired` with text `Watch page for Generic watcher evaluator`.
+    The device was reset to reviewed mode after validation.
+  with text `Web watcher smoke`.
 - A first dependency-free model broker reference server exists under
   `services/model-broker/`. It validates bearer session tokens, applies
   coarse body-size plus per-token/IP request-count and byte-volume rate limits,
@@ -340,6 +922,398 @@ Current physically validated Pixel 9a baseline:
   - running `org.openphone.assistant/.OpenPhoneAssistantService`, and
   - registered `openphone_agent` Binder service.
 - Device support matrix and Pixel 9a bringup notes.
+
+## Architecture Audit and Revised Direction (2026-06-09)
+
+A full repository review after the connector-slice sprint found that the
+substrate layer is sound but the routing/orchestration layer has drifted into
+hardcoded keyword routers, against the explicit direction in
+`THE_MASTER_PLAN.md`. Full details live in that file's "Architecture Audit"
+section; this is the implementation-status summary.
+
+### Confirmed sound (keep)
+
+- Action registry + capability + risk-class enforcement below the model.
+- Reviewed/YOLO/dry-run autonomy modes with policy preflight.
+- Audit log, trajectory recorder, and evidence-export flow.
+- Observe/decide/act/verify device task loop with step budget, wall-clock
+  limit, no-progress detection, and finish-evidence checks.
+- Durable, reboot-safe SQLite stores: context index, memory, commitments,
+  watchers (all physically validated on the Pixel 9a).
+- The EC2-build / artifact-SHA / device-smoke validation discipline.
+
+### Confirmed drift (fix before new connectors)
+
+1. **Three stacked keyword routers.**
+   `AssistantActivityBackend.routeMessageFromCurrentMessage()` runs four
+   `handleExplicit*` keyword handlers before the orchestrator;
+   `OpenPhoneOrchestrator` is keyword guards around a 3-mode route call and
+   can override model decisions with the same keywords; and
+   `LocalHeuristicModelAdapter` (~1,400 lines, ~18 `isXxxGoal()` classifiers,
+   ~570-line dispatch cascade) became the de facto task router instead of an
+   offline dev fallback.
+2. **Hand-maintained tool surfaces.** The model tool catalog is duplicated
+   as a ~200-line hand-written prompt string in
+   `OpenAiResponsesAgentAdapter`, a ~50-clause `isAllowedTool()` if-chain
+   plus tool definitions in `OpenAiRealtimeAdapter`, and a ~92-case switch
+   in `FrameworkToolExecutor` — even though
+   `openphone_action_registry.json` already holds names, descriptions,
+   schemas, risk, and policy for all 47 tools. Adding one tool costs 5–6
+   file edits.
+3. **check.sh blind spot.** Repo checks validate config/coverage
+   consistency but not Java compilation, which is how the current
+   broken-tree state passed.
+
+### Revised engineering sequence
+
+The spine-first plan (mirrors `THE_MASTER_PLAN.md` Near-Term Priorities):
+
+- **Phase 0 — restore a buildable tree.** Implement or remove the dangling
+  calendar-heuristic references; add a Java syntax/compile gate to
+  `./scripts/check.sh`.
+- **Phase A — registry-driven tool surfaces.** Generate the Responses agent
+  prompt tool catalog, Realtime tool definitions, and allowed-tool checks
+  from the installed action registry at runtime. Delete the hand-maintained
+  prompt string and if-chain. Acceptance: a new tool costs 2 JSON entries +
+  1 executor case.
+- **Phase B — Orchestrator v1, model-first.** Implement the full decision
+  schema (`answer | clarify | retrieve | inspect_screen | act | watch |
+  memory | stop`), move backend `handleExplicit*` handlers behind the
+  orchestrator, reduce keyword logic to stop/cancel safety rails and offline
+  fallback, and demote `LocalHeuristicModelAdapter` to offline-dev-only.
+- **Phase C — resume connectors on the new spine.** Finish
+  `calendar.create_event_from_message` as the first registry-driven tool:
+  EC2 focused APK build, install via `scripts/push-assistant-apk.sh`,
+  reviewed-mode smoke (expect Medium-risk approval card), YOLO smoke
+  (expect `status=calendar.event_created_from_message`, may need a seeded
+  SMS row and writable calendar), verify the calendar row, reset the device
+  to reviewed mode, delete temporary SMS seeds, and record artifact
+  SHA/trajectory evidence here.
+
+### Phase B implementation record (2026-06-10)
+
+Phase B is code-complete and `./scripts/check.sh` is green (54 Java files
+compile against android-35). What changed:
+
+- `OrchestratorDecision` now carries the full master-plan schema: modes
+  `answer | clarify | retrieve | inspect_screen | act | watch | memory |
+  stop`, plus `proposed_actions` (`[{tool, arguments}]`),
+  `delivery_surface`, `reason`, and the operating mode.
+- `OpenPhoneOrchestrator.decide(adapter, message, hasActiveTask,
+  operatingMode, recentConversationJson)` is the single decision point.
+  Deterministic logic is reduced to true safety rails: exact-match
+  stop/cancel interception and the empty-message case. `guardDecision` and
+  all keyword routing (greeting/screen-question/task/URL classifiers) are
+  deleted; the model's structured decision is authoritative.
+- `ModelAdapter.routeMessage` was replaced by
+  `decideOrchestration(userMessage, hasActiveTask, recentConversationJson)`.
+  The Responses adapter builds the orchestrator prompt from
+  `ToolCatalog.promptToolCatalog()` (registry-generated) plus recent
+  conversation from the context index
+  (`ContextIndexStore.recentConversationJson`). The Realtime adapter
+  delegates to the Responses fallback; the local adapter is a documented
+  offline-dev shim.
+- `AssistantActivityBackend` lost 931 lines of pre-orchestrator keyword
+  handlers (`handleExplicitWatcherMessage`, `handleExplicitCommitment...`,
+  `handleExplicitMemory...`, `handleExplicitNotification...`, and ~30
+  parsing helpers). No keyword route runs before the orchestrator anymore.
+- One-shot execution path: orchestrator decisions with `proposed_actions`
+  run inside a transient framework task through the same policy chain as
+  the agent loop — dry-run preview, task-grant preflight, app policy,
+  action policy (`runOneShotActions`) — with trajectory recording, then a
+  model-written one-or-two-sentence summary to chat. `confirmation_required`
+  results surface the standard approval card; approval executes the tool
+  and summarizes, denial stops the task
+  (`finishOneShotConfirmation`). No screenshot task loop is spun up.
+- `currentOperatingMode()` now maps the persisted autonomy mode
+  (`reviewed`/`yolo`/`dry_run`) instead of hardcoding REVIEWED.
+- Assistant manifest bumped to `versionCode=95`, `versionName=0.1.59-dev`.
+
+**Phase B device acceptance: PASSED (2026-06-10, Pixel 9a).** Artifact
+`.worktree/artifacts/tegu/OpenPhoneAssistant-orchestrator-v1.apk`
+(`sha256=80db81b898cc54b0164a5a14cc22a09a8514e7a9f5b818660acf482c76452c9a`,
+`versionCode=95` / `0.1.59-dev`), built on EC2, installed with
+`scripts/push-assistant-apk.sh`, device in `reviewed` mode, dev OpenAI key
+via the debug harness. All six acceptance smokes passed with zero
+pre-orchestrator keyword routes (they no longer exist in the code):
+
+1. "hello" → answer mode, "Hello! How can I help?" in chat. No task started.
+2. "what's on my screen?" → inspect_screen mode; correct in-place
+   description of the assistant chat surface via transient task.
+3. "what did I miss?" → retrieve mode, one-shot `notifications_summary`
+   through the policy chain; Medium-risk "Approve notifications.summarize"
+   card; on Approve, model-written summary of real notifications appeared in
+   chat and the transient task was stopped.
+4. "remind me if Sarah doesn't reply in the next hour" → watch mode,
+   one-shot `watcher_create`; Medium-risk "Approve watchers.create" card;
+   on Approve, watcher row id=8 (`type=time`, `title=Remind me if Sarah
+   doesn't reply`, `status=active`) verified in
+   `openphone_watchers.db`, and the chat confirmed "I'll remind you if
+   Sarah doesn't reply within the next hour."
+5. "send Adam a message saying I'll be late" → act mode (multi-step agent
+   task); the agent stopped at confirmation cards and never sent anything —
+   the SMS store contains only the pre-existing inbound seed row
+   (type=1). No `messages_send` executed without approval.
+6. "stop" → stop rail fired with a confirmation card pending; the pending
+   approval was cleared, the task stopped, island returned to "Ready".
+
+Trajectories for the smokes are under
+`/data/user/0/org.openphone.assistant/files/openphone-trajectories/`
+(`20260610-09*`). Phase B is complete.
+
+### Phase C calendar-from-message slice (2026-06-10)
+
+**Implementation.** `calendar.create_event_from_message` /
+`message_calendar_event_create` runs end-to-end on the registry-driven
+spine: the model picks the tool itself (no keyword routing), the action
+registry drives the Realtime tool schema, the policy chain produces the
+Medium-risk confirm card in reviewed mode, and YOLO mode auto-executes
+because `calendar.write` is in the YOLO capability set. Bugs found and
+fixed on-device during validation:
+
+- **Realtime empty-arguments bug.** `waitForTurn` accepted
+  `response.output_item.added` function-call items, whose `arguments`
+  field is empty at add-time; the first (empty) call won de-dup against
+  the completed call, so approved actions executed with only the injected
+  `reason`. Fix: drop `output_item.added` as a call source and de-dup by
+  call_id keeping the variant with non-empty arguments
+  (`addOrUpgradeCall`).
+- **Approval-resume context loss.** `confirmPending` resumed the agent
+  with an empty goal after an approved mid-task action. Fix: resume with
+  `mActiveTaskGoal` plus the approved tool's result JSON.
+- **SMS phrase matching.** `firstMatchingSms`/`messagesSearch` used a
+  single `LIKE %query%`, so the natural query "team dinner Luigi
+  Trattoria" missed "Team dinner at Luigi Trattoria". Fix: shared
+  `smsSelection()` matches each whitespace token against address/body.
+- **Stale device registry.** `/system_ext/etc/openphone/*.json` predated
+  the slice, so the adapter rejected `message_calendar_event_create` as
+  `unknown_model_tool`. Updated registry configs pushed; they ship in the
+  product makefile for OTA builds.
+
+**Device acceptance: PASSED (2026-06-10, Pixel 9a).** Artifact
+`.worktree/artifacts/tegu/OpenPhoneAssistant-calendar-from-message-v4.apk`
+(`sha256=d915602735220deff6d74fda7c795517799b00be32f51101bb5b0f758c34e281`,
+`versionCode=99` / `0.1.63-dev`), built on EC2, installed with
+`scripts/push-assistant-apk.sh`. Seeded inbound SMS: "Team dinner at
+Luigi Trattoria this Friday at 7pm, see you there!" from +15550002222;
+writable local calendar id=1.
+
+1. **Reviewed mode:** goal "create a calendar event from the text message
+   about the team dinner at Luigi Trattoria" → agent chained
+   `messages_search` (Medium card, approved) →
+   `message_calendar_event_create` (Medium
+   "Approve calendar.create_event_from_message" card, approved) → event
+   row created: `title=Team Dinner at Luigi Trattoria`,
+   `eventLocation=Luigi Trattoria`, description carrying the full
+   "Source message:" provenance block (body, sender, message id 2). Chat
+   ended with "Done." Trajectories `20260610-1058*`/`20260610-1059*`.
+2. **YOLO mode** (`openphone_autonomy_mode=yolo`): same goal →
+   `messages_search` → `message_calendar_event_create` →
+   `status=calendar.event_created_from_message` (event id 2) →
+   `finish_task`, all auto-executed with no approval card, finishing with
+   `task.finished` in 6.4s. Trajectory `20260610-110059-task-233463674348`.
+
+Cleanup: test events and the seeded SMS deleted, device reset to
+`openphone_autonomy_mode=reviewed`.
+
+### Phase C semantic watcher slice (2026-06-10)
+
+**Implementation.** `semantic_match` web watchers now use a real model
+judgment instead of the previous keyword-contains alias.
+`OpenPhoneWatcherScheduler.runWebChangeWatcher` splits `semantic_match`
+from `text_contains`: the deterministic evaluator keeps the normalized
+substring check, while semantic watchers strip the fetched page to bounded
+plain text (script/style/tag removal, 24k char cap on the 512KB fetch) and
+ask the Responses model a strict yes/no question via a new
+`OpenAiResponsesAgentAdapter.judgeWatcherCondition` (prompt: condition
+counts as satisfied only if the page actually states or clearly implies
+it; reply exactly `yes` or `no`). Any model failure (unconfigured,
+HTTP error, unparseable verdict) throws `IOException` into the existing
+`failWatcher` backoff path — no silent keyword fallback, per the
+no-heuristic-routing rule. Fired semantic watchers record
+`web_semantic_match:<sha>` result hashes; a repeat check against
+byte-identical content with a previous `web_no_match:` hash skips the
+model call. Because watchers run from a BroadcastReceiver with no
+activity, the background credential is `Settings.Secure
+openphone_dev_openai_api_key`, read only on `userdebug`/`eng` builds
+(`watcherModelEndpointConfig`).
+
+**Device acceptance: PASSED (2026-06-10, Pixel 9a).** Artifact
+`.worktree/artifacts/tegu/OpenPhoneAssistant-semantic-watcher-v1.apk`
+(`sha256=5a3db48df3bbeadc1c0768062dc47bbda99ff1072ce6cd08466c32390918575e`,
+`versionCode=100` / `0.1.64-dev`), built on EC2, installed with
+`scripts/push-assistant-apk.sh`. Smoke fixture: local
+`python3 -m http.server 8093` served to the device over
+`adb reverse tcp:8093`; negative page says the shoes are "sold out and
+cannot be ordered" while inviting stock-alert sign-ups (a keyword trap:
+it contains "back in stock"), positive page says sneakers in the "azure
+colorway have been restocked and are available to order" (no literal
+"back in stock"/"buy" phrasing).
+
+1. **Reviewed mode:** goal "Create a watcher on
+   http://127.0.0.1:8093/page.html using semantic matching: notify me
+   when the running shoes are back in stock and available to buy" →
+   Medium "Approve watchers.create" card → approved → watcher row id=9
+   with `evaluator=semantic_match`, `interval_ms=60000`. Negative page:
+   model judged **no** (`web_no_match:` hash, no notification) even
+   though the page contains the literal phrase "back in stock" — the old
+   keyword alias would have false-fired here. Unchanged content on the
+   next check skipped the model call. Positive page: model judged
+   **yes** → `status=fired`, `last_result_hash=web_semantic_match:b8ea…`,
+   "Running shoes back in stock" notification posted.
+2. **YOLO mode:** goal "alert me when the shoes can actually be purchased
+   again" → `watcher_create` auto-executed with no approval card
+   (trajectory `20260610-114247-task-493524850134`, watcher id=10,
+   `evaluator=semantic_match`). Negative page → no verdict/noop;
+   positive page → `fired` with `web_semantic_match:4253…` and the
+   "Shoes available to purchase" notification.
+
+Also exercised on-device: the model-failure path (`web_error:
+ConnectException` → `failWatcher` backoff, `failure_count=1`) when the
+adb reverse forward briefly dropped, followed by clean recovery on the
+next due check.
+
+Cleanup: smoke watchers 9–10 deleted, notifications dismissed, dev key
+removed from Settings.Secure, device reset to
+`openphone_autonomy_mode=reviewed`, local server and reverse forward
+torn down.
+
+### Phase C browser/page context slice (2026-06-10)
+
+**Implementation.** `browser.fetch_page` / `browser_fetch_page` now
+returns structured page context instead of flat text only:
+
+- `headings`: page outline as `{level, text}` for `<h1>`–`<h4>` (up to
+  24 entries, 160 chars each), extracted before tag stripping.
+- `links`: up to 40 de-duplicated outgoing links as `{text, url}`, with
+  relative hrefs resolved against the final URL and `javascript:`,
+  `mailto:`, `tel:`, and `data:` schemes dropped.
+- `truncated` is now computed against the full extracted text rather
+  than raw HTML length.
+
+The action registry output schema documents the new fields, and both
+Realtime prompts (initial task prompt and session instructions) tell the
+model it can chain another `browser_fetch_page` call on a returned link
+when the answer lives on a linked page — model-decided navigation, no
+keyword routing. The registry description changed, so
+`/system_ext/etc/openphone/action_registry.json` was pushed alongside
+the APK per the standing registry-push rule.
+
+**Device acceptance: PASSED (2026-06-10, Pixel 9a).** Artifact
+`.worktree/artifacts/tegu/OpenPhoneAssistant-browser-context-v1.apk`
+(`sha256=b93e29f94e3f9c9a80bdd14657a64ce58dd6374303b15492030b9108b2c131ff`,
+`versionCode=101` / `0.1.65-dev`), built on EC2, installed with
+`scripts/push-assistant-apk.sh`. Smoke fixture: three-page local site
+(index → events/contact links, plus `mailto:`/`javascript:` link traps
+and script/style noise) served over `adb reverse tcp:8094`.
+
+1. **Reviewed mode:** goal "Look at http://127.0.0.1:8094/index.html and
+   tell me what time the pottery workshop is and what I should bring" →
+   Medium "Approve browser.fetch_page" card (approved) → index fetch
+   returned headings + links → second "Approve browser.fetch_page" card
+   (approved) for the linked `/events.html` → `task.finished` with "The
+   pottery workshop is on Saturday, June 13 at 10am in Studio B. The
+   user should bring an apron; clay is provided. The cost is $12."
+   Trajectory `20260610-120428-task-38255070697` shows the headings
+   array (`Upcoming Events` / `Pottery Workshop` / `Community Potluck`)
+   and the link-resolved events URL; `mailto:`/`javascript:` traps were
+   excluded.
+2. **YOLO mode:** goal "Fetch http://127.0.0.1:8094/index.html and tell
+   me the front desk phone number. Follow links if needed." →
+   auto-executed chained fetches across `index.html` → `contact.html`
+   (events.html also probed) with no approval cards → `task.finished`
+   with "The front desk phone number for the Northgate Community Center
+   is 555-0188." Trajectory `20260610-120936-task-413263781573`.
+
+Note: one YOLO goal submission produced no orchestrator response (no
+trajectory written); an immediate identical resubmission worked
+end-to-end. Logged as a transient to watch, not reproduced.
+
+Cleanup: smoke servers and reverse forwards torn down, device reset to
+`openphone_autonomy_mode=reviewed`.
+
+### Phase C AI Sheet model-backed screen answers (2026-06-10)
+
+**Implementation.** The AI Sheet's Screen / Summarize actions previously
+answered with a purely local heuristic: `readScreenAnswer` in
+`OpenPhoneAssistantService` called `getScreen` with
+`include_screenshot:false, include_ui_tree:false` and then
+`summarizeScreen(...)`, which concatenates up to six de-duplicated
+accessibility `visible_text` fragments — heuristic-quality output and
+exactly the under-engineering the spine-first plan exists to remove.
+Sheet screen answers are now model-backed:
+
+- When a model endpoint is configured, `readScreenAnswer` requests the
+  screen with `include_screenshot:true, include_ui_tree:true,
+  max_dimension:512, quality:65` (same shape as the chat screen-question
+  path) and answers via
+  `OpenAiResponsesAgentAdapter.answerScreenQuestion(prompt, screenJson)`
+  — the Responses vision call, with a prompt suffix telling the model to
+  ignore the assistant's own sheet overlay and answer about the app
+  underneath.
+- The sheet runs in the assistant service with no activity-held dev key,
+  so `sheetModelEndpointConfig()` reads Settings.Secure
+  `openphone_dev_openai_api_key` on `userdebug`/`eng` builds only — the
+  same background-credential pattern as semantic watcher evaluation.
+- The local `summarizeScreen` heuristic is retained **only** as the
+  explicit unconfigured fallback (no key → metadata-only `getScreen`,
+  local summary), not as a routing alternative.
+
+No registry change was needed (this is the in-sheet answer surface, not
+a model tool), so no `/system_ext/etc/openphone/*.json` push applied.
+
+**Device acceptance: PASSED (2026-06-10, Pixel 9a).** Artifact
+`.worktree/artifacts/tegu/OpenPhoneAssistant-sheet-screen-v1.apk`
+(`sha256=cf7f57af32a6b524330980aee2b1e842128335d84c95fa17a43fc6580cac5bef`,
+`versionCode=102` / `0.1.66-dev`), built on EC2, installed with
+`scripts/push-assistant-apk.sh`. The device's saved Wi-Fi networks were
+out of range after reboot, so device-side OpenAI reachability was
+provided by a local HTTP CONNECT proxy
+(`.worktree/smoke/sheet-screen/connect_proxy.py` on port 8123 +
+`adb reverse tcp:8123` + Settings.Global `http_proxy=127.0.0.1:8123`),
+torn down after the smoke.
+
+1. **Clock app:** island swipe-down → AI Sheet → Screen →
+   "Reading screen" → model answer card: "You're in the Android Clock
+   app on the Alarm tab. There's one alarm set for 9:00 AM on Sun and
+   Sat, with its toggle appearing off. A plus button is at the bottom to
+   add a new alarm, and the bottom navigation shows Alarm, Clock, Timer,
+   and Stopwatch." — correct screenshot-grounded detail (toggle state,
+   FAB, tab bar) far beyond the old text-fragment concatenation.
+2. **Settings home:** Refresh on the answer card → fresh capture →
+   answer correctly listed the visible settings categories
+   (Network & internet through Battery, "partially visible at the
+   bottom") plus the status-bar clock — screenshot-grounded, not
+   accessibility-text-only.
+3. **Summarize action:** expanded-sheet Summarize over Settings →
+   "The app underneath is Android Settings on the main Settings
+   homepage. Visible options include: …" — the overlay-suppression
+   prompt worked: the model answered about the app under the sheet, not
+   the sheet itself.
+4. **Framework audit evidence:** `/data/system/openphone/audit-log.json`
+   shows `screen_capture` events with
+   `detail=screenshot_jpeg_base64:228x512` for each model-backed sheet
+   answer (task-scoped `screen.read.visible` grants).
+5. **Unconfigured fallback:** after deleting the Secure key, Refresh
+   produced the local heuristic answer ("Visible screen summary: Search
+   Settings; Network & internet; …") and the corresponding audit entry
+   reverted to `detail=metadata_only` — confirming no screenshot leaves
+   the framework when the model path is unavailable, and no silent
+   model/heuristic mixing.
+6. **Failure path (organically exercised):** before connectivity was
+   restored the sheet showed "Screen question failed: Unable to resolve
+   host api.openai.com" — the configured-but-unreachable case surfaces
+   the model error honestly instead of silently falling back to the
+   heuristic.
+
+This slice is sheet-surface work in reviewed mode only; the sheet's
+Screen/Summarize answers perform no Medium-risk actions, so there is no
+separate YOLO behavior to validate (autonomy mode does not gate
+`screen.read.visible` task grants).
+
+Cleanup: dev key deleted from Settings.Secure, `http_proxy` cleared,
+reverse forwards removed, proxy process stopped, device left at
+`openphone_autonomy_mode=reviewed`.
 
 ## Not Yet Implemented
 
@@ -845,6 +1819,50 @@ Post-plan physical Pixel 9a evidence:
   - `Run Agent` with goal `settings` executes the local heuristic model loop
     and opens `com.android.settings/.Settings`
 
+Compose cutover physical Pixel 9a evidence:
+
+- Migrated the privileged `OpenPhoneAssistant` activity UI from programmatic
+  Java Views to Jetpack Compose / Material 3 while preserving the Java backend
+  for task, agent, voice, OTA, grant, confirmation, trajectory, audit, service,
+  notification, quick settings, and accessibility behavior.
+- `MainActivity.java` and `GlassPanel.java` are removed. `MainActivity.kt`
+  subclasses `AssistantActivityBackend.java`; Compose owns the Chat and
+  Advanced rendering through `AssistantComposeHost.kt`.
+- Assistant package metadata is bumped to `versionCode=58`,
+  `versionName=0.1.22-dev`.
+- `./scripts/check.sh` passed from the repo root.
+- Built the focused assistant APK on the EC2 Linux Android build host, not on
+  the local machine, using the `openphone_tegu-bp4a-userdebug` build graph.
+- Final EC2-built APK:
+  `.worktree/artifacts/tegu/OpenPhoneAssistant-compose.apk`.
+- Final APK SHA-256:
+  `71836a3a86d10a959210a449b91816d74725fee904ec6135beaeb08caf6366b5`.
+- Pushed the APK to the physical Pixel 9a with
+  `scripts/push-assistant-apk.sh`; after reboot,
+  `/system_ext/priv-app/OpenPhoneAssistant/OpenPhoneAssistant.apk` had the same
+  SHA-256 and PackageManager reported `versionCode=58`,
+  `versionName=0.1.22-dev`.
+- Verified `service check openphone_agent` reports `found`.
+- UI smoke evidence under `.worktree/reports/compose-smoke/` verifies:
+  - chat-style home screen opens with ComposeView content;
+  - profile icon opens a Material 3 `Developer settings` dropdown;
+  - composer focus opens the IME and shows send-state text;
+  - header action opens Advanced / Developer settings;
+  - hardware Back from Advanced returns to Chat;
+  - final logcat/process checks have no assistant fatal crash or ANR entries.
+- Required agent evals passed on the physical Pixel 9a with the development
+  OpenAI Responses path:
+  - `scripts/run-assistant-task.sh --goal "Open Settings." --wait 90` ended
+    with focus on `com.android.settings/.Settings`; trajectory
+    `.worktree/evals/compose-open-settings-v58-final2/20260607-183026-task-121301688290`
+    validates and records `task.finished` with `open_app` and `finish_task`.
+  - `scripts/run-assistant-task.sh --goal "Open Settings, open the Apps settings page, then finish when the Apps page is visible." --wait 120`
+    ended with focus on `com.android.settings/.SubSettings` and visible Apps
+    page content. Validated eval report:
+    `.worktree/evals/compose-apps-settings-v58-final2-20260607T153300Z/agent-eval.json`;
+    trajectory records `task.finished` with `open_app`, `tap_element`, and
+    `finish_task`.
+
 Additional Pixel 9a screenshot and OpenAI evidence:
 
 - Built and sideloaded screenshot-fix OTA:
@@ -1019,24 +2037,17 @@ Pixel 9a assistant trajectory-export OTA evidence:
 
 ## Next Engineering Step
 
-Move from boot/runtime verification to capability validation on the physical
-Pixel 9a:
+Phases 0, A, and B plus the first four Phase C slices
+(`calendar.create_event_from_message`, model-backed semantic watcher
+evaluation, browser/page context deepening, and model-backed AI Sheet
+screen answers) are complete and device-validated (see the Phase C slice
+sections above). Continue Phase C: next up is messages/calendar/phone
+integration depth, then promotion of assistant-local stores into
+OS-owned services — one slice at a time, each closing with the standard
+EC2 build / install / reviewed + YOLO smoke / evidence flow.
 
-1. Use privileged assistant APK push for assistant UI, model-loop, prompt,
-   policy, and trajectory changes. Build/flash a full OTA only for framework,
-   sepolicy, Settings, SystemUI, boot-chain, or first-install changes.
-2. Run the core Agent v1 eval set from `docs/TESTING.md`: observe current
-   screen, open Settings, browser search, text-field drafting without
-   submission, Back/Home navigation, and risky-action confirmation. App
-   installation is deferred until OpenPhone has a proper app-store strategy.
-3. Re-run `./scripts/smoke-test-tegu-hardware.sh`; the latest automated
-   baseline completed with Wi-Fi, Bluetooth, camera service, sensors, battery,
-   thermal, framework service, shell, and logcat visible, while SIM/calls/SMS,
-   audio playback/capture, camera capture, fingerprint, reboot, and factory
-   reset remain manual-required sections.
-4. Use the assistant's Export Audit control to collect framework audit evidence
-   without ADB root.
-6. Inspect trajectory files and framework audit events for screenshot payloads,
-   UI-tree context, model tool calls, policy decisions, and action results.
-7. Continue from local evals to cloud model evals with a production-safe key
-   flow or explicit development broker.
+Standing workflow rules remain unchanged: use the privileged assistant APK
+push for assistant-only changes and full OTA only for framework/sepolicy/
+SystemUI/boot-chain changes; collect audit evidence with the assistant's
+Export Audit control; record artifact SHAs and trajectory paths here after
+every validated slice.

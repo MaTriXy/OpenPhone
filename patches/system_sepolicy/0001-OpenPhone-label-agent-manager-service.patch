@@ -14,8 +14,14 @@ diff --git a/build/soong/service_fuzzer_bindings.go b/build/soong/service_fuzzer
 index 6061a2f92..d401f3f12 100644
 --- a/build/soong/service_fuzzer_bindings.go
 +++ b/build/soong/service_fuzzer_bindings.go
-@@ -397,0 +398,1 @@ var (
+@@ -394,6 +394,7 @@ var (
+ 		"oem_lock":                               EXCEPTION_NO_FUZZER,
+ 		"ondevicepersonalization_system_service": EXCEPTION_NO_FUZZER,
+ 		"on_device_intelligence":                 EXCEPTION_NO_FUZZER,
 +		"openphone_agent":                        EXCEPTION_NO_FUZZER,
+ 		"ot_daemon":                              []string{"ot_daemon_service_fuzzer"},
+ 		"overlay":                                EXCEPTION_NO_FUZZER,
+ 		"pac_proxy":                              EXCEPTION_NO_FUZZER,
 diff --git a/private/service.te b/private/service.te
 index f5e71abaf..cde126842 100644
 --- a/private/service.te
