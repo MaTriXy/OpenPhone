@@ -163,6 +163,10 @@ public final class OpenPhoneWatcherScheduler {
             runMessageReplyWatcher(context, store, watcher, now);
             return;
         }
+        if ("call_back".equals(watcher.type)) {
+            runCallBackWatcher(context, store, watcher, now);
+            return;
+        }
         if (!"time".equals(watcher.type)) {
             failWatcher(context, store, watcher, now, "unsupported_watcher_type:" + watcher.type);
             return;
@@ -229,6 +233,115 @@ public final class OpenPhoneWatcherScheduler {
             nextRunAt = Math.min(nextRunAt, Math.max(deadline, now + MIN_DELAY_MILLIS));
         }
         store.markNoop(watcher.id, nextRunAt, "message_reply:no_reply_yet:" + baseline, now);
+    }
+
+    private static void runCallBackWatcher(Context context, WatcherStore store,
+            WatcherRecord watcher, long now) {
+        JSONObject condition = parseOrEmpty(watcher.conditionJson);
+        JSONObject schedule = parseOrEmpty(watcher.scheduleJson);
+        String number = firstNonEmpty(condition.optString("number", ""),
+                condition.optString("address", ""),
+                condition.optString("phone", ""),
+                condition.optString("phone_number", ""));
+        if (number.isEmpty()) {
+            failWatcher(context, store, watcher, now, "missing_call_watcher_number");
+            return;
+        }
+        long baseline = condition.optLong("baseline_ms", 0L);
+        if (baseline <= 0) {
+            baseline = watcher.createdAtMillis;
+        }
+        long deadline = condition.optLong("deadline_at", 0L);
+        String notifyOn = firstNonEmpty(condition.optString("notify_on", ""),
+                deadline > 0 ? "no_call" : "call");
+        // direction filter: any (default), incoming, outgoing
+        String direction = firstNonEmpty(condition.optString("direction", ""), "any")
+                .toLowerCase(Locale.US);
+        ObservedCall call;
+        try {
+            call = findCall(context, number, baseline, direction);
+        } catch (SecurityException e) {
+            failWatcher(context, store, watcher, now, "calls_permission_denied:read");
+            return;
+        } catch (RuntimeException e) {
+            failWatcher(context, store, watcher, now, "calls_query_failed:"
+                    + safeHashPart(e.getClass().getSimpleName()));
+            return;
+        }
+        if (call != null) {
+            String resultHash = "call_back:" + call.callId + ":" + call.dateMillis;
+            store.markFired(watcher.id, resultHash, now);
+            if ("call".equals(notifyOn)) {
+                OpenPhoneNotificationController.showWatcherFired(context, watcher);
+            }
+            // notify_on=no_call: the call happened, so the reminder is moot —
+            // resolve the watcher silently.
+            return;
+        }
+        if (deadline > 0 && now >= deadline) {
+            if ("no_call".equals(notifyOn)) {
+                store.markFired(watcher.id, "call_back:no_call_by_deadline:" + deadline, now);
+                OpenPhoneNotificationController.showWatcherFired(context, watcher);
+            } else {
+                store.stop(watcher.id);
+            }
+            return;
+        }
+        long interval = messageWatcherIntervalMillis(condition, schedule);
+        long nextRunAt = now + interval;
+        if (deadline > now) {
+            nextRunAt = Math.min(nextRunAt, Math.max(deadline, now + MIN_DELAY_MILLIS));
+        }
+        store.markNoop(watcher.id, nextRunAt, "call_back:no_call_yet:" + baseline, now);
+    }
+
+    private static ObservedCall findCall(Context context, String number, long baselineMillis,
+            String direction) {
+        String[] projection = new String[] {
+                android.provider.CallLog.Calls._ID,
+                android.provider.CallLog.Calls.NUMBER,
+                android.provider.CallLog.Calls.DATE,
+                android.provider.CallLog.Calls.TYPE
+        };
+        try (Cursor cursor = context.getContentResolver().query(
+                android.provider.CallLog.Calls.CONTENT_URI, projection,
+                android.provider.CallLog.Calls.DATE + " > ?",
+                new String[] { Long.toString(baselineMillis) },
+                android.provider.CallLog.Calls.DATE + " DESC")) {
+            if (cursor == null) {
+                throw new IllegalStateException("calls_query_null_cursor");
+            }
+            int scanned = 0;
+            while (cursor.moveToNext() && scanned < 100) {
+                scanned++;
+                int type = cursor.getInt(3);
+                if ("incoming".equals(direction)
+                        && type != android.provider.CallLog.Calls.INCOMING_TYPE
+                        && type != android.provider.CallLog.Calls.MISSED_TYPE) {
+                    continue;
+                }
+                if ("outgoing".equals(direction)
+                        && type != android.provider.CallLog.Calls.OUTGOING_TYPE) {
+                    continue;
+                }
+                String rowNumber = cursor.getString(1);
+                if (!addressMatches(rowNumber, number)) {
+                    continue;
+                }
+                return new ObservedCall(cursor.getLong(0), cursor.getLong(2));
+            }
+        }
+        return null;
+    }
+
+    private static final class ObservedCall {
+        final long callId;
+        final long dateMillis;
+
+        ObservedCall(long callId, long dateMillis) {
+            this.callId = callId;
+            this.dateMillis = dateMillis;
+        }
     }
 
     private static InboundMessage findInboundMessage(Context context, String address,

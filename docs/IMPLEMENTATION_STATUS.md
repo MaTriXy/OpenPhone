@@ -5,23 +5,24 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=108`, `versionName=0.1.72-dev`.
+`versionCode=110`, `versionName=0.1.74-dev`.
 
 **Tree state (2026-06-11):** the working tree compiles and
 `./scripts/check.sh` is fully green, including the Java compile gate added
 in Phase 0 (54 assistant files against android-35). Phases 0, A, and B of
-the spine-first plan are code-complete and device-validated, and seven
+the spine-first plan are code-complete and device-validated, and eight
 Phase C connector slices (calendar-from-message, model-backed semantic
 watcher evaluation, browser/page context deepening, model-backed AI Sheet
 screen answers, message-reply watchers, the AI Island 8-state machine
-with YOLO visual state, and calendar depth —
-update/delete/check-availability) passed reviewed device smokes. See
+with YOLO visual state, calendar depth —
+update/delete/check-availability — and phone depth — missed-call
+follow-ups + call-back watchers) passed reviewed device smokes. See
 "Architecture Audit and Revised Direction" below for the full record.
 
-The last fully validated slice is calendar depth v3
-(`.worktree/artifacts/tegu/OpenPhoneAssistant-calendar-depth-v3.apk`,
-`sha256=62fcf0047ab2784e0d088e21d67f2ee56172ff25f3c19da288732cac29a5e3f3`,
-v108 0.1.72-dev, installed, registry/model-tools/capabilities configs
+The last fully validated slice is phone depth v2
+(`.worktree/artifacts/tegu/OpenPhoneAssistant-phone-depth-v2.apk`,
+`sha256=a5ca805bb278bfcda6f8d80c46fc8815c3ec6bfe6cfd79f11c7d025138f45ac8`,
+v110 0.1.74-dev, installed, registry/model-tools/capabilities configs
 pushed to `/system_ext/etc/openphone/`), with the device reset to
 `openphone_autonomy_mode=reviewed`.
 
@@ -1557,6 +1558,90 @@ via harness intent only):
 Cleanup: fixture calendar events deleted, autonomy mode reset to
 `reviewed`, dev key confirmed null in Settings.Secure, adb unrooted.
 
+### Phase C phone depth: missed-call follow-ups + call-back watchers (2026-06-11)
+
+Deepens the phone connector: the model can filter the call log by type,
+call-log rows join contact names even when the log's cached name is
+empty, `phone_context` surfaces missed calls not yet returned, and a
+new `call_back` watcher type closes the call-back loop ("remind me to
+call her back", "tell me when she calls").
+
+Implementation:
+
+- `FrameworkToolExecutor.callsSearch`: new optional `type` argument
+  (missed/incoming/outgoing/voicemail/rejected/blocked →
+  `unknown_call_type` error otherwise); the free-text query now
+  post-filters in Java instead of SQL LIKE so contact names join via
+  `ContactsContract.PhoneLookup` when the cached name is empty and
+  numbers match across formatting variants
+  (`PhoneNumberUtils.compare` against the queried contact's numbers);
+  rows carry `date_local`.
+- `FrameworkToolExecutor.phoneContext`: new `missed_call_follow_ups`
+  output — missed calls from a fresh unfiltered recent-log scan with
+  no later call to/from or sent SMS to the same number — plus a
+  summary suffix ("N missed call(s) not yet returned"). The follow-up
+  scan is deliberately unfiltered because the user's free-text query
+  rarely matches call-log rows (found on-device in v109, fixed v110).
+- `OpenPhoneWatcherScheduler`: new `call_back` watcher type. Polls the
+  call log for a call matching the condition number after
+  `baseline_ms` (direction filter any/incoming/outgoing; missed counts
+  as incoming). `notify_on=call` (default) alerts when the call
+  appears; `notify_on=no_call` + `deadline_at` reminds only if no call
+  happened in time and dissolves silently if one did — same
+  semantics as message-reply watchers.
+- `watcherCreate` normalization maps `source=call|calls|phone` and
+  `type=call|call_back|callback`, hoisting number/direction/
+  baseline_ms/deadline_at/notify_on into the stored condition.
+- Registry/model_tools: `phone.search_calls` gains the `type` input,
+  `phone.context` documents `missed_call_follow_ups`,
+  `watchers.create` gains `number`/`direction` inputs and call
+  guidance. Orchestrator watch-mode prompt and Realtime
+  instructions/initial prompt teach the source=call watcher forms. No
+  new capabilities: calls.read/watchers.write cover everything.
+
+Artifacts: `OpenPhoneAssistant-phone-depth-v1.apk` (v109, sha256
+`50bfef88183fa7cbe4de5cf5babc65c679902a132e7ad6b97937ea05512f5b04`)
+and the follow-up-scan fix `-v2.apk` (v110 0.1.74-dev, sha256
+`a5ca805bb278bfcda6f8d80c46fc8815c3ec6bfe6cfd79f11c7d025138f45ac8`,
+installed); registry configs pushed. Screenshots
+`phone-1-missed-follow-ups.png` … `phone-5-call-watcher-fired.png`.
+
+Device acceptance (Pixel 9a, seeded call-log/contact fixtures: contact
+"Sarah Levin" +972521234567 with a missed call and no cached name,
+returned + unreturned calls from "Pizza Roma", unknown missed
++14155550100):
+
+1. **Missed-call follow-ups (reviewed):** "which missed calls have I
+   not returned yet?" ran `phone_context` behind a Medium confirm and
+   answered exactly right: "You have 2 missed calls not yet returned:
+   Sarah Levin (+972521234567) at Thu 2026-06-11 00:08, and
+   +14155550100 at Wed 2026-06-10 22:08" — the returned Pizza Roma
+   missed call correctly excluded, Sarah's name joined from contacts
+   (`phone-1`).
+2. **Type filter + contact join:** "did I miss any calls from Sarah
+   today?" produced `calls_search` with `type=missed`, a correct
+   device-time `since/until` window, and the name-joined answer
+   "missed 1 call from Sarah Levin today at 00:08" (trajectory
+   evidence + `phone-2`).
+3. **No-call deadline reminder (reviewed):** "if Sarah has not called
+   me back within 3 minutes, remind me to call her" stopped at the
+   `watchers.create` Medium card, then stored a `call_back` watcher
+   with `notify_on=no_call`, `direction=incoming`, the right
+   `deadline_at`; at the deadline it fired
+   (`call_back:no_call_by_deadline:…`) and posted the reminder
+   notification (`phone-3`, `phone-4`).
+4. **Call-arrival watcher (YOLO):** "tell me when Sarah calls" was
+   auto-created in yolo mode without an approval card
+   (`notify_on=call`); after inserting an incoming call from
+   `0521234567` (different formatting than the stored
+   `+972521234567`), the next check fired the watcher
+   (`call_back:9:…` — `PhoneNumberUtils.compare` matched the
+   variants) and posted the alert (`phone-5`).
+
+Cleanup: call log, contact, SMS fixture rows and smoke watchers
+deleted; watcher census back to 4 active; autonomy mode reset to
+`reviewed`; dev key confirmed null; adb unrooted.
+
 ## Not Yet Implemented
 
 - Hardware validation on the Pixel 9a. Full OpenPhone now boots and the
@@ -2279,16 +2364,15 @@ Pixel 9a assistant trajectory-export OTA evidence:
 
 ## Next Engineering Step
 
-Phases 0, A, and B plus seven Phase C slices
+Phases 0, A, and B plus eight Phase C slices
 (`calendar.create_event_from_message`, model-backed semantic watcher
 evaluation, browser/page context deepening, model-backed AI Sheet
 screen answers, message-reply watchers, the AI Island 8-state machine
-with YOLO visual state, and calendar depth —
-update/delete/check-availability) are complete and device-validated
-(see the Phase C slice sections above). Continue Phase C: next up is
-the remaining messages/phone integration depth (missed-call follow-ups,
-contact-name joins across call log/SMS, confirmation-number pulls,
-call context cards), then promotion of
+with YOLO visual state, calendar depth —
+update/delete/check-availability — and phone depth — missed-call
+follow-ups, contact-name joins, call-back watchers) are complete and
+device-validated (see the Phase C slice sections above). Continue
+Phase C: next up is promotion of
 assistant-local stores into OS-owned services — one slice at a time,
 each closing with the standard EC2 build / install / reviewed + YOLO
 smoke / evidence flow.

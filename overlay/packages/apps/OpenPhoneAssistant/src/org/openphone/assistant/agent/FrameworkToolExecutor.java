@@ -1137,9 +1137,14 @@ public final class FrameworkToolExecutor {
             return error("calls_permission_denied:read");
         }
         String query = arguments.optString("query", "").trim();
+        String typeFilter = arguments.optString("type", "").trim().toLowerCase(Locale.US);
         long since = arguments.optLong("since", 0L);
         long until = arguments.optLong("until", 0L);
         int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        int typeCode = callTypeForLabel(typeFilter);
+        if (!typeFilter.isEmpty() && typeCode == 0) {
+            return error("unknown_call_type:" + typeFilter);
+        }
         JSONArray calls = new JSONArray();
         String[] projection = new String[] {
                 CallLog.Calls._ID,
@@ -1152,13 +1157,9 @@ public final class FrameworkToolExecutor {
         };
         StringBuilder selection = new StringBuilder();
         java.util.ArrayList<String> selectionArgs = new java.util.ArrayList<>();
-        if (!query.isEmpty()) {
-            selection.append("(")
-                    .append(CallLog.Calls.NUMBER).append(" LIKE ? OR ")
-                    .append(CallLog.Calls.CACHED_NAME).append(" LIKE ?)");
-            String like = "%" + query + "%";
-            selectionArgs.add(like);
-            selectionArgs.add(like);
+        if (typeCode > 0) {
+            selection.append(CallLog.Calls.TYPE).append("=?");
+            selectionArgs.add(Integer.toString(typeCode));
         }
         if (since > 0) {
             appendAnd(selection);
@@ -1170,6 +1171,12 @@ public final class FrameworkToolExecutor {
             selection.append(CallLog.Calls.DATE).append("<=?");
             selectionArgs.add(Long.toString(until));
         }
+        // The query post-filters in Java instead of SQL LIKE so contact names join
+        // even when the call-log cached name is empty (e.g. contact saved after the
+        // call) and numbers match across formatting/country-code variants.
+        JSONArray queryNumbers = query.isEmpty()
+                ? new JSONArray() : contactNumbersForQuery(query, 5);
+        java.util.HashMap<String, String> nameCache = new java.util.HashMap<>();
         try (Cursor cursor = mContext.getContentResolver().query(
                 CallLog.Calls.CONTENT_URI, projection,
                 selection.length() == 0 ? null : selection.toString(),
@@ -1178,13 +1185,25 @@ public final class FrameworkToolExecutor {
             if (cursor == null) {
                 return error("calls_query_failed");
             }
-            while (cursor.moveToNext() && calls.length() < limit) {
+            int scanned = 0;
+            while (cursor.moveToNext() && calls.length() < limit && scanned < 200) {
+                scanned++;
+                String number = stringAt(cursor, 1);
+                String cachedName = stringAt(cursor, 2);
+                String name = cachedName.isEmpty()
+                        ? contactNameForNumber(number, nameCache) : cachedName;
+                if (!query.isEmpty()
+                        && !callMatchesQuery(number, cachedName, name, query, queryNumbers)) {
+                    continue;
+                }
+                long date = cursor.getLong(4);
                 calls.put(new JSONObject()
                         .put("call_id", cursor.getLong(0))
-                        .put("number", stringAt(cursor, 1))
-                        .put("name", stringAt(cursor, 2))
+                        .put("number", number)
+                        .put("name", name)
                         .put("type", callTypeLabel(cursor.getInt(3)))
-                        .put("date", cursor.getLong(4))
+                        .put("date", date)
+                        .put("date_local", localTime(date))
                         .put("duration_seconds", cursor.getLong(5))
                         .put("phone_account", stringAt(cursor, 6)));
             }
@@ -1196,11 +1215,90 @@ public final class FrameworkToolExecutor {
         return new JSONObject()
                 .put("status", "calls.search.results")
                 .put("query", query)
+                .put("type", typeFilter)
                 .put("since", since)
                 .put("until", until)
                 .put("limit", limit)
                 .put("calls", calls)
                 .toString();
+    }
+
+    private static boolean callMatchesQuery(String number, String cachedName, String joinedName,
+            String query, JSONArray queryNumbers) {
+        String needle = query.toLowerCase(Locale.US);
+        if (number.toLowerCase(Locale.US).contains(needle)
+                || cachedName.toLowerCase(Locale.US).contains(needle)
+                || joinedName.toLowerCase(Locale.US).contains(needle)) {
+            return true;
+        }
+        for (int i = 0; i < queryNumbers.length(); i++) {
+            String candidate = queryNumbers.optString(i, "");
+            if (!candidate.isEmpty()
+                    && android.telephony.PhoneNumberUtils.compare(number, candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String contactNameForNumber(String number, java.util.HashMap<String, String> cache) {
+        if (number == null || number.trim().isEmpty()) {
+            return "";
+        }
+        String cached = cache.get(number);
+        if (cached != null) {
+            return cached;
+        }
+        String name = "";
+        if (hasPermission(Manifest.permission.READ_CONTACTS)) {
+            Uri uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                    Uri.encode(number));
+            try (Cursor cursor = mContext.getContentResolver().query(uri,
+                    new String[] { ContactsContract.PhoneLookup.DISPLAY_NAME },
+                    null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    String value = cursor.getString(0);
+                    name = value == null ? "" : value;
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        cache.put(number, name);
+        return name;
+    }
+
+    private JSONArray contactNumbersForQuery(String query, int maxNumbers) {
+        JSONArray numbers = new JSONArray();
+        if (!hasPermission(Manifest.permission.READ_CONTACTS)) {
+            return numbers;
+        }
+        Uri uri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_FILTER_URI,
+                Uri.encode(query));
+        String[] projection = new String[] {
+                ContactsContract.Contacts._ID,
+                ContactsContract.Contacts.HAS_PHONE_NUMBER
+        };
+        try (Cursor cursor = mContext.getContentResolver().query(uri, projection, null, null,
+                ContactsContract.Contacts.DISPLAY_NAME_PRIMARY + " ASC")) {
+            if (cursor == null) {
+                return numbers;
+            }
+            while (cursor.moveToNext() && numbers.length() < maxNumbers) {
+                if (cursor.getInt(1) == 0) {
+                    continue;
+                }
+                JSONArray phones = contactPhones(cursor.getLong(0));
+                for (int i = 0; i < phones.length() && numbers.length() < maxNumbers; i++) {
+                    JSONObject phone = phones.optJSONObject(i);
+                    String value = phone == null ? "" : phone.optString("number", "");
+                    if (!value.isEmpty()) {
+                        numbers.put(value);
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return numbers;
     }
 
     private String phoneContext(JSONObject arguments) throws JSONException {
@@ -1233,6 +1331,16 @@ public final class FrameworkToolExecutor {
         collectConfirmationCodes(codes, "message", messageRows, "body");
         collectConfirmationCodes(codes, "calendar", eventRows, "description");
         collectConfirmationCodes(codes, "calendar", eventRows, "title");
+        // Missed-call follow-ups scan the recent log unfiltered: the free-text query
+        // ("missed calls", a person, a trip) rarely matches call-log rows directly.
+        JSONObject recentCalls = new JSONObject(callsSearch(new JSONObject()
+                .put("limit", 20)
+                .put("reason", arguments.optString("reason", ""))));
+        JSONObject recentSent = new JSONObject(messagesSearch(new JSONObject()
+                .put("limit", 20)
+                .put("reason", arguments.optString("reason", ""))));
+        JSONArray missedFollowUps = missedCallFollowUps(
+                recentCalls.optJSONArray("calls"), recentSent.optJSONArray("messages"));
 
         StringBuilder summary = new StringBuilder();
         int callCount = calls.optJSONArray("calls") == null ? 0 : calls.optJSONArray("calls").length();
@@ -1251,12 +1359,17 @@ public final class FrameworkToolExecutor {
             summary.append(". Possible confirmation code: ")
                     .append(codes.optJSONObject(0).optString("code", ""));
         }
+        if (missedFollowUps.length() > 0) {
+            summary.append(". ").append(missedFollowUps.length())
+                    .append(" missed call(s) not yet returned");
+        }
 
         return new JSONObject()
                 .put("status", "phone.context")
                 .put("query", query)
                 .put("number", number)
                 .put("summary", summary.toString())
+                .put("missed_call_follow_ups", missedFollowUps)
                 .put("calls", calls.optJSONArray("calls") == null
                         ? new JSONArray() : calls.optJSONArray("calls"))
                 .put("contacts", contacts.optJSONArray("contacts") == null
@@ -1270,6 +1383,55 @@ public final class FrameworkToolExecutor {
                         .put("messages_status", messages.optString("status", ""))
                         .put("calendar_status", calendar.optString("status", "")))
                 .toString();
+    }
+
+    private static JSONArray missedCallFollowUps(JSONArray calls, JSONArray messageRows)
+            throws JSONException {
+        JSONArray followUps = new JSONArray();
+        if (calls == null) {
+            return followUps;
+        }
+        for (int i = 0; i < calls.length() && followUps.length() < 5; i++) {
+            JSONObject call = calls.optJSONObject(i);
+            if (call == null || !"missed".equals(call.optString("type", ""))) {
+                continue;
+            }
+            String number = call.optString("number", "");
+            long missedAt = call.optLong("date", 0L);
+            if (number.isEmpty() || missedAt <= 0) {
+                continue;
+            }
+            boolean returned = false;
+            for (int j = 0; j < calls.length() && !returned; j++) {
+                JSONObject other = calls.optJSONObject(j);
+                if (other == null || other.optLong("date", 0L) <= missedAt) {
+                    continue;
+                }
+                String otherType = other.optString("type", "");
+                if (!"outgoing".equals(otherType) && !"incoming".equals(otherType)) {
+                    continue;
+                }
+                returned = android.telephony.PhoneNumberUtils.compare(
+                        other.optString("number", ""), number);
+            }
+            for (int j = 0; messageRows != null && j < messageRows.length() && !returned; j++) {
+                JSONObject message = messageRows.optJSONObject(j);
+                if (message == null || message.optLong("date", 0L) <= missedAt
+                        || !"sent".equals(message.optString("type", ""))) {
+                    continue;
+                }
+                returned = android.telephony.PhoneNumberUtils.compare(
+                        message.optString("address", ""), number);
+            }
+            if (!returned) {
+                followUps.put(new JSONObject()
+                        .put("number", number)
+                        .put("name", call.optString("name", ""))
+                        .put("missed_at", missedAt)
+                        .put("missed_at_local", call.optString("date_local", "")));
+            }
+        }
+        return followUps;
     }
 
     private String callsPlace(JSONObject arguments) throws JSONException {
@@ -1379,6 +1541,29 @@ public final class FrameworkToolExecutor {
                 return "answered_externally";
             default:
                 return "unknown";
+        }
+    }
+
+    private static int callTypeForLabel(String label) {
+        switch (label) {
+            case "":
+                return 0;
+            case "incoming":
+                return CallLog.Calls.INCOMING_TYPE;
+            case "outgoing":
+                return CallLog.Calls.OUTGOING_TYPE;
+            case "missed":
+                return CallLog.Calls.MISSED_TYPE;
+            case "voicemail":
+                return CallLog.Calls.VOICEMAIL_TYPE;
+            case "rejected":
+                return CallLog.Calls.REJECTED_TYPE;
+            case "blocked":
+                return CallLog.Calls.BLOCKED_TYPE;
+            case "answered_externally":
+                return CallLog.Calls.ANSWERED_EXTERNALLY_TYPE;
+            default:
+                return 0;
         }
     }
 
@@ -1739,6 +1924,9 @@ public final class FrameworkToolExecutor {
                 || "sms".equals(source) || "text".equals(source)) {
             source = "message";
             type = "message_reply";
+        } else if ("call".equals(source) || "calls".equals(source) || "phone".equals(source)) {
+            source = "call";
+            type = "call_back";
         } else if ("time".equals(source)) {
             type = "time";
         }
@@ -1746,6 +1934,13 @@ public final class FrameworkToolExecutor {
             type = "message_reply";
             if (source.isEmpty()) {
                 source = "message";
+            }
+        }
+        if ("call".equals(type) || "calls".equals(type) || "call_back".equals(type)
+                || "callback".equals(type)) {
+            type = "call_back";
+            if (source.isEmpty()) {
+                source = "call";
             }
         }
 
@@ -1789,6 +1984,41 @@ public final class FrameworkToolExecutor {
                 condition.put("notify_on", notifyOn.toLowerCase(Locale.US));
             }
         }
+        if ("call_back".equals(type)) {
+            String number = firstNonEmpty(out.optString("number", ""),
+                    out.optString("address", ""),
+                    out.optString("phone", ""),
+                    out.optString("phone_number", ""),
+                    condition.optString("number", ""),
+                    condition.optString("address", ""),
+                    condition.optString("phone", ""),
+                    condition.optString("phone_number", ""));
+            if (!number.isEmpty()) {
+                condition.put("number", number);
+            }
+            long baseline = firstPositive(condition.optLong("baseline_ms", 0L),
+                    condition.optLong("since", 0L),
+                    out.optLong("since", 0L));
+            condition.put("baseline_ms",
+                    baseline > 0 ? baseline : System.currentTimeMillis());
+            long deadline = firstPositive(out.optLong("deadline_at", 0L),
+                    out.optLong("due_at", 0L),
+                    condition.optLong("deadline_at", 0L),
+                    condition.optLong("due_at", 0L));
+            if (deadline > 0) {
+                condition.put("deadline_at", deadline);
+            }
+            String notifyOn = firstNonEmpty(out.optString("notify_on", ""),
+                    condition.optString("notify_on", ""));
+            if (!notifyOn.isEmpty()) {
+                condition.put("notify_on", notifyOn.toLowerCase(Locale.US));
+            }
+            String direction = firstNonEmpty(out.optString("direction", ""),
+                    condition.optString("direction", ""));
+            if (!direction.isEmpty()) {
+                condition.put("direction", direction.toLowerCase(Locale.US));
+            }
+        }
         if (evaluator.isEmpty() && "web_change".equals(type)) {
             evaluator = query.isEmpty() ? "hash_change" : "text_contains";
         }
@@ -1812,7 +2042,8 @@ public final class FrameworkToolExecutor {
         long nextRunAt = firstPositive(out.optLong("next_run_at", 0L),
                 schedule.optLong("next_run_at", 0L));
         if (nextRunAt <= 0
-                && ("web_change".equals(type) || "message_reply".equals(type))) {
+                && ("web_change".equals(type) || "message_reply".equals(type)
+                        || "call_back".equals(type))) {
             nextRunAt = System.currentTimeMillis() + 15_000L;
             schedule.put("next_run_at", nextRunAt);
         }

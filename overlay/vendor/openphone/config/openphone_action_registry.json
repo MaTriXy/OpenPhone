@@ -926,7 +926,7 @@
     },
     {
       "name": "phone.search_calls",
-      "description": "Search Android call log entries by number, cached name, type, or date range.",
+      "description": "Search Android call log entries by number, contact name (joined from contacts when the log has none), type, or date range.",
       "model_tool": "calls_search",
       "kind": "observe",
       "input_schema_json": {
@@ -935,6 +935,10 @@
           "query": {
             "type": "string",
             "description": "Optional number or cached contact name."
+          },
+          "type": {
+            "type": "string",
+            "description": "Optional call type filter: missed, incoming, outgoing, voicemail, rejected, or blocked."
           },
           "limit": {
             "type": "integer",
@@ -982,7 +986,7 @@
     },
     {
       "name": "phone.context",
-      "description": "Gather a call context card from call log, contacts, messages, and calendar.",
+      "description": "Gather a call context card from call log, contacts, messages, and calendar, including missed calls not yet returned.",
       "model_tool": "phone_context",
       "kind": "observe",
       "input_schema_json": {
@@ -1031,6 +1035,9 @@
             "type": "array"
           },
           "confirmation_codes": {
+            "type": "array"
+          },
+          "missed_call_follow_ups": {
             "type": "array"
           }
         }
@@ -1499,7 +1506,7 @@
         "properties": {
           "source": {
             "type": "string",
-            "description": "Generic source such as web, notification, message, time, or screen."
+            "description": "Generic source such as web, notification, message, call, time, or screen."
           },
           "evaluator": {
             "type": "string",
@@ -1515,11 +1522,19 @@
           },
           "type": {
             "type": "string",
-            "description": "Compatibility type: time, notification, web_change, or message_reply."
+            "description": "Compatibility type: time, notification, web_change, message_reply, or call_back."
           },
           "address": {
             "type": "string",
             "description": "Phone number or sender to watch when source is message."
+          },
+          "number": {
+            "type": "string",
+            "description": "Phone number to watch when source is call."
+          },
+          "direction": {
+            "type": "string",
+            "description": "For call watchers: any (default), incoming, or outgoing."
           },
           "thread_id": {
             "type": "integer",
@@ -1527,11 +1542,11 @@
           },
           "deadline_at": {
             "type": "integer",
-            "description": "Unix milliseconds deadline for message watchers; with notify_on no_reply, fires if no reply arrived by then."
+            "description": "Unix milliseconds deadline for message or call watchers; with notify_on no_reply or no_call, fires if nothing arrived by then."
           },
           "notify_on": {
             "type": "string",
-            "description": "For message watchers: reply (default; alert when a reply arrives) or no_reply (alert only if the deadline passes without a reply)."
+            "description": "For message watchers: reply (default) or no_reply. For call watchers: call (default; alert when a call with the number appears) or no_call (alert only if the deadline passes without one)."
           },
           "title": {
             "type": "string",

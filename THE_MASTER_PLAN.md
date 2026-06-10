@@ -319,6 +319,18 @@ to code:
   YOLO executes `phone_context` and returns `status=phone.context`. YOLO
   trajectory:
   `/data/user/0/org.openphone.assistant/files/openphone-trajectories/20260609-231841-task-67142899568/events.jsonl`.
+- Phone depth v2 is implemented and device-validated (2026-06-11):
+  `calls_search` gains a call-type filter (missed/incoming/outgoing/…) and
+  joins contact names via `ContactsContract.PhoneLookup` when the call log
+  has no cached name, matching numbers across formatting variants with
+  `PhoneNumberUtils.compare`; `phone_context` surfaces
+  `missed_call_follow_ups` (missed calls with no later call or sent SMS back
+  to the same number); and a new `call_back` watcher type closes call-back
+  loops — `notify_on=call` alerts when a call from the watched number
+  appears, `notify_on=no_call` + `deadline_at` reminds only if no call
+  happened in time (mirroring message-reply watcher semantics). Validated on
+  the Pixel 9a as `OpenPhoneAssistant-phone-depth-v2.apk` (v110 0.1.74-dev,
+  `sha256=a5ca805bb278bfcda6f8d80c46fc8815c3ec6bfe6cfd79f11c7d025138f45ac8`).
 - Apps connector v1 is implemented in the assistant action layer.
   `apps_search` / `apps.search` searches launchable installed apps by label,
   package, or activity through `PackageManager`, and `open_app` now resolves
