@@ -1998,7 +1998,11 @@ safety rails — exactly as specified in "OpenPhoneOrchestrator" above.
    - AI Sheet and screen selection layer polish,
    - messages/calendar/phone integration depth,
    - promotion of assistant-local stores into OS-owned services
-     (Phase 10 hardening track).
+     (Phase 10 hardening track). (STARTED 2026-06-11: the context
+     index is now the OS-owned `openphone_context` system service —
+     patches 0014/sepolicy-0002, OTA sideloaded, 1297 legacy events
+     migrated, end-to-end `context_search` smoke green. Remaining:
+     memory/commitment/watcher stores.)
 
 This order matters. The substrate stores exist and work; the missing piece
 is the intelligence spine that uses them. If we keep building app demos on

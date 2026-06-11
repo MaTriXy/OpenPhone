@@ -5,26 +5,28 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=111`, `versionName=0.1.75-dev`.
+`versionCode=112`, `versionName=0.1.76-dev`.
 
 **Tree state (2026-06-11):** the working tree compiles and
 `./scripts/check.sh` is fully green, including the Java compile gate added
-in Phase 0 (54 assistant files against android-35). Phases 0, A, and B of
+in Phase 0 (55 assistant files against android-35). Phases 0, A, and B of
 the spine-first plan are code-complete and device-validated, and eight
 Phase C connector slices (calendar-from-message, model-backed semantic
 watcher evaluation, browser/page context deepening, model-backed AI Sheet
 screen answers, message-reply watchers, the AI Island 8-state machine
 with YOLO visual state, calendar depth —
 update/delete/check-availability — and phone depth — missed-call
-follow-ups + call-back watchers) passed reviewed device smokes, plus the
-first Phase 10 hardening slice (OTA-safe store migrations). See
+follow-ups + call-back watchers) passed reviewed device smokes, plus two
+Phase 10 hardening slices (OTA-safe store migrations; context index
+promoted to an OS-owned `system_server` service). See
 "Architecture Audit and Revised Direction" below for the full record.
 
-The last fully validated slice is OTA-safe store migrations
-(`.worktree/artifacts/tegu/OpenPhoneAssistant-store-migrations-v1.apk`,
-`sha256=836386006f674184142de377861cc3582ebda4a0755449e84c6e4c46cd74baad`,
-v111 0.1.75-dev, installed), with the device reset to
-`openphone_autonomy_mode=reviewed`.
+The last fully validated slice is the context-index OS-service promotion
+(full OTA `.worktree/artifacts/tegu/openphone_tegu-context-service-ota.zip`,
+`sha256=4adee5fa3a2ea1bf7bb328b4d96afa16710e9084603b4a85907560f0617c34ab`,
+sideloaded; assistant v112 0.1.76-dev on `/system_ext`; 1297 legacy
+context events migrated into `/data/system/openphone/context_index.db`),
+with the device reset to `openphone_autonomy_mode=reviewed`.
 
 Current physically validated Pixel 9a baseline:
 
@@ -1700,6 +1702,121 @@ databases):
 Cleanup: marker rows deleted; dev key confirmed null; autonomy mode
 `reviewed`; adb unrooted.
 
+### Phase 10 hardening: context index promoted to an OS-owned service (2026-06-11)
+
+Second slice of the Phase 10 promotion track: the durable context index
+moved out of the assistant app into a `system_server` service so user
+context survives assistant reinstalls/data clears and can later serve
+more than one client surface.
+
+Implementation:
+
+- `patches/frameworks_base/0014-OpenPhone-add-OS-owned-context-index-service.patch`
+  (EC2 framework commit `8e65e29803f2`): new
+  `IOpenPhoneContextIndexService.aidl` (`getServiceStatus`,
+  `insertEvent`, `insertEvents`, `queryEvents`, `tombstoneEvent` — all
+  String-JSON), `OpenPhoneContextManager` (`@SystemService`),
+  `Context.OPENPHONE_CONTEXT_SERVICE = "openphone_context"`,
+  `SystemServiceRegistry` fetcher, new signature permission
+  `org.openphone.permission.USE_CONTEXT_INDEX`, `SystemServer` start
+  hook, and `OpenPhoneContextIndexService` owning
+  `/data/system/openphone/context_index.db` (SQLite + FTS4 with
+  insert/update/delete triggers, `source_uid` column recording the
+  calling UID, schema versioned via `db.getVersion()` with the same
+  additive-stepwise migration invariant, tombstoning deletes the FTS
+  row so removed content stops being searchable, batch `insertEvents`
+  runs in one transaction for binder-size-limited chunked migration).
+- `patches/system_sepolicy/0002-OpenPhone-label-context-index-service.patch`
+  (EC2 sepolicy commit `e7108ec50`): `openphone_context_service` type
+  (`system_api_service, system_server_service, service_manager_type`),
+  `service_contexts` entry, fuzzer exception binding.
+- Assistant `ContextIndexStore` rewritten from a local
+  `SQLiteOpenHelper` into a thin client of
+  `OpenPhoneContextManager` — public API unchanged so all call sites
+  (activity backend, notification listener, tool executor) needed zero
+  changes. One-time `migrateLegacyStoreIfNeeded()` copies legacy rows
+  in 100-row chunks via `insertEvents`, sets the
+  `os_store_migrated_v1` pref only after full success (crash-safe
+  retry), and keeps the legacy DB file on disk. Manifest gains
+  `USE_CONTEXT_INDEX`; assistant bumped to v112 / 0.1.76-dev;
+  compile-check stub added at
+  `scripts/javacheck-stubs/android/openphone/OpenPhoneContextManager.java`
+  (`check.sh` green, 55 files).
+
+Build evidence:
+
+- EC2 `m framework-minus-apex services.core` and `m OpenPhoneAssistant`
+  (badging `versionCode='112' versionName='0.1.76-dev'`) green before
+  the full build.
+- Full `otapackage` OTA built on EC2:
+  `openphone_tegu-ota.zip` sha256
+  `4adee5fa3a2ea1bf7bb328b4d96afa16710e9084603b4a85907560f0617c34ab`,
+  generated `vendor_kernel_boot.img` DTB verified by the build script.
+  Local copy:
+  `.worktree/artifacts/tegu/openphone_tegu-context-service-ota.zip`.
+- OTA build gotcha found and fixed on the EC2 tree: stray
+  `zumapro-a{0,1}-{foplp,ipop}.dtb` files in
+  `device/google/tegu-kernels/6.1/` caused the dtb build rule to
+  concatenate ALL `*.dtb` files into `vendor_kernel_boot` (doubled
+  DTB → final hash-verification `die`). Their concatenation byte-equals
+  the pinned `tegu.dtb`; moved them aside to
+  `/home/ubuntu/dtb-aside-20260611/`, purged stale
+  `VENDOR_KERNEL_BOOT` intermediates, rebuilt green.
+
+Sideload evidence: the first `adb sideload` stalled at ~47% for 40
+minutes and after aborting/retrying the device dropped off USB
+entirely for ~2.5 hours before recovering on its own into a normal
+boot — the interrupted A/B apply had in fact COMPLETED on the inactive
+slot (device came back on slot `_b`, incremental `1781136126`, OTA
+build date `2026-06-11 00:02:06 UTC`). Two post-boot gotchas, both
+fixed without reflashing:
+
+1. Stale `adb remount` overlayfs from the earlier APK fast-iteration
+   loop shadowed `/system/framework/services.jar` and
+   `/system_ext/priv-app/OpenPhoneAssistant/` with pre-OTA bytes, so
+   `openphone_context` was missing on first boot. `adb enable-verity`
+   + reboot tore down `/mnt/scratch/overlay` and the new
+   `services.jar`/APK became visible (`service list` then showed
+   `openphone_context: [android.openphone.IOpenPhoneContextIndexService]`).
+2. PackageManager kept reporting `versionCode=111` for the v112 APK
+   (known stale-package-metadata failure mode, see the v39 record
+   below); clearing `/data/system/package_cache/` + reboot refreshed
+   it to `versionCode=112 versionName=0.1.76-dev`.
+
+Device acceptance (Pixel 9a, all on the OTA build):
+
+1. `service check openphone_context` → found; SystemServer logs show
+   the service through all user lifecycle phases; OS store created at
+   `/data/system/openphone/context_index.db` (owner `system`,
+   mode 0600).
+2. One-time legacy migration ran on first assistant activity start:
+   log `Migrated 1297 legacy context events into the OS store`, prefs
+   `os_store_migrated_v1=true` / `os_store_migrated_v1_count=1297`
+   (pre-OTA baseline was 1284; the delta is rows the still-running
+   v111 assistant appended between baseline capture and the OTA). Row
+   ids/order preserved (oldest ids 1–3 `notification.active` match the
+   legacy DB); legacy DB file intentionally kept on disk.
+3. Live writes land in the OS store: a `cmd notification post` test
+   notification was indexed as `notification.posted` /
+   `com.android.shell` with full title/text (note: posting requires
+   unrooted adb — uid 0 has no package and NotificationService
+   rejects it).
+4. FTS works over both migrated and new rows (`MATCH 'Promo6'` → the
+   new row; `MATCH 'calendar smoke'` → 13 migrated rows from
+   2026-06-06).
+5. Reviewed end-to-end smoke: `run-assistant-task.sh` task
+   "Search your context for 'calendar smoke'…" → the model called
+   `context_search`, the assistant client crossed the binder into
+   `system_server`, and the tool result contained 14 events including
+   pre-OTA migrated rows (ids 233–291) — trajectory
+   `20260611-091039-task-581333935708`. (A first smoke with the
+   multi-word query "calendar smoke events indexed oldest…" returned
+   0 events — FTS implicit-AND semantics, not a service failure; the
+   direct-phrase query found everything.)
+
+Cleanup: test notification cleared (`pm clear com.android.shell`),
+dev key `null`, autonomy `reviewed`, adb unrooted.
+
 ## Not Yet Implemented
 
 - Hardware validation on the Pixel 9a. Full OpenPhone now boots and the
@@ -2429,13 +2546,17 @@ screen answers, message-reply watchers, the AI Island 8-state machine
 with YOLO visual state, calendar depth —
 update/delete/check-availability — and phone depth — missed-call
 follow-ups, contact-name joins, call-back watchers) are complete and
-device-validated (see the Phase C slice sections above), and the first
-Phase 10 hardening slice (OTA-safe store migrations: all four stores
-now use stepwise additive `onUpgrade`, validated with a real v1→v2
-upgrade on device) is done. Continue the Phase 10 promotion track:
-promote assistant-local stores into OS-owned services — one slice at a
-time, each closing with the standard EC2 build / install / reviewed +
-YOLO smoke / evidence flow (framework changes need full OTA).
+device-validated (see the Phase C slice sections above), plus two
+Phase 10 hardening slices: OTA-safe store migrations (all four stores
+use stepwise additive `onUpgrade`, validated with a real v1→v2 upgrade
+on device) and the context index promoted into the OS-owned
+`openphone_context` `system_server` service (full OTA sideloaded; 1297
+legacy events migrated into `/data/system/openphone/context_index.db`;
+end-to-end `context_search` smoke green). Continue the Phase 10
+promotion track with the remaining assistant-local stores
+(memory/commitment/watcher) — one slice at a time, each closing with
+the standard EC2 build / install / reviewed + YOLO smoke / evidence
+flow (framework changes need full OTA).
 
 Standing workflow rules remain unchanged: use the privileged assistant APK
 push for assistant-only changes and full OTA only for framework/sepolicy/

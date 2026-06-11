@@ -1,76 +1,52 @@
 package org.openphone.assistant.context;
 
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
+import android.openphone.OpenPhoneContextManager;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class ContextIndexStore extends SQLiteOpenHelper {
-    private static final String DB_NAME = "openphone_context_index.db";
-    private static final int DB_VERSION = 2;
+/**
+ * Client of the OS-owned OpenPhone context index (system_server
+ * openphone_context service). The assistant no longer owns the durable
+ * context_event store; a one-time migration moves rows from the legacy
+ * app-local SQLite database into the OS store.
+ */
+public final class ContextIndexStore {
+    private static final String TAG = "OpenPhoneContextIndex";
+    private static final String LEGACY_DB_NAME = "openphone_context_index.db";
     private static final String SOURCE_APP = "org.openphone.assistant";
     private static final String CHAT_PREFS_NAME = "openphone_chat_history";
     private static final String KEY_CURRENT_MESSAGES = "current_messages";
     private static final String KEY_HISTORY = "history";
     private static final String BACKFILL_PREFS_NAME = "openphone_context_index";
     private static final String KEY_CHAT_BACKFILLED_V1 = "chat_backfilled_v1";
+    private static final String KEY_OS_STORE_MIGRATED_V1 = "os_store_migrated_v1";
+    private static final int MIGRATION_CHUNK = 100;
+
+    private static final Object sMigrationLock = new Object();
 
     private final Context mContext;
+    private final OpenPhoneContextManager mManager;
 
     public ContextIndexStore(Context context) {
-        super(context, DB_NAME, null, DB_VERSION);
         mContext = context.getApplicationContext();
-    }
-
-    @Override
-    public void onCreate(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE context_event ("
-                + "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                + "source_type TEXT NOT NULL,"
-                + "source_app TEXT NOT NULL,"
-                + "source_record_id TEXT,"
-                + "observed_at INTEGER NOT NULL,"
-                + "title TEXT,"
-                + "text TEXT,"
-                + "payload_json TEXT,"
-                + "created_at INTEGER NOT NULL,"
-                + "deleted_at INTEGER"
-                + ")");
-        db.execSQL("CREATE VIRTUAL TABLE context_event_fts USING fts4("
-                + "title, text, content='context_event')");
-        db.execSQL("CREATE TRIGGER context_event_ai AFTER INSERT ON context_event "
-                + "BEGIN INSERT INTO context_event_fts(rowid, title, text) "
-                + "VALUES (new.id, new.title, new.text); END");
-        db.execSQL("CREATE TRIGGER context_event_ad AFTER DELETE ON context_event "
-                + "BEGIN DELETE FROM context_event_fts WHERE rowid = old.id; END");
-        db.execSQL("CREATE TRIGGER context_event_au AFTER UPDATE ON context_event "
-                + "BEGIN DELETE FROM context_event_fts WHERE rowid = old.id; "
-                + "INSERT INTO context_event_fts(rowid, title, text) "
-                + "VALUES (new.id, new.title, new.text); END");
-        db.execSQL("CREATE INDEX context_event_source_idx ON context_event("
-                + "source_type, observed_at)");
-        db.execSQL("CREATE INDEX context_event_record_idx ON context_event("
-                + "source_record_id)");
-        db.execSQL("CREATE INDEX context_event_recent_idx ON context_event("
-                + "deleted_at, observed_at)");
-    }
-
-    @Override
-    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // Durable user data: migrations must be additive and stepwise, never DROP TABLE.
-        if (oldVersion < 2) {
-            db.execSQL("CREATE INDEX IF NOT EXISTS context_event_recent_idx "
-                    + "ON context_event(deleted_at, observed_at)");
+        OpenPhoneContextManager manager = null;
+        try {
+            manager = mContext.getSystemService(OpenPhoneContextManager.class);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "OpenPhone context service unavailable", e);
         }
+        mManager = manager;
     }
 
     public long recordConversationMessage(String speaker, String message) {
@@ -90,6 +66,7 @@ public final class ContextIndexStore extends SQLiteOpenHelper {
     }
 
     public void backfillChatHistoryIfNeeded() {
+        migrateLegacyStoreIfNeeded();
         SharedPreferences backfillPrefs = mContext.getSharedPreferences(BACKFILL_PREFS_NAME,
                 Context.MODE_PRIVATE);
         if (backfillPrefs.getBoolean(KEY_CHAT_BACKFILLED_V1, false)) {
@@ -121,6 +98,80 @@ public final class ContextIndexStore extends SQLiteOpenHelper {
                 .apply();
     }
 
+    /**
+     * One-time move of the legacy assistant-local context database into the
+     * OS-owned store. Rows are copied in chunks (binder transactions are
+     * size-limited) and the legacy file is kept on disk until the copy has
+     * fully succeeded, so a crash mid-migration retries on next start.
+     */
+    public void migrateLegacyStoreIfNeeded() {
+        if (mManager == null) {
+            return;
+        }
+        synchronized (sMigrationLock) {
+            SharedPreferences prefs = mContext.getSharedPreferences(BACKFILL_PREFS_NAME,
+                    Context.MODE_PRIVATE);
+            if (prefs.getBoolean(KEY_OS_STORE_MIGRATED_V1, false)) {
+                return;
+            }
+            File legacyDb = mContext.getDatabasePath(LEGACY_DB_NAME);
+            if (!legacyDb.exists()) {
+                prefs.edit().putBoolean(KEY_OS_STORE_MIGRATED_V1, true).apply();
+                return;
+            }
+            int migrated = 0;
+            try (SQLiteDatabase db = SQLiteDatabase.openDatabase(legacyDb.getAbsolutePath(),
+                    null, SQLiteDatabase.OPEN_READONLY)) {
+                long lastId = 0;
+                while (true) {
+                    JSONArray chunk = new JSONArray();
+                    try (Cursor cursor = db.rawQuery("SELECT id, source_type, source_app, "
+                            + "source_record_id, observed_at, title, text, payload_json "
+                            + "FROM context_event WHERE deleted_at IS NULL AND id > ? "
+                            + "ORDER BY id ASC LIMIT ?",
+                            new String[]{Long.toString(lastId),
+                                    Integer.toString(MIGRATION_CHUNK)})) {
+                        while (cursor.moveToNext()) {
+                            lastId = cursor.getLong(0);
+                            JSONObject event = new JSONObject();
+                            try {
+                                event.put("source_type", cursor.getString(1))
+                                        .put("source_app", cursor.getString(2))
+                                        .put("source_record_id", cursor.getString(3))
+                                        .put("observed_at", cursor.getLong(4))
+                                        .put("title", cursor.getString(5))
+                                        .put("text", cursor.getString(6))
+                                        .put("payload_json", cursor.getString(7));
+                            } catch (JSONException e) {
+                                continue;
+                            }
+                            chunk.put(event);
+                        }
+                    }
+                    if (chunk.length() == 0) {
+                        break;
+                    }
+                    JSONObject result = parseOrEmpty(
+                            mManager.insertEvents(chunk.toString()));
+                    if (result.has("error")) {
+                        Log.w(TAG, "Legacy context migration failed: "
+                                + result.optString("error"));
+                        return;
+                    }
+                    migrated += result.optInt("inserted", 0);
+                }
+            } catch (RuntimeException e) {
+                Log.w(TAG, "Legacy context migration failed", e);
+                return;
+            }
+            prefs.edit()
+                    .putBoolean(KEY_OS_STORE_MIGRATED_V1, true)
+                    .putInt("os_store_migrated_v1_count", migrated)
+                    .apply();
+            Log.i(TAG, "Migrated " + migrated + " legacy context events into the OS store");
+        }
+    }
+
     public long recordAgentEvent(String eventType, String title, String text, String taskId,
             String payloadJson) {
         JSONObject payload = parseOrEmpty(payloadJson);
@@ -150,94 +201,26 @@ public final class ContextIndexStore extends SQLiteOpenHelper {
     }
 
     public List<ContextEvent> search(String query, int limit) {
-        String cleanQuery = query == null ? "" : query.trim();
-        if (cleanQuery.isEmpty()) {
-            return latest(limit);
-        }
-        int boundedLimit = Math.max(1, Math.min(limit, 50));
-        SQLiteDatabase db = getReadableDatabase();
-        List<ContextEvent> events = new ArrayList<>();
-        String ftsQuery = cleanQuery.replace('"', ' ').trim();
-        try (Cursor cursor = db.rawQuery("SELECT e.id, e.source_type, e.source_app, "
-                + "e.source_record_id, e.observed_at, e.title, e.text, e.payload_json "
-                + "FROM context_event_fts f JOIN context_event e ON e.id = f.rowid "
-                + "WHERE context_event_fts MATCH ? AND e.deleted_at IS NULL "
-                + "ORDER BY e.observed_at DESC LIMIT ?",
-                new String[]{ftsQuery, Integer.toString(boundedLimit)})) {
-            readEvents(cursor, events);
-        } catch (RuntimeException e) {
-            return latest(boundedLimit);
-        }
-        return events;
+        return queryEvents(query, "", "", limit);
     }
 
     public List<ContextEvent> latest(int limit) {
-        int boundedLimit = Math.max(1, Math.min(limit, 50));
-        SQLiteDatabase db = getReadableDatabase();
-        List<ContextEvent> events = new ArrayList<>();
-        try (Cursor cursor = db.rawQuery("SELECT id, source_type, source_app, "
-                + "source_record_id, observed_at, title, text, payload_json "
-                + "FROM context_event WHERE deleted_at IS NULL "
-                + "ORDER BY observed_at DESC LIMIT ?",
-                new String[]{Integer.toString(boundedLimit)})) {
-            readEvents(cursor, events);
-        }
-        return events;
+        return queryEvents("", "", "", limit);
     }
 
     public List<ContextEvent> notifications(String query, int limit) {
-        String cleanQuery = query == null ? "" : query.trim();
-        if (cleanQuery.isEmpty()) {
-            return latestNotifications(limit);
-        }
-        int boundedLimit = Math.max(1, Math.min(limit, 50));
-        SQLiteDatabase db = getReadableDatabase();
-        List<ContextEvent> events = new ArrayList<>();
-        String ftsQuery = cleanQuery.replace('"', ' ').trim();
-        try (Cursor cursor = db.rawQuery("SELECT e.id, e.source_type, e.source_app, "
-                + "e.source_record_id, e.observed_at, e.title, e.text, e.payload_json "
-                + "FROM context_event_fts f JOIN context_event e ON e.id = f.rowid "
-                + "WHERE context_event_fts MATCH ? AND e.deleted_at IS NULL "
-                + "AND e.source_type LIKE 'notification.%' "
-                + "ORDER BY e.observed_at DESC LIMIT ?",
-                new String[]{ftsQuery, Integer.toString(boundedLimit)})) {
-            readEvents(cursor, events);
-        } catch (RuntimeException e) {
-            return latestNotifications(boundedLimit);
-        }
-        return events;
+        return queryEvents(query, "", "notification.", limit);
     }
 
     public List<ContextEvent> latestNotifications(int limit) {
-        int boundedLimit = Math.max(1, Math.min(limit, 50));
-        SQLiteDatabase db = getReadableDatabase();
-        List<ContextEvent> events = new ArrayList<>();
-        try (Cursor cursor = db.rawQuery("SELECT id, source_type, source_app, "
-                + "source_record_id, observed_at, title, text, payload_json "
-                + "FROM context_event WHERE deleted_at IS NULL "
-                + "AND source_type LIKE 'notification.%' "
-                + "ORDER BY observed_at DESC LIMIT ?",
-                new String[]{Integer.toString(boundedLimit)})) {
-            readEvents(cursor, events);
-        }
-        return events;
+        return queryEvents("", "", "notification.", limit);
     }
 
     /** Recent chat messages as a JSON array of {speaker, text}, oldest first. */
     public String recentConversationJson(int limit) {
         int boundedLimit = Math.max(1, Math.min(limit, 20));
-        SQLiteDatabase db = getReadableDatabase();
-        List<ContextEvent> events = new ArrayList<>();
-        try (Cursor cursor = db.rawQuery("SELECT id, source_type, source_app, "
-                + "source_record_id, observed_at, title, text, payload_json "
-                + "FROM context_event WHERE deleted_at IS NULL "
-                + "AND source_type = 'assistant.conversation.message' "
-                + "ORDER BY observed_at DESC, id DESC LIMIT ?",
-                new String[]{Integer.toString(boundedLimit)})) {
-            readEvents(cursor, events);
-        } catch (RuntimeException e) {
-            return "[]";
-        }
+        List<ContextEvent> events = queryEvents("",
+                "assistant.conversation.message", "", boundedLimit);
         JSONArray conversation = new JSONArray();
         for (int i = events.size() - 1; i >= 0; i--) {
             ContextEvent event = events.get(i);
@@ -289,17 +272,73 @@ public final class ContextIndexStore extends SQLiteOpenHelper {
 
     private long insert(String sourceType, String sourceApp, String sourceRecordId,
             long observedAtMillis, String title, String text, String payloadJson) {
-        long now = System.currentTimeMillis();
-        ContentValues values = new ContentValues();
-        values.put("source_type", sourceType == null ? "" : sourceType);
-        values.put("source_app", sourceApp == null ? "" : sourceApp);
-        values.put("source_record_id", sourceRecordId == null ? "" : sourceRecordId);
-        values.put("observed_at", observedAtMillis > 0 ? observedAtMillis : now);
-        values.put("title", title == null ? "" : title);
-        values.put("text", text == null ? "" : text);
-        values.put("payload_json", payloadJson == null ? "{}" : payloadJson);
-        values.put("created_at", now);
-        return getWritableDatabase().insert("context_event", null, values);
+        if (mManager == null) {
+            return -1L;
+        }
+        JSONObject event = new JSONObject();
+        try {
+            event.put("source_type", sourceType == null ? "" : sourceType)
+                    .put("source_app", sourceApp == null ? "" : sourceApp)
+                    .put("source_record_id", sourceRecordId == null ? "" : sourceRecordId)
+                    .put("observed_at", observedAtMillis)
+                    .put("title", title == null ? "" : title)
+                    .put("text", text == null ? "" : text)
+                    .put("payload_json", payloadJson == null ? "{}" : payloadJson);
+        } catch (JSONException e) {
+            return -1L;
+        }
+        try {
+            JSONObject result = parseOrEmpty(mManager.insertEvent(event.toString()));
+            return result.optLong("id", -1L);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Context insert failed", e);
+            return -1L;
+        }
+    }
+
+    private List<ContextEvent> queryEvents(String query, String sourceType,
+            String sourceTypePrefix, int limit) {
+        List<ContextEvent> events = new ArrayList<>();
+        if (mManager == null) {
+            return events;
+        }
+        int boundedLimit = Math.max(1, Math.min(limit, 50));
+        JSONObject request = new JSONObject();
+        try {
+            request.put("query", query == null ? "" : query)
+                    .put("source_type", sourceType == null ? "" : sourceType)
+                    .put("source_type_prefix", sourceTypePrefix == null ? "" : sourceTypePrefix)
+                    .put("limit", boundedLimit);
+        } catch (JSONException e) {
+            return events;
+        }
+        JSONObject response;
+        try {
+            response = parseOrEmpty(mManager.queryEvents(request.toString()));
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Context query failed", e);
+            return events;
+        }
+        JSONArray array = response.optJSONArray("events");
+        if (array == null) {
+            return events;
+        }
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject event = array.optJSONObject(i);
+            if (event == null) {
+                continue;
+            }
+            events.add(new ContextEvent(
+                    event.optLong("id"),
+                    event.optString("source_type", ""),
+                    event.optString("source_app", ""),
+                    event.optString("source_record_id", ""),
+                    event.optLong("observed_at"),
+                    event.optString("title", ""),
+                    event.optString("text", ""),
+                    event.optString("payload_json", "{}")));
+        }
+        return events;
     }
 
     private int backfillMessages(String rawMessages, String sessionId) {
@@ -351,20 +390,6 @@ public final class ContextIndexStore extends SQLiteOpenHelper {
                     ? "{}" : payloadJson);
         } catch (JSONException e) {
             return new JSONObject();
-        }
-    }
-
-    private static void readEvents(Cursor cursor, List<ContextEvent> events) {
-        while (cursor.moveToNext()) {
-            events.add(new ContextEvent(
-                    cursor.getLong(0),
-                    cursor.getString(1),
-                    cursor.getString(2),
-                    cursor.getString(3),
-                    cursor.getLong(4),
-                    cursor.getString(5),
-                    cursor.getString(6),
-                    cursor.getString(7)));
         }
     }
 
