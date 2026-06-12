@@ -1766,7 +1766,15 @@ Goal: productionize privileged integration.
 Tasks:
 
 - Move screen/UI hierarchy extraction from assistant-side development path to
-  framework-owned services.
+  framework-owned services. (FIRST SLICE DONE 2026-06-12, commit
+  `b865375`: framework-mediated UI tree snapshot path —
+  `submitUiTreeSnapshot`/`getUiTreeSnapshot` AIDL methods gated by
+  `SUBMIT_UI_TREE_SNAPSHOT` signature permission; system_server caches
+  the snapshot with a 30s TTL and merges it into `getScreenContext`.
+  Patch `patches/frameworks_base/0017`. OTA sideloaded; 350+ snapshots
+  recorded through the binder path on the device. Audit recording is
+  rate-limited to 1 entry/min/producer. Remaining: framework-owned
+  OCR + content-provider image references + scoped data minimization.)
 - Harden SELinux domains. (FIRST SLICE DONE 2026-06-11: dedicated
   `openphone_system_data_file` type added in private/file.te +
   file_contexts mapping for `/data/system/openphone/`,
@@ -1792,6 +1800,19 @@ Tasks:
   DROP TABLE; validated on device with a real v1→v2 upgrade over live
   data.)
 - Add release/eval test suites.
+- Add forensic-archive for tampered audit events. (Honest gap from
+  the audit hash-chain slice: when verification breaks, the
+  unverifiable suffix is currently truncated and lost. Future
+  slice: copy that suffix into a sealed
+  `tampered-audit-<wallclock>.json` archive that an auditor can
+  inspect.)
+
+**Phase 10 hardening progress overall:** of the seven items above,
+five have first slices landed (OTA migrations, screen extraction,
+SELinux domains, audit storage, store promotions). Two remain
+unstarted: process separation (assistant UI vs. orchestrator vs.
+executors) and broker identity/session hardening. Release/eval
+test suites and forensic-archive are honest gaps still pending.
 
 Exit criteria:
 

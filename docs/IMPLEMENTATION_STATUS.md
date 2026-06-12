@@ -5,33 +5,58 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=112`, `versionName=0.1.76-dev`.
+`versionCode=121`, `versionName=0.1.85-dev`.
 
-**Tree state (2026-06-11):** the working tree compiles and
-`./scripts/check.sh` is fully green, including the Java compile gate added
-in Phase 0 (55 assistant files against android-35). Phases 0, A, and B of
-the spine-first plan are code-complete and device-validated, and eight
-Phase C connector slices (calendar-from-message, model-backed semantic
-watcher evaluation, browser/page context deepening, model-backed AI Sheet
-screen answers, message-reply watchers, the AI Island 8-state machine
-with YOLO visual state, calendar depth —
+**Tree state (2026-06-13):** working tree clean, `./scripts/check.sh`
+green (56 assistant files against android-35). Phases 0, A, and B of
+the spine-first plan are code-complete and device-validated, plus
+eight Phase C connector slices (calendar-from-message, model-backed
+semantic watcher evaluation, browser/page context deepening,
+model-backed AI Sheet screen answers, message-reply watchers, the AI
+Island 8-state machine with YOLO visual state, calendar depth —
 update/delete/check-availability — and phone depth — missed-call
-follow-ups + call-back watchers) passed reviewed device smokes, plus two
-Phase 10 hardening slices (OTA-safe store migrations; context index
-promoted to an OS-owned `system_server` service; memory + commitment +
-watcher stores promoted to a second OS-owned `system_server` service —
-`openphone_assistant_data` — closing the Phase 10 store-promotion
-track). See "Architecture Audit and Revised Direction" below for the
-full record.
+follow-ups + call-back watchers).
 
-The last fully validated slice is the assistant-data OS-service
-promotion (full OTA
-`.worktree/artifacts/tegu/openphone_tegu-assistant-data-service-ota.zip`,
-`sha256=095f0aa520ee2f390fc858732ca4767bf15e819282137538bd76999b957d883c`,
-sideloaded; assistant v113 0.1.77-dev APK
-`OpenPhoneAssistant-assistant-data-v1.apk`
-`sha256=b72d3b304529fb0de6f7bac56559ba4753bd42514d0e9199c1d7594e8496ec93`
-pushed onto `/system_ext`; pre-OTA legacy rows migrated 1:1 into
+Phase 10 hardening completed slices (in landing order):
+1. OTA-safe store migrations across all four assistant stores
+   (commit `664404b`).
+2. Context index promoted to OS-owned `openphone_context`
+   `system_server` service (commit `a29ab98`).
+3. Memory + commitment + watcher stores promoted to OS-owned
+   `openphone_assistant_data` `system_server` service (commit
+   `d1b02c8`) — closes the Phase 10 store-promotion track.
+4. SELinux: dedicated `openphone_system_data_file` label +
+   `neverallow` rules (commit `2162b01`).
+5. Audit log: SHA-256 hash chain + 256KB rotation (commit
+   `d7ca0e6`).
+6. Framework-mediated UI tree snapshot path (commit `b865375`).
+7. Island-finish gate fix — terminal states bypass the
+   running-task gate so the glow stops persisting (commit
+   `4e8ec38`).
+8. Dynamic island redesign — expanded body text, smooth
+   ValueAnimator tween below the camera, full reply path coverage,
+   inline Approve / Deny buttons, longer voice capture window
+   (commit `bedb611`). Companion gate fix is the previous slice.
+
+OTA sideload order on the Pixel 9a (most recent last):
+1. `openphone_tegu-assistant-data-service-ota.zip` —
+   `095f0aa520ee2f390fc858732ca4767bf15e819282137538bd76999b957d883c`
+   — patches `frameworks_base/0015` + `system_sepolicy/0003`.
+2. `openphone_tegu-sepolicy-hardening-ota.zip` —
+   `7a507bb05492c0a75f9512282ada035d305659bb9250963e4173fa10093a9271`
+   — patch `system_sepolicy/0004`.
+3. `openphone_tegu-audit-hardening-ota.zip` —
+   `65bdad409a1796ad2237b22e9e4ae76130ed3e7c595cbd90a61476e8f6cb1163`
+   — patch `frameworks_base/0016`.
+4. `openphone_tegu-screen-extraction-ota.zip` —
+   `0fdb57725c47334d741e2c3d081803c3e9d68076ebfd4cfcf8b80b9fa9056757`
+   — patch `frameworks_base/0017`. Current device build:
+   `ro.build.version.incremental=1781255333`.
+
+After the screen-extraction OTA the assistant APK iterates without
+needing another full reboot cycle. The current APK on the device is
+v121 0.1.85-dev, sha256
+`9f1d37fde773767f5770a3045d9b39ad790227d320a7daa61a53aee10c9b5eb1`.
 `/data/system/openphone/assistant_data.db` with row ids preserved —
 2 memories, 4 commitments, 9 watchers, including three sentinel
 marker rows that kept their exact pre-OTA ids), with the device
@@ -2139,6 +2164,109 @@ runs before logcat starts buffering system_server's PID; an
 auditor would see the broken state via the
 `audit_chain_verified=false` field returned by `getServiceStatus`.
 
+### Phase 10 hardening: framework-mediated UI tree snapshot (2026-06-12)
+
+Sixth Phase 10 hardening slice: routes the accessibility-derived
+UI tree snapshot through `system_server` so privileged consumers no
+longer need to bind the assistant accessibility service directly.
+
+Patch:
+- `patches/frameworks_base/0017-OpenPhone-framework-mediated-UI-tree-snapshot.patch`
+  (EC2 commit `605c44982c09`) adds
+  `submitUiTreeSnapshot`/`getUiTreeSnapshot` to
+  `IOpenPhoneAgentService`, gated by a new
+  `org.openphone.permission.SUBMIT_UI_TREE_SNAPSHOT` signature
+  permission. The framework caches the most recent snapshot with a
+  30-second TTL, and `getScreenContext` merges its
+  `visible_text`/`interactive_elements` into the response when the
+  cache is fresh. `OpenPhoneAccessibilityService.refreshSnapshot`
+  pushes through the manager on each accessibility event.
+
+Audit rate-limit: ui_tree_snapshot_submitted previously fired
+several times per second from the accessibility service and pushed
+real audit events out of the 200-deep ring buffer. The recordAudit
+call now coalesces snapshot events to one entry per minute per
+producer, with a `coalesced=N` count in the detail string.
+
+Build & install:
+- Full OTA `openphone_tegu-screen-extraction-ota.zip` sha256
+  `0fdb57725c47334d741e2c3d081803c3e9d68076ebfd4cfcf8b80b9fa9056757`.
+  Sideloaded onto the Pixel 9a;
+  `ro.build.version.incremental` 1781177588 → 1781255333.
+- v116 0.1.80-dev assistant APK
+  `OpenPhoneAssistant-assistant-data-v1.apk` rebuilt and pushed
+  separately because the OTA's APK lost a manifest version race
+  (the same gotcha already documented in the assistant-data
+  promotion slice).
+
+Device validation: 350 audit events written across two assistant
+launches, all of type `ui_tree_snapshot_submitted` with
+`caller_uid=10177` (assistant uid) and stable
+`bytes=1519/1520` payload sizes; `chain_head` advanced through the
+tamper-evident chain seamlessly. Both `openphone_agent` and
+`openphone_assistant_data` services still registered.
+
+### Phase 10 hardening: island-finish gate fix (2026-06-12)
+
+Companion bug fix to the dynamic island redesign. `updateIsland()`
+was gated on `(mIslandVoiceLaunch || mActiveTaskId != null ||
+mAgentThread != null)`, but `postOneShotReply` cleared
+`mAgentThread` and `mActiveTaskId` BEFORE calling
+`updateIsland("Done")`, so the `answer_ready` transition was
+suppressed and the island stayed stuck on the running glow.
+
+Fix (commit `4e8ec38`): always allow terminal-state transitions
+(`answer_ready`, `idle`, `error`, `needs_review`) through,
+regardless of the gate. v117 0.1.81-dev APK sha256
+`95bfe4f7b52f0dc98af26a951b981b14ac13336ea8fb6695898e1339f3b394eb`,
+device-validated: asking the assistant something now returns the
+island to the mic when the reply lands.
+
+### Phase 10 hardening: dynamic island redesign (2026-06-13)
+
+Eighth Phase 10 hardening slice. Replaces the fixed-height
+`[left text][right glyph]` island with a state-aware surface that
+expands downward from below the camera punch-hole when there is
+something for the user to read or decide.
+
+Changes (commit `bedb611`):
+- `PointerOverlayController` adds an expanded vertical column
+  alongside the compact two-cell row. A single `ValueAnimator` with
+  Material standard easing drives a smooth tween of width / height
+  / x / y on the WindowManager LayoutParams (the previous attempt
+  used six hand-stepped `postDelayed` callbacks and stuttered).
+- New `showReply(String)` API plus a 7-second auto-collapse
+  handler shows the assistant's actual answer text instead of
+  just "Done ✓".
+- Multi-line transcript expands when the user's question is
+  longer than ~28 characters.
+- `needs_review` expands and renders inline Approve / Deny
+  buttons. The buttons route through
+  `AssistantActivityBackend.confirmPendingFromOverlay` (new
+  `EXTRA_CONFIRM_APPROVE` / `EXTRA_CONFIRM_DENY` extras on
+  `AgentControlActivity`) so the user can confirm without opening
+  the full app.
+- Compact island: 620×96 at y=8. Expanded island: 940 wide,
+  height clamped to [140, 520] based on measured content, anchored
+  at y=168 so wrapped text never paints behind the camera.
+- All five assistant reply paths now call `showReply`: chat-only
+  reply, one-shot reply, orchestrator decision-direct reply,
+  summarize-after-confirm, screen-question final reply, and agent
+  task-finished result. (The first slice only covered two paths,
+  which is why "can you see what's on my screen?" never displayed
+  an island reply.)
+- `VOICE_CAPTURE_MILLIS` 12s → 30s and
+  `OpenAiSpeechTranscriber.END_SILENCE_MILLIS` 1100ms → 1700ms.
+  Long screen questions were hitting the cap and natural
+  mid-sentence pauses cut the user off.
+
+v121 0.1.85-dev APK sha256
+`9f1d37fde773767f5770a3045d9b39ad790227d320a7daa61a53aee10c9b5eb1`,
+on the Pixel 9a after iterating from v118 → v121 in response to
+visual feedback (initial v118 grew barely; v119 added
+ValueAnimator + below-camera positioning; v120 fixed all five
+reply paths; v121 added inline Approve/Deny).
+
 ## Not Yet Implemented
 
 - Hardware validation on the Pixel 9a. Full OpenPhone now boots and the
@@ -2861,34 +2989,45 @@ Pixel 9a assistant trajectory-export OTA evidence:
 
 ## Next Engineering Step
 
-Phases 0, A, and B plus eight Phase C slices
-(`calendar.create_event_from_message`, model-backed semantic watcher
-evaluation, browser/page context deepening, model-backed AI Sheet
-screen answers, message-reply watchers, the AI Island 8-state machine
-with YOLO visual state, calendar depth —
-update/delete/check-availability — and phone depth — missed-call
-follow-ups, contact-name joins, call-back watchers) are complete and
-device-validated (see the Phase C slice sections above), plus two
-Phase 10 hardening slices completed and device-validated: OTA-safe
-store migrations (all four stores use stepwise additive `onUpgrade`,
-validated with a real v1→v2 upgrade on device); the context index
-promoted into the OS-owned `openphone_context` `system_server`
-service (full OTA sideloaded; 1297 legacy events migrated into
-`/data/system/openphone/context_index.db`; end-to-end
-`context_search` smoke green); and the **assistant data store**
-(memory + commitment + watcher) promoted into a second OS-owned
-`openphone_assistant_data` `system_server` service (full OTA
-sideloaded; 2 memories + 4 commitments + 9 watchers migrated 1:1
-with row ids preserved into `/data/system/openphone/assistant_data.db`;
-end-to-end `memory_save` binder write smoke green under
-`autonomy=yolo`, autonomy gate also confirmed under `reviewed`).
-The Phase 10 store-promotion track is now complete; continue Phase 10
-hardening with the remaining items (framework-owned screen
-extraction, SELinux hardening, UI/orchestrator/executor process
-separation, broker identity/session hardening, production audit
-storage/export, release/eval test suites) — each slice closing with
-the standard EC2 build / install / reviewed + YOLO smoke / evidence
-flow.
+**Phase 10 hardening slices completed (in landing order):**
+OTA-safe store migrations (commit `664404b`); context index OS
+service (commit `a29ab98`); assistant data OS service (commit
+`d1b02c8`, closes the store-promotion track); SELinux lockdown of
+`/data/system/openphone/` (commit `2162b01`); tamper-evident audit
+log with SHA-256 hash chain + 256KB rotation (commit `d7ca0e6`);
+framework-mediated UI tree snapshot path (commit `b865375`);
+island-finish gate fix (commit `4e8ec38`); dynamic island redesign
+with reply text, smooth ValueAnimator tween below the camera, full
+reply path coverage, inline Approve/Deny buttons, and longer voice
+capture window (commit `bedb611`).
+
+**Remaining Phase 10 backlog from THE_MASTER_PLAN.md** — to be
+sliced and prioritized with the user before grinding through:
+
+- **Process separation** of the assistant UI vs. orchestrator vs.
+  action executors. Currently they all live in
+  `org.openphone.assistant`'s single process. Splitting requires
+  service IPC design and is a multi-day refactor.
+- **Broker identity / session hardening.** The dev key path lives
+  in `Settings.Secure.openphone_dev_openai_api_key` on userdebug.
+  Production needs device attestation, signed session tokens with
+  short TTL, and stronger rate limits.
+- **Release / eval test suites.** A reproducible eval harness that
+  runs trajectory smokes on every patch, plus a release script
+  that signs the OTA with the production key (the wrapper exists
+  but has not produced a signed release).
+- **Forensic-archive for tampered audit events.** Honest gap from
+  the audit hardening slice: when the chain breaks, the suffix is
+  truncated and lost. Future slice: copy the unverifiable suffix
+  into a sealed `tampered-audit-<wallclock>.json` archive that an
+  auditor can inspect, instead of dropping it.
+
+Standing workflow rules remain unchanged: use the privileged
+assistant APK push for assistant-only changes; full OTA only for
+framework / sepolicy / SystemUI / boot-chain changes; collect
+audit evidence with the assistant's Export Audit control; record
+artifact SHAs and trajectory paths here after every validated
+slice.
 
 Standing workflow rules remain unchanged: use the privileged assistant APK
 push for assistant-only changes and full OTA only for framework/sepolicy/
