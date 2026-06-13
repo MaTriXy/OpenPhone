@@ -16,9 +16,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Base64;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.RoundedCorner;
 import android.view.View;
 import android.view.WindowManager;
@@ -63,14 +61,10 @@ public final class PointerOverlayController {
     private static final int CAMERA_RESERVED_WIDTH = 134;
     private static final int CAMERA_ISLAND_FALLBACK_TOP = 8;
     private static final int ACTION_LABEL_GAP = 12;
-    private static final int SHEET_WIDTH_MARGIN = 42;
-    private static final int SHEET_TOP_GAP = 18;
-    private static final int SHEET_SWIPE_THRESHOLD = 54;
     private static final int GLOW_STROKE_WIDTH = 76;
     private static final int GLOW_BLUR_RADIUS = 118;
     private static final int GLOW_CORE_STROKE_WIDTH = 8;
     private static final int GLOW_EDGE_INSET = 1;
-    private static final long OPEN_APP_HOLD_MS = 5000;
     private static final long MAX_VISIBLE_MS = 5 * 60 * 1000;
     private static final long DONE_VISIBLE_MS = 2200;
     private static final Set<PointerOverlayController> sControllers =
@@ -84,9 +78,11 @@ public final class PointerOverlayController {
     private WindowManager mWindowManager;
     private FrameLayout mRoot;
     private FrameLayout mIslandRoot;
-    private FrameLayout mSheetRoot;
+    // The "Ask OpenPhone" sheet (Screen / Chat / Search / Notifications /
+    // Settings buttons floating below the island) was removed 2026-06-13 —
+    // user feedback was that the buttons were clutter and the island should
+    // only surface contextual actions (e.g. Approve / Deny in needs_review).
     private WindowManager.LayoutParams mIslandParams;
-    private WindowManager.LayoutParams mSheetParams;
     private GlowBorderView mGlowView;
     private View mDot;
     private TextView mLeftIslandText;
@@ -97,12 +93,7 @@ public final class PointerOverlayController {
     private LinearLayout mIslandActionRow;
     private TextView mApproveButton;
     private TextView mDenyButton;
-    private TextView mSheetStatusText;
-    private LinearLayout mSheetActionRows;
     private TextView mActionLabel;
-    private boolean mOpenAppHoldTriggered;
-    private boolean mIslandSheetGesture;
-    private boolean mSheetExpanded;
     private String mMode = "idle";
     private String mStateDetail = "";
     private String mTranscriptText = "";
@@ -162,20 +153,19 @@ public final class PointerOverlayController {
                 } catch (RuntimeException ignored) {
                 }
             }
-            removeAiSheet();
             mRoot = null;
             mIslandRoot = null;
-            mSheetRoot = null;
             mIslandParams = null;
-            mSheetParams = null;
             mDot = null;
             mGlowView = null;
             mLeftIslandText = null;
             mRightIslandText = null;
             mIslandCompactRow = null;
+            mIslandExpandedColumn = null;
             mIslandBodyText = null;
-            mSheetStatusText = null;
-            mSheetActionRows = null;
+            mIslandActionRow = null;
+            mApproveButton = null;
+            mDenyButton = null;
             mActionLabel = null;
         });
     }
@@ -457,77 +447,14 @@ public final class PointerOverlayController {
         mIslandRoot.setFocusable(false);
         mIslandRoot.setBackground(chipBackground(mYoloActive));
         mIslandRoot.setPadding(10, 0, 10, 0);
-        mIslandRoot.setOnTouchListener(new View.OnTouchListener() {
-            private final Runnable mOpenApp = new Runnable() {
-                @Override
-                public void run() {
-                    mOpenAppHoldTriggered = true;
-                    launchFullAssistant();
-                }
-            };
-
-            @Override
-            public boolean onTouch(View view, MotionEvent event) {
-                switch (event.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        mOpenAppHoldTriggered = false;
-                        mIslandSheetGesture = false;
-                        mHandler.postDelayed(mOpenApp, OPEN_APP_HOLD_MS);
-                        view.setTag(Float.valueOf(event.getRawY()));
-                        return true;
-                    case MotionEvent.ACTION_MOVE:
-                        Object downY = view.getTag();
-                        if (downY instanceof Float
-                                && event.getRawY() - ((Float) downY).floatValue()
-                                > SHEET_SWIPE_THRESHOLD) {
-                            mHandler.removeCallbacks(mOpenApp);
-                            showAiSheet(true);
-                            mIslandSheetGesture = true;
-                            view.setTag(null);
-                        }
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        mHandler.removeCallbacks(mOpenApp);
-                        Object startY = view.getTag();
-                        view.setTag(null);
-                        if (mIslandSheetGesture) {
-                            mIslandSheetGesture = false;
-                            return true;
-                        }
-                        if (!mOpenAppHoldTriggered && startY instanceof Float
-                                && event.getRawY() - ((Float) startY).floatValue()
-                                > SHEET_SWIPE_THRESHOLD) {
-                            showAiSheet(true);
-                        } else if (!mOpenAppHoldTriggered) {
-                            if ("action_running".equals(mMode) || "thinking".equals(mMode)) {
-                                if (event.getX() < view.getWidth() / 2f) {
-                                    launchVoiceCapture();
-                                } else {
-                                    launchStopAgent();
-                                }
-                            } else if ("listening".equals(mMode)) {
-                                launchStopAgent();
-                            } else if ("needs_review".equals(mMode)
-                                    || "error".equals(mMode)) {
-                                launchFullAssistant();
-                            } else {
-                                if (event.getX() < view.getWidth() / 2f) {
-                                    showAiSheet(false);
-                                } else {
-                                    launchVoiceCapture();
-                                }
-                            }
-                        }
-                        return true;
-                    case MotionEvent.ACTION_CANCEL:
-                        mHandler.removeCallbacks(mOpenApp);
-                        mIslandSheetGesture = false;
-                        view.setTag(null);
-                        return true;
-                    default:
-                        return true;
-                }
-            }
+        // Use OnClick / OnLongClick rather than a blanket OnTouchListener so
+        // children inside the expanded island (Approve / Deny buttons) keep
+        // receiving their own clicks. The previous OnTouchListener returned
+        // true for every event and stole the touch from the button views.
+        mIslandRoot.setOnClickListener(view -> handleIslandTap(view));
+        mIslandRoot.setOnLongClickListener(view -> {
+            launchFullAssistant();
+            return true;
         });
         LinearLayout row = new LinearLayout(mContext);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -629,224 +556,37 @@ public final class PointerOverlayController {
         }
     }
 
-    private void showAiSheet(boolean expanded) {
-        ensureIslandWindow();
-        ensureAiSheetWindow(expanded);
-        updateAiSheetViews(expanded);
-    }
-
-    private void ensureAiSheetWindow(boolean expanded) {
-        if (mWindowManager == null) {
-            mWindowManager = mContext.getSystemService(WindowManager.class);
-        }
-        if (mWindowManager == null) {
-            return;
-        }
-        mSheetExpanded = expanded;
-        if (mSheetRoot != null) {
-            return;
-        }
-        mSheetRoot = new FrameLayout(mContext);
-        mSheetRoot.setClickable(true);
-        mSheetRoot.setFocusable(false);
-        mSheetRoot.setBackground(sheetBackground());
-        mSheetRoot.setPadding(28, 22, 28, 22);
-
-        LinearLayout content = new LinearLayout(mContext);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setGravity(Gravity.CENTER_HORIZONTAL);
-        mSheetRoot.addView(content, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout header = new LinearLayout(mContext);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        content.addView(header, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        TextView title = sheetTitle("Ask OpenPhone");
-        header.addView(title, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView close = sheetButton("Close");
-        close.setOnClickListener(view -> removeAiSheet());
-        header.addView(close, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        mSheetStatusText = sheetStatus();
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        statusParams.topMargin = 12;
-        content.addView(mSheetStatusText, statusParams);
-
-        mSheetActionRows = new LinearLayout(mContext);
-        mSheetActionRows.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        actionsParams.topMargin = 16;
-        content.addView(mSheetActionRows, actionsParams);
-
-        mSheetParams = new WindowManager.LayoutParams(
-                Math.max(1, displayWidth() - SHEET_WIDTH_MARGIN * 2),
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_SYSTEM_ERROR,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
-        mSheetParams.gravity = Gravity.TOP | Gravity.LEFT;
-        mSheetParams.layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
-        mSheetParams.x = SHEET_WIDTH_MARGIN;
-        mSheetParams.y = CAMERA_ISLAND_FALLBACK_TOP + ISLAND_HEIGHT + SHEET_TOP_GAP;
-        try {
-            mWindowManager.addView(mSheetRoot, mSheetParams);
-        } catch (RuntimeException ignored) {
-            mSheetRoot = null;
-            mSheetParams = null;
-            mSheetStatusText = null;
-            mSheetActionRows = null;
-        }
-    }
-
-    private void updateAiSheetViews(boolean expanded) {
-        if (mSheetRoot == null || mSheetActionRows == null) {
-            return;
-        }
-        mSheetExpanded = expanded;
-        if (mSheetStatusText != null) {
-            mSheetStatusText.setText(sheetStatusText());
-        }
-        mSheetActionRows.removeAllViews();
-        addSheetRow(sheetButton("Talk", view -> {
-            removeAiSheet();
-            launchVoiceCapture();
-        }), sheetButton("Stop", view -> {
-            removeAiSheet();
+    /**
+     * Tap routing for the island. The previous design opened an "Ask
+     * OpenPhone" sheet with Screen / Chat / Search / Notifications / Settings
+     * buttons; user feedback was that the sheet was clutter — the island
+     * should only surface contextual actions (e.g. Approve / Deny when the
+     * agent asks for review). Now: a tap on the body launches the relevant
+     * action for the current state, and child views (the Approve / Deny
+     * buttons) handle their own clicks.
+     */
+    private void handleIslandTap(View view) {
+        if ("listening".equals(mMode) || "action_running".equals(mMode)
+                || "thinking".equals(mMode)) {
             launchStopAgent();
-        }));
-        addSheetRow(sheetButton("Chat", view -> {
-            removeAiSheet();
+            return;
+        }
+        if ("needs_review".equals(mMode) || "error".equals(mMode)
+                || "reply".equals(mMode) || "transcript".equals(mMode)) {
             launchFullAssistant();
-        }), sheetButton("Screen", view -> {
-            requestScreenAnswer("What's on my screen?");
-        }));
-        if (expanded) {
-            addSheetRow(sheetButton("Summarize", view -> {
-                requestScreenAnswer("Summarize what is visible on my screen.");
-            }), sheetButton("Search", view -> {
-                removeAiSheet();
-                launchGoal("Search the web for what I ask next.");
-            }));
-            addSheetRow(sheetButton("Notifications", view -> {
-                removeAiSheet();
-                launchGoal("Review my current notifications and tell me what needs attention.");
-            }), sheetButton("Settings", view -> {
-                removeAiSheet();
-                launchFullAssistant();
-            }));
-        } else {
-            TextView expand = sheetButton("More");
-            expand.setOnClickListener(view -> updateAiSheetViews(true));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT);
-            params.topMargin = 10;
-            mSheetActionRows.addView(expand, params);
-        }
-    }
-
-    private void requestScreenAnswer(String prompt) {
-        if (mScreenAnswerProvider == null) {
-            removeAiSheet();
-            launchGoal(prompt);
             return;
         }
-        ensureAiSheetWindow(true);
-        mSheetExpanded = true;
-        if (mSheetStatusText != null) {
-            mSheetStatusText.setText("Reading screen");
-        }
-        if (mSheetActionRows != null) {
-            mSheetActionRows.removeAllViews();
-            mSheetActionRows.addView(sheetAnswerCard("Looking at the current screen..."),
-                    fullWidthSheetParams(0));
-        }
-        mScreenAnswerProvider.answerScreen(prompt, answer ->
-                mHandler.post(() -> showScreenAnswer(prompt, answer)));
+        // idle / answer_ready / watching
+        launchVoiceCapture();
     }
 
-    private void showScreenAnswer(String prompt, String answer) {
-        ensureAiSheetWindow(true);
-        if (mSheetStatusText != null) {
-            mSheetStatusText.setText("Screen answer");
-        }
-        if (mSheetActionRows == null) {
-            return;
-        }
-        mSheetActionRows.removeAllViews();
-        mSheetActionRows.addView(sheetAnswerCard(answer == null || answer.trim().isEmpty()
-                ? "I could not read enough from this screen." : answer.trim()),
-                fullWidthSheetParams(0));
-        addSheetRow(sheetButton("Refresh", view -> requestScreenAnswer(prompt)),
-                sheetButton("Chat", view -> {
-                    removeAiSheet();
-                    launchFullAssistant();
-                }));
-        TextView close = sheetButton("Close");
-        close.setOnClickListener(view -> removeAiSheet());
-        mSheetActionRows.addView(close, fullWidthSheetParams(10));
-    }
-
-    private void addSheetRow(TextView first, TextView second) {
-        if (mSheetActionRows == null) {
-            return;
-        }
-        LinearLayout row = new LinearLayout(mContext);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        rowParams.topMargin = mSheetActionRows.getChildCount() == 0 ? 0 : 10;
-        mSheetActionRows.addView(row, rowParams);
-        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        row.addView(first, buttonParams);
-        LinearLayout.LayoutParams secondParams = new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        secondParams.leftMargin = 10;
-        row.addView(second, secondParams);
-    }
-
-    private static LinearLayout.LayoutParams fullWidthSheetParams(int topMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        params.topMargin = topMargin;
-        return params;
-    }
-
+    /**
+     * No-op. The "Ask OpenPhone" sheet was removed; the field is kept in the
+     * controller so legacy code paths that still call removeAiSheet during
+     * cleanup do not need to be touched.
+     */
     private void removeAiSheet() {
-        if (mWindowManager == null || mSheetRoot == null) {
-            mSheetRoot = null;
-            mSheetParams = null;
-            mSheetStatusText = null;
-            mSheetActionRows = null;
-            return;
-        }
-        try {
-            mWindowManager.removeView(mSheetRoot);
-        } catch (RuntimeException ignored) {
-        }
-        mSheetRoot = null;
-        mSheetParams = null;
-        mSheetStatusText = null;
-        mSheetActionRows = null;
+        // intentionally empty
     }
 
     private void removeIslandNow() {
@@ -879,38 +619,6 @@ public final class PointerOverlayController {
         mIslandCompactRow = null;
         mIslandBodyText = null;
         mActionLabel = null;
-    }
-
-    private String sheetStatusText() {
-        if ("action_running".equals(mMode)) {
-            return "Agent running";
-        }
-        if ("thinking".equals(mMode)) {
-            return "Thinking";
-        }
-        if ("listening".equals(mMode)) {
-            return "Listening";
-        }
-        if ("transcript".equals(mMode)) {
-            return mTranscriptText == null || mTranscriptText.isEmpty()
-                    ? "Heard your request" : mTranscriptText;
-        }
-        if ("answer_ready".equals(mMode)) {
-            return "Done";
-        }
-        if ("needs_review".equals(mMode)) {
-            return mStateDetail == null || mStateDetail.isEmpty()
-                    ? "Approval needed" : mStateDetail;
-        }
-        if ("error".equals(mMode)) {
-            return mStateDetail == null || mStateDetail.isEmpty()
-                    ? "Something failed" : mStateDetail;
-        }
-        if ("watching".equals(mMode)) {
-            return mWatchingCount > 1
-                    ? mWatchingCount + " watchers active" : "Watching in background";
-        }
-        return "Ready";
     }
 
     private TextView islandText() {
@@ -980,9 +688,6 @@ public final class PointerOverlayController {
             mLeftIslandText.setText(yoloPrefix() + "AI");
             mRightIslandText.setText("◉");
             mRightIslandText.setTextColor(0xff72e0c4);
-        }
-        if (mSheetRoot != null) {
-            updateAiSheetViews(mSheetExpanded);
         }
     }
 
@@ -1324,71 +1029,6 @@ public final class PointerOverlayController {
         }
     }
 
-    private void launchGoal(String goal) {
-        Intent intent = new Intent(mContext, MainActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        intent.putExtra("org.openphone.assistant.extra.GOAL_BASE64",
-                Base64.encodeToString(goal.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        Base64.NO_WRAP));
-        intent.putExtra("org.openphone.assistant.extra.RUN", true);
-        try {
-            mContext.startActivity(intent);
-        } catch (RuntimeException ignored) {
-        }
-    }
-
-    private TextView sheetTitle(String text) {
-        TextView view = new TextView(mContext);
-        view.setText(text);
-        view.setTextColor(0xfff4f7f8);
-        view.setTextSize(18);
-        view.setTypeface(Typeface.DEFAULT_BOLD);
-        view.setSingleLine(true);
-        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        return view;
-    }
-
-    private TextView sheetStatus() {
-        TextView view = new TextView(mContext);
-        view.setTextColor(0xccf4f7f8);
-        view.setTextSize(13);
-        view.setSingleLine(true);
-        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        return view;
-    }
-
-    private TextView sheetButton(String text) {
-        return sheetButton(text, null);
-    }
-
-    private TextView sheetButton(String text, View.OnClickListener listener) {
-        TextView view = new TextView(mContext);
-        view.setText(text);
-        view.setTextColor(0xfff4f7f8);
-        view.setTextSize(14);
-        view.setTypeface(Typeface.DEFAULT_BOLD);
-        view.setGravity(Gravity.CENTER);
-        view.setSingleLine(true);
-        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        view.setPadding(18, 14, 18, 14);
-        view.setBackground(sheetButtonBackground());
-        if (listener != null) {
-            view.setOnClickListener(listener);
-        }
-        return view;
-    }
-
-    private TextView sheetAnswerCard(String text) {
-        TextView view = new TextView(mContext);
-        view.setText(text == null ? "" : text);
-        view.setTextColor(0xfff4f7f8);
-        view.setTextSize(14);
-        view.setLineSpacing(2f, 1.05f);
-        view.setPadding(20, 18, 20, 18);
-        view.setBackground(sheetAnswerBackground());
-        return view;
-    }
-
     private static GradientDrawable chipBackground(boolean yoloActive) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(0xff000000);
@@ -1412,30 +1052,6 @@ public final class PointerOverlayController {
         drawable.setColor(0xee72e0c4);
         drawable.setCornerRadius(28);
         drawable.setStroke(2, 0xaa101418);
-        return drawable;
-    }
-
-    private static GradientDrawable sheetBackground() {
-        GradientDrawable drawable = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{0xee11161d, 0xee1b2330, 0xee101418});
-        drawable.setCornerRadius(34);
-        drawable.setStroke(2, 0x5572e0c4);
-        return drawable;
-    }
-
-    private static GradientDrawable sheetButtonBackground() {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(0x332f3946);
-        drawable.setCornerRadius(24);
-        drawable.setStroke(1, 0x4472e0c4);
-        return drawable;
-    }
-
-    private static GradientDrawable sheetAnswerBackground() {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(0x22364352);
-        drawable.setCornerRadius(24);
-        drawable.setStroke(1, 0x3372e0c4);
         return drawable;
     }
 
