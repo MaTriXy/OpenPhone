@@ -1783,7 +1783,19 @@ Tasks:
   `patches/system_sepolicy/0004`. OTA sideloaded, label change
   auto-applied via restorecon; zero AVC denials and end-to-end
   binder smokes pass.)
-- Separate assistant UI, orchestrator, and executors.
+- Separate assistant UI, orchestrator, and executors. (FIRST SLICE
+  DONE 2026-06-13, commit `e380014`: the accessibility-derived
+  UI-tree producer and the notification listener now run in a
+  dedicated `org.openphone.assistant:listener` process via
+  `android:process=":listener"`. Verified on device:
+  `ps -A | grep openphone` shows two processes
+  (`org.openphone.assistant` + `:listener`).
+  `OpenPhoneAccessibilityService.snapshotJson` now reads from the
+  framework binder cache so in-process callers continue to work
+  with the static-state holder out of process. Remaining: the
+  larger UI / orchestrator / executor split — that needs AIDL
+  boundaries around `mPendingActionId`, `mAgentThread`, and the
+  policy state in AssistantActivityBackend.)
 - Strengthen broker identity/session handling.
 - Add production-grade audit storage and export. (FIRST SLICE DONE
   2026-06-11: tamper-evident hash chain on `audit-log.json` —
@@ -1799,7 +1811,20 @@ Tasks:
   context index — use stepwise additive `onUpgrade` instead of
   DROP TABLE; validated on device with a real v1→v2 upgrade over live
   data.)
-- Add release/eval test suites.
+- Add release/eval test suites. (FIRST SLICE DONE 2026-06-13,
+  commit `5ddf51d`: three GitHub Actions workflows landed.
+  `ci.yml` now provisions JDK 21 + android-35 SDK so
+  `check-assistant-java` runs in CI on every PR/push.
+  `release.yml` is a manual `workflow_dispatch` that builds the
+  openphone_tegu OTA on a self-hosted EC2 runner labeled
+  `openphone-build`, computes sha256, and publishes a GitHub
+  Release (default v0.0.1, pre-release).  `eval.yml` runs the
+  canonical trajectory smoke suite via
+  `scripts/run-eval-suite.sh` on a self-hosted runner labeled
+  `openphone-device` with a Pixel attached, uploading per-task
+  trajectories as a workflow artifact. Self-hosted runners are
+  not yet registered — `.github/RUNNERS.md` is the operator
+  runbook for wiring them up.)
 - Add forensic-archive for tampered audit events. (Honest gap from
   the audit hash-chain slice: when verification breaks, the
   unverifiable suffix is currently truncated and lost. Future
@@ -1808,11 +1833,13 @@ Tasks:
   inspect.)
 
 **Phase 10 hardening progress overall:** of the seven items above,
-five have first slices landed (OTA migrations, screen extraction,
-SELinux domains, audit storage, store promotions). Two remain
-unstarted: process separation (assistant UI vs. orchestrator vs.
-executors) and broker identity/session hardening. Release/eval
-test suites and forensic-archive are honest gaps still pending.
+seven have first slices landed (OTA migrations, screen extraction,
+SELinux domains, audit storage, store promotions, **process
+separation (listener split)**, **release/eval test suites**). One
+remains unstarted: broker identity/session handling — and the user
+has explicitly deferred this since OpenPhone will be open-sourced
+as bring-your-own-key. Forensic-archive for tampered audit events
+is the remaining honest gap.
 
 Exit criteria:
 

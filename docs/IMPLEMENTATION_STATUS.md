@@ -5,7 +5,7 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=121`, `versionName=0.1.85-dev`.
+`versionCode=123`, `versionName=0.1.87-dev`.
 
 **Tree state (2026-06-13):** working tree clean, `./scripts/check.sh`
 green (56 assistant files against android-35). Phases 0, A, and B of
@@ -37,6 +37,24 @@ Phase 10 hardening completed slices (in landing order):
    ValueAnimator tween below the camera, full reply path coverage,
    inline Approve / Deny buttons, longer voice capture window
    (commit `bedb611`). Companion gate fix is the previous slice.
+9. Dynamic island AI-sheet removal + clickable Approve/Deny —
+   strips the "Ask OpenPhone" sheet (clutter) and replaces the
+   blanket OnTouchListener with proper OnClick/OnLongClick so the
+   inline Approve/Deny buttons receive their own taps (commit
+   `f4504e5`).
+10. Process separation slice 1 — accessibility + notification
+    listeners moved to a dedicated `:listener` process, with the
+    `snapshotJson` static helper rewired to read from the
+    framework binder cache so cross-process callers still work
+    (commit `e380014`).
+11. GitHub Actions release / eval / CI workflows — `ci.yml`
+    refreshed with JDK 21 + android-35 SDK; new `release.yml`
+    workflow_dispatch that publishes a tagged GitHub Release with
+    the OTA + sha256 attached (default v0.0.1); new `eval.yml`
+    workflow_dispatch that runs the canonical trajectory smoke
+    suite (`scripts/run-eval-suite.sh`) against a self-hosted
+    runner with a Pixel on USB; `.github/RUNNERS.md` operator
+    runbook (commit `5ddf51d`).
 
 OTA sideload order on the Pixel 9a (most recent last):
 1. `openphone_tegu-assistant-data-service-ota.zip` —
@@ -55,8 +73,8 @@ OTA sideload order on the Pixel 9a (most recent last):
 
 After the screen-extraction OTA the assistant APK iterates without
 needing another full reboot cycle. The current APK on the device is
-v121 0.1.85-dev, sha256
-`9f1d37fde773767f5770a3045d9b39ad790227d320a7daa61a53aee10c9b5eb1`.
+v123 0.1.87-dev, sha256
+`44b6839260f3aa4e7db489e93fbe2536540f025baed3b9727985a2d83afc8344`.
 `/data/system/openphone/assistant_data.db` with row ids preserved —
 2 memories, 4 commitments, 9 watchers, including three sentinel
 marker rows that kept their exact pre-OTA ids), with the device
@@ -2999,28 +3017,30 @@ framework-mediated UI tree snapshot path (commit `b865375`);
 island-finish gate fix (commit `4e8ec38`); dynamic island redesign
 with reply text, smooth ValueAnimator tween below the camera, full
 reply path coverage, inline Approve/Deny buttons, and longer voice
-capture window (commit `bedb611`).
+capture window (commit `bedb611`); dynamic island AI-sheet removal
++ clickable Approve/Deny (commit `f4504e5`); listener-process
+separation, first slice (commit `e380014`); GitHub Actions
+release/eval/CI workflows (commit `5ddf51d`).
 
-**Remaining Phase 10 backlog from THE_MASTER_PLAN.md** — to be
-sliced and prioritized with the user before grinding through:
+**Remaining Phase 10 backlog from THE_MASTER_PLAN.md:**
 
-- **Process separation** of the assistant UI vs. orchestrator vs.
-  action executors. Currently they all live in
-  `org.openphone.assistant`'s single process. Splitting requires
-  service IPC design and is a multi-day refactor.
-- **Broker identity / session hardening.** The dev key path lives
-  in `Settings.Secure.openphone_dev_openai_api_key` on userdebug.
-  Production needs device attestation, signed session tokens with
-  short TTL, and stronger rate limits.
-- **Release / eval test suites.** A reproducible eval harness that
-  runs trajectory smokes on every patch, plus a release script
-  that signs the OTA with the production key (the wrapper exists
-  but has not produced a signed release).
+- **Larger process separation.** The listener split (commit
+  `e380014`) is a first slice. Splitting the orchestrator and
+  executors out of the UI process needs AIDL boundaries around
+  `mPendingActionId`, `mAgentThread`, and policy state in
+  `AssistantActivityBackend`. Multi-day refactor.
+- **Broker identity / session handling.** Explicitly deferred —
+  OpenPhone will ship as open source with bring-your-own-key, so
+  device attestation / signed session tokens are not on the path.
 - **Forensic-archive for tampered audit events.** Honest gap from
   the audit hardening slice: when the chain breaks, the suffix is
   truncated and lost. Future slice: copy the unverifiable suffix
   into a sealed `tampered-audit-<wallclock>.json` archive that an
   auditor can inspect, instead of dropping it.
+
+**v0.0.1 release:** the `release.yml` workflow is wired and ready
+to publish on the first run; needs a self-hosted runner registered
+with the `openphone-build` label. See `.github/RUNNERS.md`.
 
 Standing workflow rules remain unchanged: use the privileged
 assistant APK push for assistant-only changes; full OTA only for
