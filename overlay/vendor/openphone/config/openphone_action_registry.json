@@ -3,7 +3,7 @@
   "actions": [
     {
       "name": "context.search",
-      "description": "Search prior OpenPhone assistant conversation and task context.",
+      "description": "Search prior OpenPhone assistant conversation, task history, and indexed context events. Use this when the user refers to something discussed or done earlier, asks what OpenPhone has been working on, or asks for recent context that is not specific to one app.",
       "model_tool": "context_search",
       "kind": "observe",
       "input_schema_json": {
@@ -1104,7 +1104,7 @@
     },
     {
       "name": "memory.search",
-      "description": "Search durable OpenPhone memories.",
+      "description": "Search durable OpenPhone memories: user preferences, facts, standing instructions, and long-lived personal context. Use before answering questions that depend on remembered user preferences or identity.",
       "model_tool": "memory_search",
       "kind": "observe",
       "input_schema_json": {
@@ -1152,7 +1152,7 @@
     },
     {
       "name": "memory.save",
-      "description": "Save explicit durable user memory.",
+      "description": "Save explicit durable user memory: stable preferences, facts, or standing instructions that should affect future phone behavior. Do not use for one-off reminders or future conditions; use commitments or watchers for those.",
       "model_tool": "memory_save",
       "kind": "action",
       "input_schema_json": {
@@ -1257,7 +1257,7 @@
     },
     {
       "name": "commitments.create",
-      "description": "Create a durable OpenPhone commitment.",
+      "description": "Create a durable OpenPhone commitment for an open loop the phone should remember: reminders, follow-ups, due tasks, promises, or things the user should be brought back to later. Use watcher_create instead when the trigger depends on an external event such as a reply, call, notification, web/page change, or semantic condition.",
       "model_tool": "commitment_create",
       "kind": "action",
       "input_schema_json": {
@@ -1498,7 +1498,7 @@
     },
     {
       "name": "watchers.create",
-      "description": "Create a durable OpenPhone watcher.",
+      "description": "Create a durable OpenPhone watcher that runs after the conversation and alerts when a future external condition is met. Use for proactive monitoring of message replies/no-reply deadlines, calls/no-call deadlines, notification matches, web/page changes, semantic page conditions, and user requests like tell me when, remind me if, watch this, let me know, or make sure I do not forget. Do not use for explicit background jobs, queued agent work, run-as-soon-as-possible tasks, or keep-working-and-notify-me tasks; use background_job_create for those.",
       "model_tool": "watcher_create",
       "kind": "action",
       "input_schema_json": {
@@ -1608,7 +1608,7 @@
     },
     {
       "name": "watchers.list",
-      "description": "List active OpenPhone watchers.",
+      "description": "List active OpenPhone watchers: external-condition monitors that may alert later. Use when the user asks what OpenPhone is watching or what conditions are being monitored. Do not use for queued background agent jobs; use background_job_list for those.",
       "model_tool": "watcher_list",
       "kind": "observe",
       "input_schema_json": {
@@ -1697,6 +1697,191 @@
         "model",
         "assistant_ui",
         "watcher"
+      ],
+      "executor_service": "OpenPhoneAssistant.FrameworkToolExecutor",
+      "audit_event_type": "action_executed"
+    },
+    {
+      "name": "background_jobs.create",
+      "description": "Create a durable OpenPhone background agent job: a queued agent turn that can run after the current conversation. Use for explicit requests like create a background job, do this in the background, run this as soon as possible, keep working and notify me, periodically summarize, check later by running an agent task, or run a non-urgent retrieval task. Do not use watcher_create for these queued agent jobs. Background jobs may observe and summarize; state-changing tools require foreground review.",
+      "model_tool": "background_job_create",
+      "kind": "action",
+      "input_schema_json": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short user-visible job title."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The agent turn to run when the job wakes."
+          },
+          "type": {
+            "type": "string",
+            "description": "agent_turn, system_event, or heartbeat. Default agent_turn."
+          },
+          "schedule": {
+            "type": "object",
+            "description": "Schedule fields such as next_run_at or interval_ms."
+          },
+          "run_at": {
+            "type": "integer",
+            "description": "Unix milliseconds when the job should first run. Omit or 0 to run soon."
+          },
+          "next_run_at": {
+            "type": "integer",
+            "description": "Unix milliseconds when the job should next run."
+          },
+          "interval_ms": {
+            "type": "integer",
+            "description": "Optional recurrence interval in milliseconds."
+          },
+          "session_target": {
+            "type": "string",
+            "description": "main, isolated, current, or session:<id>."
+          },
+          "delivery": {
+            "type": "object",
+            "description": "Delivery mode. Use {\"mode\":\"notification\"}, {\"mode\":\"silent\"}, or {\"mode\":\"none\"}. If the user gives exact notification wording, include it as notification_text, text, or message."
+          },
+          "notification_text": {
+            "type": "string",
+            "description": "Optional exact notification body to show when the background job completes. Use this when the user says to notify them with an exact phrase."
+          },
+          "payload": {
+            "type": "object",
+            "description": "Optional structured payload for future runtime integrations."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this background job should exist."
+          }
+        },
+        "required": [
+          "title",
+          "prompt",
+          "reason"
+        ]
+      },
+      "output_schema_json": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "integer"
+          },
+          "next_run_at": {
+            "type": "integer"
+          }
+        }
+      },
+      "risk_class": "medium",
+      "required_capabilities": [
+        "background.run"
+      ],
+      "authorization_policy": "confirm",
+      "allowed_callers": [
+        "model",
+        "assistant_ui",
+        "system"
+      ],
+      "executor_service": "OpenPhoneAssistant.FrameworkToolExecutor",
+      "audit_event_type": "action_executed"
+    },
+    {
+      "name": "background_jobs.list",
+      "description": "List durable OpenPhone background agent jobs, including active, running, completed, failed, and stopped jobs. Use when the user asks what OpenPhone is working on in the background or what background jobs are active.",
+      "model_tool": "background_job_list",
+      "kind": "observe",
+      "input_schema_json": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Optional search query."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of jobs to return."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why background job context is needed."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "output_schema_json": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "jobs": {
+            "type": "array"
+          }
+        }
+      },
+      "risk_class": "low",
+      "required_capabilities": [
+        "tasks.observe"
+      ],
+      "authorization_policy": "task_grant",
+      "allowed_callers": [
+        "model",
+        "assistant_ui",
+        "system"
+      ],
+      "executor_service": "OpenPhoneAssistant.FrameworkToolExecutor",
+      "audit_event_type": "action_executed"
+    },
+    {
+      "name": "background_jobs.stop",
+      "description": "Stop a durable OpenPhone background agent job.",
+      "model_tool": "background_job_stop",
+      "kind": "action",
+      "input_schema_json": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "integer",
+            "description": "Background job id."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this background job should stop."
+          }
+        },
+        "required": [
+          "job_id",
+          "reason"
+        ]
+      },
+      "output_schema_json": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "integer"
+          }
+        }
+      },
+      "risk_class": "medium",
+      "required_capabilities": [
+        "background.run"
+      ],
+      "authorization_policy": "confirm",
+      "allowed_callers": [
+        "model",
+        "assistant_ui",
+        "system"
       ],
       "executor_service": "OpenPhoneAssistant.FrameworkToolExecutor",
       "audit_event_type": "action_executed"

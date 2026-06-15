@@ -45,21 +45,22 @@ public final class PointerOverlayController {
 
     private static final int CURSOR_SIZE = 34;
     private static final int RIPPLE_SIZE = 96;
-    private static final int ISLAND_WIDTH = 620;
-    private static final int ISLAND_HEIGHT = 96;
-    // Expanded reply island grows downward from below the camera punch-hole,
-    // so wrapped multi-line text never paints behind the camera.
+    private static final int ISLAND_WIDTH = 288;
+    private static final int ISLAND_HEIGHT = 90;
+    private static final int ISLAND_SIDE_MARGIN = 28;
     private static final int ISLAND_EXPANDED_WIDTH = 940;
-    private static final int ISLAND_EXPANDED_MIN_HEIGHT = 140;
+    private static final int ISLAND_EXPANDED_SIDE_MARGIN = 42;
+    private static final int ISLAND_EXPANDED_MIN_HEIGHT = 112;
     private static final int ISLAND_EXPANDED_MAX_HEIGHT = 520;
-    private static final int ISLAND_EXPANDED_PADDING_VERTICAL = 28;
-    private static final int ISLAND_EXPANDED_PADDING_HORIZONTAL = 36;
-    private static final int ISLAND_EXPANDED_TOP_OFFSET = 168;
-    private static final long ISLAND_RESIZE_MS = 220L;
+    private static final int ISLAND_EXPANDED_PADDING_VERTICAL = 22;
+    private static final int ISLAND_EXPANDED_PADDING_HORIZONTAL = 34;
+    private static final int ISLAND_EXPANDED_PANEL_GAP = -8;
+    private static final long ISLAND_RESIZE_MS = 260L;
+    private static final long THINKING_DOTS_INTERVAL_MS = 420L;
     private static final long REPLY_AUTO_COLLAPSE_MS = 7000L;
     private static final int REPLY_MAX_LINES = 8;
-    private static final int CAMERA_RESERVED_WIDTH = 134;
-    private static final int CAMERA_ISLAND_FALLBACK_TOP = 8;
+    private static final int CAMERA_RESERVED_WIDTH = 96;
+    private static final int CAMERA_ISLAND_FALLBACK_TOP = 42;
     private static final int ACTION_LABEL_GAP = 12;
     private static final int GLOW_STROKE_WIDTH = 76;
     private static final int GLOW_BLUR_RADIUS = 118;
@@ -100,9 +101,23 @@ public final class PointerOverlayController {
     private String mReplyText = "";
     private boolean mYoloActive;
     private int mWatchingCount;
+    private boolean mIslandExpanded;
+    private boolean mInspectExpanded;
+    private int mThinkingDotsFrame;
     private final Runnable mReplyAutoCollapse = () -> {
         if ("reply".equals(mMode) || "transcript".equals(mMode)) {
             showMicButtonNow();
+        }
+    };
+    private final Runnable mThinkingDotsTicker = new Runnable() {
+        @Override
+        public void run() {
+            if (!"thinking".equals(mMode)) {
+                return;
+            }
+            mThinkingDotsFrame = (mThinkingDotsFrame + 1) % 3;
+            updateIslandViews();
+            mHandler.postDelayed(this, THINKING_DOTS_INTERVAL_MS);
         }
     };
     private ValueAnimator mIslandResizeAnimator;
@@ -127,6 +142,7 @@ public final class PointerOverlayController {
     void show(String taskId) {
         mHandler.post(() -> {
             mMode = "action_running";
+            mInspectExpanded = false;
             ensurePointerLayer();
             showPointerDot();
             ensureIslandWindow();
@@ -139,6 +155,7 @@ public final class PointerOverlayController {
         mHandler.post(() -> {
             mHandler.removeCallbacks(mWatchdogHide);
             mHandler.removeCallbacks(mReplyAutoCollapse);
+            stopThinkingDots();
             if (mIslandResizeAnimator != null) {
                 mIslandResizeAnimator.cancel();
                 mIslandResizeAnimator = null;
@@ -167,6 +184,8 @@ public final class PointerOverlayController {
             mApproveButton = null;
             mDenyButton = null;
             mActionLabel = null;
+            mIslandExpanded = false;
+            mInspectExpanded = false;
         });
     }
 
@@ -174,6 +193,12 @@ public final class PointerOverlayController {
         mHandler.post(() -> {
             String clean = state == null ? "" : state.trim();
             mStateDetail = detail == null ? "" : detail.trim();
+            if (!clean.equals(mMode)) {
+                mInspectExpanded = false;
+            }
+            if (!"thinking".equals(clean)) {
+                stopThinkingDots();
+            }
             switch (clean) {
                 case "idle":
                     showMicButtonNow();
@@ -182,6 +207,13 @@ public final class PointerOverlayController {
                     showListeningNow();
                     return;
                 case "thinking":
+                    mMode = clean;
+                    removeAllPointerLayers();
+                    ensureIslandWindow();
+                    updateIslandViews();
+                    startThinkingDots();
+                    mHandler.removeCallbacks(mWatchdogHide);
+                    return;
                 case "answer_ready":
                 case "needs_review":
                 case "error":
@@ -222,8 +254,11 @@ public final class PointerOverlayController {
                 return;
             }
             mYoloActive = yoloActive;
-            if (mIslandRoot != null) {
-                mIslandRoot.setBackground(chipBackground(mYoloActive));
+            if (mIslandCompactRow != null) {
+                mIslandCompactRow.setBackground(chipBackground(mYoloActive, mIslandExpanded));
+            }
+            if (mIslandExpandedColumn != null) {
+                mIslandExpandedColumn.setBackground(chipBackground(mYoloActive, false));
             }
             updateIslandViews();
         });
@@ -248,7 +283,9 @@ public final class PointerOverlayController {
     }
 
     private void showListeningNow() {
+        stopThinkingDots();
         mMode = "listening";
+        mInspectExpanded = false;
         mTranscriptText = "";
         ensurePointerLayer();
         hidePointerDot();
@@ -258,11 +295,12 @@ public final class PointerOverlayController {
 
     void showTranscript(String transcript) {
         mHandler.post(() -> {
+            stopThinkingDots();
             mMode = "transcript";
+            mInspectExpanded = false;
             mTranscriptText = transcript == null ? "" : transcript.trim();
             mReplyText = "";
-            ensurePointerLayer();
-            hidePointerDot();
+            removeAllPointerLayers();
             ensureIslandWindow();
             updateIslandViews();
         });
@@ -271,7 +309,7 @@ public final class PointerOverlayController {
     /**
      * Show the assistant's reply text in an expanded multi-line island.
      * Auto-collapses to mic after {@link #REPLY_AUTO_COLLAPSE_MS}; tap the
-     * island to extend (the existing tap handler launches the full chat).
+     * island to keep it open.
      */
     void showReply(String reply) {
         final String clean = reply == null ? "" : reply.trim();
@@ -279,7 +317,9 @@ public final class PointerOverlayController {
             return;
         }
         mHandler.post(() -> {
+            stopThinkingDots();
             mMode = "reply";
+            mInspectExpanded = false;
             mReplyText = clean;
             removeAllPointerLayers();
             ensureIslandWindow();
@@ -295,7 +335,9 @@ public final class PointerOverlayController {
     }
 
     private void showMicButtonNow() {
+        stopThinkingDots();
         mMode = mWatchingCount > 0 ? "watching" : "idle";
+        mInspectExpanded = false;
         mTranscriptText = "";
         mReplyText = "";
         mStateDetail = "";
@@ -355,6 +397,16 @@ public final class PointerOverlayController {
     private void armWatchdog() {
         mHandler.removeCallbacks(mWatchdogHide);
         mHandler.postDelayed(mWatchdogHide, MAX_VISIBLE_MS);
+    }
+
+    private void startThinkingDots() {
+        mHandler.removeCallbacks(mThinkingDotsTicker);
+        mHandler.postDelayed(mThinkingDotsTicker, THINKING_DOTS_INTERVAL_MS);
+    }
+
+    private void stopThinkingDots() {
+        mHandler.removeCallbacks(mThinkingDotsTicker);
+        mThinkingDotsFrame = 0;
     }
 
     private void ensurePointerLayer() {
@@ -451,20 +503,15 @@ public final class PointerOverlayController {
         // text), and the action buttons attach their own OnClickListeners.
         mIslandRoot.setClickable(false);
         mIslandRoot.setFocusable(false);
-        mIslandRoot.setBackground(chipBackground(mYoloActive));
-        mIslandRoot.setPadding(10, 0, 10, 0);
+        mIslandRoot.setBackgroundColor(Color.TRANSPARENT);
         LinearLayout row = new LinearLayout(mContext);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER);
         row.setClickable(true);
         row.setOnClickListener(this::handleIslandTap);
-        row.setOnLongClickListener(view -> {
-            launchFullAssistant();
-            return true;
-        });
-        mIslandRoot.addView(row, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT));
+        row.setBackground(chipBackground(mYoloActive, false));
+        row.setPadding(10, 0, 10, 0);
+        mIslandRoot.addView(row, compactRowParams(false));
         mIslandCompactRow = row;
 
         mLeftIslandText = islandText();
@@ -486,21 +533,22 @@ public final class PointerOverlayController {
         mIslandExpandedColumn.setOrientation(LinearLayout.VERTICAL);
         mIslandExpandedColumn.setGravity(Gravity.CENTER_VERTICAL);
         mIslandExpandedColumn.setVisibility(View.GONE);
+        mIslandExpandedColumn.setBackground(chipBackground(mYoloActive, false));
+        mIslandExpandedColumn.setPadding(ISLAND_EXPANDED_PADDING_HORIZONTAL,
+                ISLAND_EXPANDED_PADDING_VERTICAL,
+                ISLAND_EXPANDED_PADDING_HORIZONTAL,
+                ISLAND_EXPANDED_PADDING_VERTICAL);
 
         mIslandBodyText = new TextView(mContext);
         mIslandBodyText.setTextColor(0xfff4f7f8);
         mIslandBodyText.setTextSize(15);
         mIslandBodyText.setTypeface(Typeface.DEFAULT);
-        mIslandBodyText.setLineSpacing(2f, 1.12f);
+        mIslandBodyText.setLineSpacing(3f, 1.12f);
         mIslandBodyText.setMaxLines(REPLY_MAX_LINES);
         mIslandBodyText.setEllipsize(android.text.TextUtils.TruncateAt.END);
         mIslandBodyText.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         mIslandBodyText.setClickable(true);
         mIslandBodyText.setOnClickListener(this::handleIslandTap);
-        mIslandBodyText.setOnLongClickListener(view -> {
-            launchFullAssistant();
-            return true;
-        });
         mIslandExpandedColumn.addView(mIslandBodyText, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -509,13 +557,13 @@ public final class PointerOverlayController {
         mIslandActionRow.setOrientation(LinearLayout.HORIZONTAL);
         mIslandActionRow.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         mIslandActionRow.setVisibility(View.GONE);
-        mDenyButton = islandActionButton("Deny", 0xfff4f7f8, 0x33ffffff);
+        mDenyButton = islandActionButton("×", "Deny", 0xfff4f7f8, 0x33ffffff);
         mDenyButton.setOnClickListener(v -> {
             if (mConfirmationHandler != null) {
                 mConfirmationHandler.deny();
             }
         });
-        mApproveButton = islandActionButton("Approve", 0xff101418, 0xff20e36a);
+        mApproveButton = islandActionButton("✓", "Approve", 0xff101418, 0xff20e36a);
         mApproveButton.setOnClickListener(v -> {
             if (mConfirmationHandler != null) {
                 mConfirmationHandler.approve();
@@ -535,10 +583,8 @@ public final class PointerOverlayController {
         actionRowLp.topMargin = 14;
         mIslandExpandedColumn.addView(mIslandActionRow, actionRowLp);
 
-        FrameLayout.LayoutParams expandedColumnParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT);
-        mIslandRoot.addView(mIslandExpandedColumn, expandedColumnParams);
+        mIslandRoot.addView(mIslandExpandedColumn, expandedColumnParams(
+                ISLAND_EXPANDED_MIN_HEIGHT));
 
         mIslandParams = new WindowManager.LayoutParams(
                 ISLAND_WIDTH,
@@ -550,7 +596,9 @@ public final class PointerOverlayController {
         mIslandParams.gravity = Gravity.TOP | Gravity.LEFT;
         mIslandParams.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
-        mIslandParams.x = Math.max(0, (displayWidth() - ISLAND_WIDTH) / 2);
+        int compactWidth = compactIslandWidth();
+        mIslandParams.width = compactWidth;
+        mIslandParams.x = Math.max(0, (displayWidth() - compactWidth) / 2);
         mIslandParams.y = CAMERA_ISLAND_FALLBACK_TOP;
         try {
             mWindowManager.addView(mIslandRoot, mIslandParams);
@@ -566,13 +614,9 @@ public final class PointerOverlayController {
     }
 
     /**
-     * Tap routing for the island. The previous design opened an "Ask
-     * OpenPhone" sheet with Screen / Chat / Search / Notifications / Settings
-     * buttons; user feedback was that the sheet was clutter — the island
-     * should only surface contextual actions (e.g. Approve / Deny when the
-     * agent asks for review). Now: a tap on the body launches the relevant
-     * action for the current state, and child views (the Approve / Deny
-     * buttons) handle their own clicks.
+     * Tap routing for the island. Tap performs the local island action first:
+     * stop while running/listening, expand/collapse inspectable terminal
+     * states, or start voice from idle.
      */
     private void handleIslandTap(View view) {
         if ("listening".equals(mMode) || "action_running".equals(mMode)
@@ -580,12 +624,20 @@ public final class PointerOverlayController {
             launchStopAgent();
             return;
         }
-        if ("needs_review".equals(mMode) || "error".equals(mMode)
-                || "reply".equals(mMode) || "transcript".equals(mMode)) {
-            launchFullAssistant();
+        if ("error".equals(mMode) || "answer_ready".equals(mMode)) {
+            mInspectExpanded = !mInspectExpanded;
+            updateIslandViews();
             return;
         }
-        // idle / answer_ready / watching
+        if ("reply".equals(mMode) || "transcript".equals(mMode)
+                || "needs_review".equals(mMode)) {
+            mHandler.removeCallbacks(mReplyAutoCollapse);
+            if ("reply".equals(mMode) || "transcript".equals(mMode)) {
+                mHandler.postDelayed(mReplyAutoCollapse, REPLY_AUTO_COLLAPSE_MS);
+            }
+            return;
+        }
+        // idle / watching
         launchVoiceCapture();
     }
 
@@ -626,8 +678,14 @@ public final class PointerOverlayController {
         mLeftIslandText = null;
         mRightIslandText = null;
         mIslandCompactRow = null;
+        mIslandExpandedColumn = null;
         mIslandBodyText = null;
+        mIslandActionRow = null;
+        mApproveButton = null;
+        mDenyButton = null;
         mActionLabel = null;
+        mIslandExpanded = false;
+        mInspectExpanded = false;
     }
 
     private TextView islandText() {
@@ -646,58 +704,64 @@ public final class PointerOverlayController {
                 || mIslandBodyText == null) {
             return;
         }
-        boolean expanded = "reply".equals(mMode)
-                || "needs_review".equals(mMode)
-                || ("transcript".equals(mMode) && hasMultiLineTranscript());
-        if (expanded) {
-            applyExpandedIslandLayout();
+        IslandPresentation presentation = presentationForMode();
+        mLeftIslandText.setText(presentation.leftText);
+        mRightIslandText.setText(presentation.rightText);
+        mRightIslandText.setTextColor(presentation.accentColor);
+        mIslandBodyText.setText(presentation.bodyText);
+        mIslandBodyText.setMaxLines(presentation.maxBodyLines);
+        if (presentation.expanded) {
+            applyExpandedIslandLayout(presentation);
         } else {
             applyCompactIslandLayout();
         }
+    }
+
+    private IslandPresentation presentationForMode() {
         if ("answer_ready".equals(mMode)) {
-            mLeftIslandText.setText("OK");
-            mRightIslandText.setText("✓");
-            mRightIslandText.setTextColor(0xff20e36a);
-        } else if ("listening".equals(mMode)) {
-            mLeftIslandText.setText("Listening");
-            mRightIslandText.setText("Stop");
-            mRightIslandText.setTextColor(0xffff6b6b);
-        } else if ("transcript".equals(mMode)) {
-            if (expanded) {
-                mIslandBodyText.setText(mTranscriptText == null ? "" : mTranscriptText);
-            } else {
-                mLeftIslandText.setText("You said");
-                mRightIslandText.setText(mTranscriptText == null ? "" : mTranscriptText);
-                mRightIslandText.setTextColor(0xfff4f7f8);
+            if (mInspectExpanded) {
+                return IslandPresentation.expanded("✓", detailOr("Done"), false, 4);
             }
-        } else if ("reply".equals(mMode)) {
-            mIslandBodyText.setText(mReplyText == null ? "" : mReplyText);
-        } else if ("thinking".equals(mMode)) {
-            mLeftIslandText.setText(yoloPrefix() + "Thinking");
-            mRightIslandText.setText("…");
-            mRightIslandText.setTextColor(0xff9ab8ff);
-        } else if ("action_running".equals(mMode)) {
-            mLeftIslandText.setText(yoloPrefix() + "Talk");
-            mRightIslandText.setText("Stop");
-            mRightIslandText.setTextColor(0xffff6b6b);
-        } else if ("needs_review".equals(mMode)) {
+            return IslandPresentation.compact("", "✓", 0xff20e36a);
+        }
+        if ("listening".equals(mMode)) {
+            return IslandPresentation.compact("●", "■", 0xffff6b6b);
+        }
+        if ("transcript".equals(mMode)) {
+            String transcript = mTranscriptText == null ? "" : mTranscriptText;
+            if (hasMultiLineTranscript()) {
+                return IslandPresentation.expanded("AI", transcript, false,
+                        REPLY_MAX_LINES);
+            }
+            return IslandPresentation.compact("You said", transcript, 0xfff4f7f8);
+        }
+        if ("reply".equals(mMode)) {
+            return IslandPresentation.expanded("AI",
+                    mReplyText == null ? "" : mReplyText, false, REPLY_MAX_LINES);
+        }
+        if ("thinking".equals(mMode)) {
+            return IslandPresentation.compact("", thinkingDots(), 0xff9ab8ff);
+        }
+        if ("action_running".equals(mMode)) {
+            return IslandPresentation.compact(yoloPrefix() + "●", "■", 0xffff6b6b);
+        }
+        if ("needs_review".equals(mMode)) {
             String body = mStateDetail == null || mStateDetail.isEmpty()
                     ? "Approval needed" : mStateDetail;
-            mIslandBodyText.setText(body);
-        } else if ("error".equals(mMode)) {
-            mLeftIslandText.setText("Error");
-            mRightIslandText.setText("!");
-            mRightIslandText.setTextColor(0xffff6b6b);
-        } else if ("watching".equals(mMode)) {
-            mLeftIslandText.setText(yoloPrefix() + "AI");
-            mRightIslandText.setText(mWatchingCount > 1
-                    ? "◎ " + mWatchingCount : "◎");
-            mRightIslandText.setTextColor(0xff9ab8ff);
-        } else {
-            mLeftIslandText.setText(yoloPrefix() + "AI");
-            mRightIslandText.setText("◉");
-            mRightIslandText.setTextColor(0xff72e0c4);
+            return IslandPresentation.expanded("!", body, true, 6);
         }
+        if ("error".equals(mMode)) {
+            if (mInspectExpanded) {
+                return IslandPresentation.expanded("!", detailOr("Something went wrong"),
+                        false, 5);
+            }
+            return IslandPresentation.compact("!", "", 0xffff6b6b);
+        }
+        if ("watching".equals(mMode)) {
+            return IslandPresentation.compact(yoloPrefix() + "AI",
+                    mWatchingCount > 1 ? "◎ " + mWatchingCount : "◎", 0xff9ab8ff);
+        }
+        return IslandPresentation.compact(yoloPrefix() + "AI", "◉", 0xff72e0c4);
     }
 
     private boolean hasMultiLineTranscript() {
@@ -708,59 +772,101 @@ public final class PointerOverlayController {
         if (mIslandCompactRow == null || mIslandExpandedColumn == null) {
             return;
         }
+        mIslandExpanded = false;
         mIslandCompactRow.setVisibility(View.VISIBLE);
+        mIslandCompactRow.animate().cancel();
+        mIslandCompactRow.setAlpha(1f);
+        mIslandCompactRow.setBackground(chipBackground(mYoloActive, false));
+        mIslandCompactRow.setLayoutParams(compactRowParams(false));
+        mIslandExpandedColumn.animate().cancel();
         mIslandExpandedColumn.setVisibility(View.GONE);
+        mIslandExpandedColumn.setAlpha(1f);
         if (mIslandActionRow != null) {
             mIslandActionRow.setVisibility(View.GONE);
         }
-        if (mIslandRoot != null) {
-            mIslandRoot.setPadding(10, 0, 10, 0);
-        }
-        animateIslandTo(ISLAND_WIDTH, ISLAND_HEIGHT, CAMERA_ISLAND_FALLBACK_TOP);
+        animateIslandTo(compactIslandWidth(), ISLAND_HEIGHT, CAMERA_ISLAND_FALLBACK_TOP);
     }
 
-    private void applyExpandedIslandLayout() {
+    private void applyExpandedIslandLayout(IslandPresentation presentation) {
         if (mIslandCompactRow == null || mIslandExpandedColumn == null) {
             return;
         }
-        mIslandCompactRow.setVisibility(View.GONE);
+        mIslandExpanded = true;
+        mIslandCompactRow.animate().cancel();
+        mIslandCompactRow.setVisibility(View.VISIBLE);
+        mIslandCompactRow.setAlpha(1f);
+        mIslandCompactRow.setBackground(chipBackground(mYoloActive, true));
+        mIslandCompactRow.setLayoutParams(compactRowParams(true));
         mIslandExpandedColumn.setVisibility(View.VISIBLE);
+        mIslandExpandedColumn.animate().cancel();
+        mIslandExpandedColumn.setAlpha(1f);
         if (mIslandActionRow != null) {
-            mIslandActionRow.setVisibility(
-                    "needs_review".equals(mMode) ? View.VISIBLE : View.GONE);
+            mIslandActionRow.setVisibility(presentation.showActions ? View.VISIBLE : View.GONE);
         }
-        if (mIslandRoot != null) {
-            mIslandRoot.setPadding(ISLAND_EXPANDED_PADDING_HORIZONTAL,
-                    ISLAND_EXPANDED_PADDING_VERTICAL,
-                    ISLAND_EXPANDED_PADDING_HORIZONTAL,
-                    ISLAND_EXPANDED_PADDING_VERTICAL);
-        }
-        int target = measureExpandedHeight();
-        animateIslandTo(ISLAND_EXPANDED_WIDTH, target, ISLAND_EXPANDED_TOP_OFFSET);
+        int targetWidth = expandedIslandWidth();
+        int panelHeight = measureExpandedHeight(targetWidth);
+        mIslandExpandedColumn.setLayoutParams(expandedColumnParams(panelHeight));
+        int targetHeight = ISLAND_HEIGHT + ISLAND_EXPANDED_PANEL_GAP + panelHeight;
+        animateIslandTo(targetWidth, targetHeight, CAMERA_ISLAND_FALLBACK_TOP);
     }
 
-    private int measureExpandedHeight() {
+    private FrameLayout.LayoutParams compactRowParams(boolean expanded) {
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                expanded ? compactIslandWidth() : FrameLayout.LayoutParams.MATCH_PARENT,
+                ISLAND_HEIGHT);
+        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        return params;
+    }
+
+    private FrameLayout.LayoutParams expandedColumnParams(int panelHeight) {
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, panelHeight);
+        params.gravity = Gravity.TOP | Gravity.LEFT;
+        params.topMargin = ISLAND_HEIGHT + ISLAND_EXPANDED_PANEL_GAP;
+        return params;
+    }
+
+    private int expandedIslandWidth() {
+        int width = displayWidth();
+        if (width <= 0) {
+            return ISLAND_EXPANDED_WIDTH;
+        }
+        return Math.max(ISLAND_WIDTH, Math.min(ISLAND_EXPANDED_WIDTH,
+                width - ISLAND_EXPANDED_SIDE_MARGIN * 2));
+    }
+
+    private int compactIslandWidth() {
+        int width = displayWidth();
+        if (width <= 0) {
+            return ISLAND_WIDTH;
+        }
+        return Math.max(260, Math.min(ISLAND_WIDTH, width - ISLAND_SIDE_MARGIN * 2));
+    }
+
+    private int measureExpandedHeight(int expandedWidth) {
         if (mIslandExpandedColumn == null) {
             return ISLAND_EXPANDED_MIN_HEIGHT;
         }
-        int contentWidth = ISLAND_EXPANDED_WIDTH - ISLAND_EXPANDED_PADDING_HORIZONTAL * 2;
         mIslandExpandedColumn.measure(
-                View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(expandedWidth, View.MeasureSpec.AT_MOST),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
         int columnHeight = mIslandExpandedColumn.getMeasuredHeight();
-        int target = columnHeight + ISLAND_EXPANDED_PADDING_VERTICAL * 2;
         return Math.max(ISLAND_EXPANDED_MIN_HEIGHT,
-                Math.min(ISLAND_EXPANDED_MAX_HEIGHT, target));
+                Math.min(ISLAND_EXPANDED_MAX_HEIGHT, columnHeight));
     }
 
-    private TextView islandActionButton(String label, int textColor, int backgroundColor) {
+    private TextView islandActionButton(String label, String contentDescription,
+            int textColor, int backgroundColor) {
         TextView button = new TextView(mContext);
         button.setText(label);
+        button.setContentDescription(contentDescription);
         button.setTextColor(textColor);
-        button.setTextSize(13);
+        button.setTextSize(18);
         button.setTypeface(Typeface.DEFAULT_BOLD);
         button.setGravity(Gravity.CENTER);
-        button.setPadding(28, 14, 28, 14);
+        button.setPadding(18, 12, 18, 12);
+        button.setMinWidth(64);
+        button.setMinHeight(44);
         button.setClickable(true);
         button.setFocusable(true);
         GradientDrawable bg = new GradientDrawable();
@@ -802,17 +908,48 @@ public final class PointerOverlayController {
             mIslandParams.height = (int) (startHeight + (targetHeight - startHeight) * t);
             mIslandParams.x = (int) (startX + (targetX - startX) * t);
             mIslandParams.y = (int) (startTop + (targetTop - startTop) * t);
+            float settle = 0.985f + (0.015f * t);
+            mIslandRoot.setScaleX(settle);
+            mIslandRoot.setScaleY(settle);
             try {
                 mWindowManager.updateViewLayout(mIslandRoot, mIslandParams);
             } catch (RuntimeException ignored) {
             }
         });
         mIslandResizeAnimator = animator;
+        animator.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                if (mIslandRoot != null) {
+                    mIslandRoot.setScaleX(1f);
+                    mIslandRoot.setScaleY(1f);
+                }
+                if (mIslandResizeAnimator == animation) {
+                    mIslandResizeAnimator = null;
+                }
+            }
+        });
         animator.start();
     }
 
     private String yoloPrefix() {
         return mYoloActive ? "⚡ " : "";
+    }
+
+    private String thinkingDots() {
+        switch (mThinkingDotsFrame) {
+            case 0:
+                return ".";
+            case 1:
+                return "..";
+            default:
+                return "...";
+        }
+    }
+
+    private String detailOr(String fallback) {
+        return mStateDetail == null || mStateDetail.trim().isEmpty()
+                ? fallback : mStateDetail.trim();
     }
 
     private void positionActionLabel() {
@@ -859,6 +996,42 @@ public final class PointerOverlayController {
         }
         view.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
         return view.getMeasuredHeight();
+    }
+
+    private static final class IslandPresentation {
+        final boolean expanded;
+        final String leftText;
+        final String rightText;
+        final String bodyText;
+        final boolean showActions;
+        final int accentColor;
+        final int maxBodyLines;
+
+        private IslandPresentation(boolean expanded, String leftText, String rightText,
+                String bodyText, boolean showActions, int accentColor, int maxBodyLines) {
+            this.expanded = expanded;
+            this.leftText = leftText;
+            this.rightText = rightText;
+            this.bodyText = bodyText;
+            this.showActions = showActions;
+            this.accentColor = accentColor;
+            this.maxBodyLines = maxBodyLines;
+        }
+
+        static IslandPresentation compact(String leftText, String rightText, int accentColor) {
+            return new IslandPresentation(false, safe(leftText), safe(rightText), "",
+                    false, accentColor, 1);
+        }
+
+        static IslandPresentation expanded(String leftText, String bodyText,
+                boolean showActions, int maxBodyLines) {
+            return new IslandPresentation(true, safe(leftText), "", safe(bodyText),
+                    showActions, 0xfff4f7f8, maxBodyLines);
+        }
+
+        private static String safe(String text) {
+            return text == null ? "" : text;
+        }
     }
 
     private void showAction(String label) {
@@ -1029,19 +1202,20 @@ public final class PointerOverlayController {
         }
     }
 
-    private void launchFullAssistant() {
-        Intent intent = new Intent(mContext, MainActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        try {
-            mContext.startActivity(intent);
-        } catch (RuntimeException ignored) {
-        }
-    }
-
-    private static GradientDrawable chipBackground(boolean yoloActive) {
+    private static GradientDrawable chipBackground(boolean yoloActive, boolean attachedToPanel) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(0xff000000);
-        drawable.setCornerRadius(ISLAND_HEIGHT / 2f);
+        float radius = ISLAND_HEIGHT / 2f;
+        if (attachedToPanel) {
+            drawable.setCornerRadii(new float[] {
+                    radius, radius,
+                    radius, radius,
+                    0f, 0f,
+                    0f, 0f
+            });
+        } else {
+            drawable.setCornerRadius(radius);
+        }
         if (yoloActive) {
             drawable.setStroke(3, 0xffffd166);
         }

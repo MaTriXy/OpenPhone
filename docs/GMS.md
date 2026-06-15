@@ -142,6 +142,48 @@ still fail or degrade when they require:
 - proprietary push or location APIs,
 - app-specific anti-tamper checks.
 
+## Troubleshooting
+
+If Play Store immediately returns to the launcher or appears to crash, first
+check where Play Store and Play services are installed:
+
+```bash
+adb shell pm path com.android.vending
+adb shell pm path com.google.android.gms
+```
+
+The supported recovery-sideload path should install Google components as
+system/product/system_ext packages according to the package's own installer
+layout. If both packages are under `/data/app`, Android treats them as ordinary
+user apps. Current Play services versions request privileged platform
+permissions such as `android.permission.ACCESS_CONTEXT_HUB`,
+`android.permission.SCHEDULE_PRIORITIZED_ALARM`,
+`android.permission.START_ACTIVITIES_FROM_BACKGROUND`, and
+`android.permission.CHANGE_DEVICE_IDLE_TEMP_WHITELIST`; as data apps they do
+not receive those permissions and `com.google.android.gms.persistent` may
+crash-loop before Play Store can remain open.
+
+To confirm that failure mode:
+
+```bash
+adb logcat -d -v threadtime | grep -E \
+  'com\\.google\\.android\\.gms|FATAL EXCEPTION|SecurityException|ACCESS_CONTEXT_HUB|SCHEDULE_PRIORITIZED_ALARM'
+```
+
+The clean supported recovery path is to reinstall the OpenPhone OTA, sideload
+the user-supplied GMS ZIP immediately as an additional package before first
+normal boot, then reboot system. Installing Play Store or Play services as
+ordinary APKs after first boot is not a supported GMS state for OpenPhone.
+
+If Play Store worked immediately after a recovery GMS sideload and later broke
+after an OpenPhone OTA, check for this exact state. OpenPhone OTAs do not
+redistribute Google packages, so a later OTA can replace the system/product
+partitions that previously held the GMS base while leaving Play-updated copies
+under `/data/app`. Android then has no privileged system package to roll back
+to, and `cmd package uninstall-system-updates` is not a reliable recovery
+path. Reinstall the OpenPhone OTA and repeat the user-supplied GMS recovery
+sideload before first normal boot.
+
 ## Product Strategy
 
 OpenPhone should support three paths:

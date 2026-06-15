@@ -8,8 +8,10 @@ import android.content.pm.PackageManager;
 import android.openphone.OpenPhoneAgentManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Base64;
+import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 
@@ -92,12 +94,17 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
     }
 
+    private static final String TAG = "OpenPhoneAssistant";
     private static final int REQUEST_RECORD_AUDIO = 1001;
+    private static final long VOICE_TOGGLE_DUPLICATE_GRACE_MILLIS = 2500L;
+    private static final long VOICE_PIPELINE_TOGGLE_PROTECTION_MILLIS = 60000L;
     // Cap is a safety net; the transcriber stops earlier on speech-end silence
     // (END_SILENCE_MILLIS in OpenAiSpeechTranscriber). Bumped from 12s — long
     // questions about a screen ("Can you see what I'm looking at and tell me…")
     // were hitting the cap mid-sentence.
     private static final int VOICE_CAPTURE_MILLIS = 30000;
+    private static final int ROUTING_TIMEOUT_MILLIS = 25000;
+    private static final int SCREEN_QUESTION_TIMEOUT_MILLIS = 30000;
     private static final String PREFS = "openphone_assistant";
     private static final String PREF_GRANT_INPUT = "grant_input";
     private static final String PREF_GRANT_SCREEN_CAPTURE = "grant_screen_capture";
@@ -138,6 +145,9 @@ public class AssistantActivityBackend extends ComponentActivity {
     private volatile OpenAiSpeechTranscriber mRunningSpeechTranscriber;
     private OtaUpdateClient.Update mLatestOtaUpdate;
     private boolean mListening;
+    private long mLastVoiceStartUptimeMillis;
+    private boolean mVoicePipelineToggleProtected;
+    private long mVoicePipelineStartedUptimeMillis;
     private String mComposeGoalText = "";
     private String mComposeActionJson = "";
     private String mComposeApiKey = "";
@@ -316,9 +326,21 @@ public class AssistantActivityBackend extends ComponentActivity {
                 public void run() {
                     AssistantActivityBackend runner = sActiveControlRunner;
                     if (runner != null && runner.isAgentOrVoiceActive()) {
+                        if (runner.isVoiceToggleProtected()) {
+                            Log.i(TAG, "voice toggle ignored while pipeline is active");
+                            runner.moveTaskToBack(true);
+                            moveTaskToBack(true);
+                            return;
+                        }
                         runner.stopTask();
                         runner.moveTaskToBack(true);
+                        moveTaskToBack(true);
                     } else if (isAgentOrVoiceActive()) {
+                        if (isVoiceToggleProtected()) {
+                            Log.i(TAG, "voice toggle ignored while pipeline is active");
+                            moveTaskToBack(true);
+                            return;
+                        }
                         stopTask();
                         moveTaskToBack(true);
                     } else {
@@ -346,6 +368,9 @@ public class AssistantActivityBackend extends ComponentActivity {
                 @Override
                 public void run() {
                     routeMessageFromCurrentMessage();
+                    if (isControlSurface()) {
+                        moveTaskToBack(true);
+                    }
                 }
             });
         }
@@ -360,7 +385,47 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private boolean isAgentOrVoiceActive() {
-        return mListening || mActiveTaskId != null || mAgentThread != null;
+        return mListening || mActiveTaskId != null || mAgentThread != null
+                || mChatThread != null || mRunningChatAdapter != null;
+    }
+
+    private boolean isRecentVoiceStart() {
+        return mListening && mLastVoiceStartUptimeMillis > 0
+                && SystemClock.uptimeMillis() - mLastVoiceStartUptimeMillis
+                        < VOICE_TOGGLE_DUPLICATE_GRACE_MILLIS;
+    }
+
+    private boolean isVoiceToggleProtected() {
+        if (isRecentVoiceStart()) {
+            return true;
+        }
+        if (!mVoicePipelineToggleProtected) {
+            return false;
+        }
+        if (mVoicePipelineStartedUptimeMillis <= 0
+                || SystemClock.uptimeMillis() - mVoicePipelineStartedUptimeMillis
+                        > VOICE_PIPELINE_TOGGLE_PROTECTION_MILLIS) {
+            clearVoicePipelineProtection();
+            return false;
+        }
+        return true;
+    }
+
+    private void protectVoicePipelineFromToggle() {
+        mVoicePipelineToggleProtected = true;
+        mVoicePipelineStartedUptimeMillis = SystemClock.uptimeMillis();
+    }
+
+    private void clearVoicePipelineProtection() {
+        mVoicePipelineToggleProtected = false;
+        mVoicePipelineStartedUptimeMillis = 0L;
+    }
+
+    private void finishVoicePipelineIfIdle() {
+        clearVoicePipelineProtection();
+        if (sActiveControlRunner == this && !isAgentOrVoiceActive()) {
+            sActiveControlRunner = null;
+        }
     }
 
     private static String debugGoalFromIntent(Intent intent) {
@@ -770,14 +835,16 @@ public class AssistantActivityBackend extends ComponentActivity {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
             return;
         }
+        Log.i(TAG, "voice start control=" + isControlSurface()
+                + " island=" + mIslandVoiceLaunch);
         listenThenRun();
         if (mIslandVoiceLaunch) {
-            getWindow().getDecorView().postDelayed(new Runnable() {
+            getWindow().getDecorView().post(new Runnable() {
                 @Override
                 public void run() {
                     moveTaskToBack(true);
                 }
-            }, 250);
+            });
         }
     }
 
@@ -812,6 +879,8 @@ public class AssistantActivityBackend extends ComponentActivity {
             sActiveControlRunner = this;
         }
         mListening = true;
+        mLastVoiceStartUptimeMillis = SystemClock.uptimeMillis();
+        protectVoicePipelineFromToggle();
         updateComposerActionButton();
         final int voiceGeneration = ++mVoiceRunGeneration;
         setTaskText("Listening...\n\n" + voicePrivacyDisclosure(endpointConfig)
@@ -853,29 +922,35 @@ public class AssistantActivityBackend extends ComponentActivity {
                             if (sActiveControlRunner == AssistantActivityBackend.this) {
                                 sActiveControlRunner = null;
                             }
-                            setTaskText("I couldn't hear the task.\n\n" + finalError);
-                            updateIsland("Try again");
+                            Log.w(TAG, "voice transcription failed: "
+                                    + previewForLog(finalError));
+                            String reply = "I couldn't hear the task.\n\n" + finalError;
+                            setTaskText(reply);
+                            showTerminalReplyOnIsland(reply);
                             return;
                         }
                         if (finalText == null || finalText.trim().isEmpty()) {
                             if (sActiveControlRunner == AssistantActivityBackend.this) {
                                 sActiveControlRunner = null;
                             }
-                            setTaskText("I didn't catch that. Tap Speak and try again.");
-                            updateIsland("Try again");
+                            Log.i(TAG, "voice transcription empty");
+                            String reply = "I didn't catch that. Tap Speak and try again.";
+                            setTaskText(reply);
+                            showTerminalReplyOnIsland(reply);
                             return;
                         }
                         String transcript = finalText.trim();
+                        Log.i(TAG, "voice transcript chars=" + transcript.length()
+                                + " preview=\"" + previewForLog(transcript) + "\"");
                         setCurrentGoalText(transcript);
                         mPointerOverlayController.showTranscript(transcript);
-                        getWindow().getDecorView().postDelayed(new Runnable() {
-                            @Override
-                            public void run() {
-                                if (voiceGeneration == mVoiceRunGeneration) {
-                                    routeMessageFromCurrentMessage();
-                                }
+                        if (voiceGeneration == mVoiceRunGeneration) {
+                            Log.i(TAG, "voice transcript routing generation=" + voiceGeneration);
+                            routeMessageFromCurrentMessage();
+                            if (isControlSurface()) {
+                                moveTaskToBack(true);
                             }
-                        }, 700);
+                        }
                     }
                 });
             }
@@ -960,10 +1035,9 @@ public class AssistantActivityBackend extends ComponentActivity {
                         mRunningChatAdapter = null;
                         appendConversation("OpenPhone", reply);
                         setTaskText("OpenPhone is ready.");
-                        updateIsland("Ready");
                         if (reply != null && !reply.trim().isEmpty()
                                 && mPointerOverlayController != null) {
-                            mPointerOverlayController.showReply(reply);
+                            showTerminalReplyOnIsland(reply);
                         }
                         updateComposerActionButton();
                     }
@@ -982,6 +1056,8 @@ public class AssistantActivityBackend extends ComponentActivity {
             updateIsland("Ready");
             return;
         }
+        Log.i(TAG, "route start control=" + isControlSurface()
+                + " message=\"" + previewForLog(message) + "\"");
         final OperatingMode operatingMode = currentOperatingMode();
         final boolean hasActiveTask = mActiveTaskId != null || mAgentThread != null;
         final String recentConversation = mContextIndexStore == null
@@ -995,17 +1071,50 @@ public class AssistantActivityBackend extends ComponentActivity {
         mRunningChatAdapter = adapter;
         setTaskText("Thinking...");
         updateIsland("Thinking");
+        final Runnable timeoutRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (chatGeneration != mChatRunGeneration) {
+                    return;
+                }
+                mChatRunGeneration++;
+                ModelAdapter runningAdapter = mRunningChatAdapter;
+                if (runningAdapter != null) {
+                    runningAdapter.cancel();
+                }
+                Thread thread = mChatThread;
+                if (thread != null) {
+                    thread.interrupt();
+                }
+                mChatThread = null;
+                mRunningChatAdapter = null;
+                Log.w(TAG, "route timeout message=\"" + previewForLog(message) + "\"");
+                String reply = "Message routing timed out. Try again in a moment.";
+                appendConversation("OpenPhone", reply);
+                setTaskText("OpenPhone is ready.");
+                showTerminalReplyOnIsland(reply);
+                if (isControlSurface()) {
+                    moveTaskToBack(true);
+                }
+                updateComposerActionButton();
+            }
+        };
         Thread chatThread = new Thread(new Runnable() {
             @Override
             public void run() {
                 final OrchestratorDecision decision = mOrchestrator.decide(adapter, message,
                         hasActiveTask, operatingMode, recentConversation);
+                Log.i(TAG, "route decision mode="
+                        + (decision == null ? "null" : decision.mode())
+                        + " reason=\""
+                        + previewForLog(decision == null ? "" : decision.reason()) + "\"");
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
                         if (chatGeneration != mChatRunGeneration) {
                             return;
                         }
+                        getWindow().getDecorView().removeCallbacks(timeoutRunnable);
                         dispatchOrchestratorDecision(message, decision);
                     }
                 });
@@ -1013,6 +1122,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         }, "OpenPhoneOrchestrator");
         mChatThread = chatThread;
         updateComposerActionButton();
+        getWindow().getDecorView().postDelayed(timeoutRunnable, ROUTING_TIMEOUT_MILLIS);
         chatThread.start();
     }
 
@@ -1041,6 +1151,7 @@ public class AssistantActivityBackend extends ComponentActivity {
             return;
         }
         if (OrchestratorDecision.MODE_INSPECT_SCREEN.equals(mode)) {
+            Log.i(TAG, "route dispatch inspect_screen");
             answerScreenQuestion(originalMessage, true);
             return;
         }
@@ -1058,6 +1169,7 @@ public class AssistantActivityBackend extends ComponentActivity {
             if (taskGoal.isEmpty()) {
                 taskGoal = originalMessage;
             }
+            clearVoicePipelineProtection();
             setCurrentGoalText(taskGoal);
             mSuppressNextUserAppend = true;
             startAgentFromCurrentGoal();
@@ -1073,11 +1185,43 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
         appendConversation("OpenPhone", reply);
         setTaskText("OpenPhone is ready.");
-        updateIsland("Ready");
         if (mPointerOverlayController != null) {
-            mPointerOverlayController.showReply(reply);
+            showTerminalReplyOnIsland(reply);
         }
         updateComposerActionButton();
+    }
+
+    private void showTerminalReplyOnIsland(String reply) {
+        if (mPointerOverlayController == null || reply == null || reply.trim().isEmpty()) {
+            return;
+        }
+        if (isSystemFailureReply(reply)) {
+            mPointerOverlayController.setIslandState("error", reply);
+            finishVoicePipelineIfIdle();
+            return;
+        }
+        mPointerOverlayController.showReply(reply);
+        finishVoicePipelineIfIdle();
+    }
+
+    private static boolean isSystemFailureReply(String reply) {
+        if (reply == null) {
+            return false;
+        }
+        return reply.startsWith("Message routing failed:")
+                || reply.startsWith("Message routing timed out.")
+                || reply.startsWith("Chat request failed:")
+                || reply.startsWith("Screen question failed:")
+                || reply.startsWith("Screen question timed out.")
+                || reply.startsWith("I could not read the screen:")
+                || reply.startsWith("I could not start a screen observation.")
+                || reply.startsWith("I couldn't hear the task.")
+                || reply.startsWith("I didn't catch that.")
+                || reply.startsWith("Cloud screen understanding is not configured.")
+                || reply.startsWith("I could not parse the screen context.")
+                || reply.startsWith("Cloud chat is not configured.")
+                || reply.startsWith("I could not parse the chat response.")
+                || reply.startsWith("I could not decide how to handle that message.");
     }
 
     /**
@@ -1345,6 +1489,14 @@ public class AssistantActivityBackend extends ComponentActivity {
         return text.length() <= maxChars ? text : text.substring(0, maxChars);
     }
 
+    private static String previewForLog(String text) {
+        if (text == null) {
+            return "";
+        }
+        String compact = text.replace('\n', ' ').replace('\r', ' ').trim();
+        return compact.length() <= 96 ? compact : compact.substring(0, 96);
+    }
+
     private void answerScreenQuestionFromCurrentMessage() {
         final String message = currentGoalText().trim();
         if (message.isEmpty()) {
@@ -1360,11 +1512,42 @@ public class AssistantActivityBackend extends ComponentActivity {
     private void answerScreenQuestion(final String message, boolean alreadyAppended) {
         cancelChatRun();
         mAgentRunCancelled = false;
+        Log.i(TAG, "screen question start control=" + isControlSurface()
+                + " message=\"" + previewForLog(message) + "\"");
         final int chatGeneration = ++mChatRunGeneration;
         final ModelAdapter adapter = selectedModelAdapter(modelEndpointConfig());
         mRunningChatAdapter = adapter;
         setTaskText("Reading the screen...");
         updateIsland("Reading screen");
+        final Runnable timeoutRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (chatGeneration != mChatRunGeneration) {
+                    return;
+                }
+                mChatRunGeneration++;
+                ModelAdapter runningAdapter = mRunningChatAdapter;
+                if (runningAdapter != null) {
+                    runningAdapter.cancel();
+                }
+                Thread thread = mChatThread;
+                if (thread != null) {
+                    thread.interrupt();
+                }
+                mChatThread = null;
+                mRunningChatAdapter = null;
+                Log.w(TAG, "screen question timeout message=\""
+                        + previewForLog(message) + "\"");
+                String reply = "Screen question timed out. Try again in a moment.";
+                appendConversation("OpenPhone", reply);
+                setTaskText("OpenPhone is ready.");
+                showTerminalReplyOnIsland(reply);
+                if (isControlSurface()) {
+                    moveTaskToBack(true);
+                }
+                updateComposerActionButton();
+            }
+        };
         Thread chatThread = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -1390,8 +1573,11 @@ public class AssistantActivityBackend extends ComponentActivity {
                                     + "\"include_ui_tree\":true,\"max_dimension\":512,"
                                     + "\"quality\":65,"
                                     + "\"reason\":\"answer the user's screen question\"}");
+                    Log.i(TAG, "screen context chars="
+                            + (screenJson == null ? 0 : screenJson.length()));
                     finalReply(adapter.answerScreenQuestion(message, screenJson));
                 } catch (RuntimeException e) {
+                    Log.w(TAG, "screen question failed", e);
                     finalReply("I could not read the screen: " + e.getClass().getSimpleName());
                 } finally {
                     if (transientTask && taskId != null && mAgentManager != null) {
@@ -1405,20 +1591,26 @@ public class AssistantActivityBackend extends ComponentActivity {
             }
 
             private void finalReply(final String reply) {
+                Log.i(TAG, "screen question reply chars="
+                        + (reply == null ? 0 : reply.length())
+                        + " preview=\"" + previewForLog(reply) + "\"");
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
                         if (chatGeneration != mChatRunGeneration) {
                             return;
                         }
+                        getWindow().getDecorView().removeCallbacks(timeoutRunnable);
                         mChatThread = null;
                         mRunningChatAdapter = null;
                         appendConversation("OpenPhone", reply);
                         setTaskText("OpenPhone is ready.");
-                        updateIsland("Ready");
                         if (reply != null && !reply.trim().isEmpty()
                                 && mPointerOverlayController != null) {
-                            mPointerOverlayController.showReply(reply);
+                            showTerminalReplyOnIsland(reply);
+                        }
+                        if (isControlSurface()) {
+                            moveTaskToBack(true);
                         }
                         updateComposerActionButton();
                     }
@@ -1427,6 +1619,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         }, "OpenPhoneScreenQuestion");
         mChatThread = chatThread;
         updateComposerActionButton();
+        getWindow().getDecorView().postDelayed(timeoutRunnable, SCREEN_QUESTION_TIMEOUT_MILLIS);
         chatThread.start();
     }
 
@@ -1510,7 +1703,9 @@ public class AssistantActivityBackend extends ComponentActivity {
                 || "needs_review".equals(islandState);
         if (mPointerOverlayController != null && islandState != null
                 && (isTerminal || mIslandVoiceLaunch
-                        || mActiveTaskId != null || mAgentThread != null)) {
+                        || mListening || mRunningChatAdapter != null
+                        || mChatThread != null || mActiveTaskId != null
+                        || mAgentThread != null)) {
             mPointerOverlayController.setIslandState(islandState, status);
         }
         if (mComposeStateCallbacks != null) {
@@ -1672,6 +1867,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         mVoiceRunGeneration++;
         mListening = false;
         mIslandVoiceLaunch = false;
+        clearVoicePipelineProtection();
         OpenAiSpeechTranscriber speechTranscriber = mRunningSpeechTranscriber;
         if (speechTranscriber != null) {
             speechTranscriber.cancel();

@@ -8,8 +8,9 @@ daily-driver secure phone OS.
 Do not file public GitHub issues for vulnerabilities, leaked secrets, bypasses,
 or exploitable device-control bugs.
 
-Report privately to the project maintainer. Until a dedicated security address
-is published, use the maintainer's existing private contact channel.
+Report privately through GitHub private vulnerability reporting when available,
+or through the maintainer's existing private contact channel until a dedicated
+security address is published.
 
 ## Current Security Posture
 
@@ -17,6 +18,9 @@ is published, use the maintainer's existing private contact channel.
 - Development builds are not production signed.
 - Play Integrity compatibility is not a goal for early releases.
 - The assistant and framework service are experimental.
+- Background agent jobs are reviewed-conservative: they may observe and
+  summarize, but state-changing background tools are blocked until a foreground
+  reviewed approval flow exists.
 - Production key management for model providers is not implemented.
 
 ## Secrets

@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.util.Log;
 
 import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
+import org.openphone.assistant.jobs.OpenPhoneAgentJobScheduler;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -34,6 +35,7 @@ public final class OpenPhoneBootReceiver extends BroadcastReceiver {
         OpenPhoneNotificationController.showReady(context);
         OpenPhoneNotificationListenerService.ensureEnabled(context);
         OpenPhoneWatcherScheduler.checkNow(context);
+        OpenPhoneAgentJobScheduler.checkNow(context);
         Log.i(TAG, "Started OpenPhone assistant service for " + action);
     }
 

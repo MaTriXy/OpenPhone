@@ -176,6 +176,24 @@
       "requires_reason": true
     },
     {
+      "name": "background_job_create",
+      "capability": "background.run",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
+      "name": "background_job_list",
+      "capability": "tasks.observe",
+      "kind": "observe",
+      "requires_reason": true
+    },
+    {
+      "name": "background_job_stop",
+      "capability": "background.run",
+      "kind": "action",
+      "requires_reason": true
+    },
+    {
       "name": "get_screen",
       "capability": "screen.read.visible",
       "kind": "observe",

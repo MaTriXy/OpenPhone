@@ -141,7 +141,7 @@ then generate the artifact manifest before drafting release notes:
 
 ```bash
 mkdir -p .worktree/releases/v0.0.1-preview
-cp .worktree/artifacts/tegu/openphone_tegu-settings-grants-v55-ota.zip \
+cp .worktree/artifacts/tegu/openphone_tegu-volume-fix-ota.zip \
   .worktree/releases/v0.0.1-preview/
 scripts/generate-release-manifest.sh 0.0.1-preview .worktree/releases/v0.0.1-preview
 scripts/validate-release-artifacts.sh .worktree/releases/v0.0.1-preview
@@ -161,7 +161,7 @@ scripts/generate-ota-feed.sh \
   --version 0.0.1-preview \
   --channel preview \
   --device tegu \
-  --artifact .worktree/releases/v0.0.1-preview/openphone_tegu-settings-grants-v55-ota.zip \
+  --artifact .worktree/releases/v0.0.1-preview/openphone_tegu-volume-fix-ota.zip \
   --base-url https://downloads.example/openphone/v0.0.1-preview \
   --release-notes-url https://github.com/openphone-os/OpenPhone/releases/tag/v0.0.1-preview \
   --output .worktree/releases/v0.0.1-preview/ota-feed-tegu-preview.json \

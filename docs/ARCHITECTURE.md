@@ -14,6 +14,7 @@ Applications
 OpenPhone AI Layer
   assistant UI
   agent orchestrator
+  agent runtime jobs
   screen understanding
   action execution
   policy and consent
@@ -60,6 +61,12 @@ The current repo implements the first OpenPhone product layer:
   tool executor and OpenAI adapter cover the registered vocabulary. The
   executor enforces non-empty model-visible reasons for tools marked
   `requires_reason`.
+- Agent Runtime V1 background jobs. The first assistant-side implementation
+  persists background agent turns, schedules them with AlarmManager, wakes them
+  at boot/package replacement/service startup, delivers notification results,
+  and blocks state-changing background tools until a foreground reviewed
+  approval flow exists. The runtime contract is documented in
+  [AGENT_RUNTIME_V1.md](AGENT_RUNTIME_V1.md).
 - Local manifest and patch-stack workflow.
 - Hidden OpenPhone framework manager and Binder service.
 - `system_server` OpenPhone agent manager service.

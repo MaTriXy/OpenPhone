@@ -203,13 +203,16 @@ dumpsys activity services -> org.openphone.assistant/.OpenPhoneAssistantService 
 Current assistant development baseline:
 
 ```text
-manifest versionCode=57
-manifest versionName=0.1.21-dev
-latest assistant-only APK tested: .worktree/artifacts/tegu/OpenPhoneAssistant-v91-chat-icons.apk
+manifest versionCode=129
+manifest versionName=0.1.93-dev
+current on-device APK sha256: bc2f83d18efd99b70d9124f6e4deafbde6a02ee87ec52e993feaa73007571921
+current OTA build incremental: 1781483055
+latest validated development OTA: .worktree/artifacts/tegu/openphone_tegu-volume-fix-ota.zip
+latest validated development OTA sha256: a97d1fb300f6b805542450438fb73c96dd2fd8cbbfb6a4e4c0b0f318c92ae31d
 ```
 
-The assistant-only APK was built on the EC2 Linux Android tree, pushed with
-`scripts/push-assistant-apk.sh`, and validated on the physical Pixel 9a for:
+The assistant-only APK / OTA iteration loop is built on the EC2 Linux Android
+tree, pushed or sideloaded to the physical Pixel 9a, and validated for:
 
 - app launch after reboot,
 - chat-style home screen,
@@ -256,7 +259,7 @@ adb shell 'settings get secure accessibility_enabled'
 ```
 
 For the current repository manifest, the assistant APK should report
-`versionCode=57`, `versionName=0.1.21-dev`, and
+`versionCode=129`, `versionName=0.1.93-dev`, and
 `.OpenPhoneAccessibilityService`. Trust `scripts/verify-tegu-device.sh` over
 stale example output. The script derives the expected assistant package version
 from the repository manifest and fails if PackageManager still reports stale

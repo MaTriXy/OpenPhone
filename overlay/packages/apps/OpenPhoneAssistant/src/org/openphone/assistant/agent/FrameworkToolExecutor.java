@@ -28,6 +28,8 @@ import org.openphone.assistant.actions.ToolCatalog;
 import org.openphone.assistant.commitments.CommitmentStore;
 import org.openphone.assistant.context.ContextEvent;
 import org.openphone.assistant.context.ContextIndexStore;
+import org.openphone.assistant.jobs.AgentJobStore;
+import org.openphone.assistant.jobs.OpenPhoneAgentJobScheduler;
 import org.openphone.assistant.memory.MemoryStore;
 import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
 import org.openphone.assistant.watchers.WatcherStore;
@@ -51,6 +53,7 @@ public final class FrameworkToolExecutor {
     private final OpenPhoneAgentManager mAgentManager;
     private final CommitmentStore mCommitmentStore;
     private final ContextIndexStore mContextIndexStore;
+    private final AgentJobStore mAgentJobStore;
     private final MemoryStore mMemoryStore;
     private final WatcherStore mWatcherStore;
     private final ActionRegistry mActionRegistry;
@@ -60,6 +63,7 @@ public final class FrameworkToolExecutor {
         mAgentManager = agentManager;
         mCommitmentStore = new CommitmentStore(context);
         mContextIndexStore = new ContextIndexStore(context);
+        mAgentJobStore = new AgentJobStore(context);
         mMemoryStore = new MemoryStore(context);
         mWatcherStore = new WatcherStore(context);
         mActionRegistry = ActionRegistry.load();
@@ -139,6 +143,12 @@ public final class FrameworkToolExecutor {
                     return watcherList(arguments);
                 case "watcher_stop":
                     return watcherStop(arguments);
+                case "background_job_create":
+                    return backgroundJobCreate(arguments);
+                case "background_job_list":
+                    return backgroundJobList(arguments);
+                case "background_job_stop":
+                    return backgroundJobStop(arguments);
                 case "get_screen":
                     return getScreen(taskId, arguments);
                 case "watch_screen":
@@ -2114,6 +2124,99 @@ public final class FrameworkToolExecutor {
         return new JSONObject()
                 .put("status", "watcher.stopped")
                 .put("watcher_id", id)
+                .toString();
+    }
+
+    private String backgroundJobCreate(JSONObject arguments) throws JSONException {
+        String title = arguments.optString("title", "").trim();
+        String prompt = firstNonEmpty(arguments.optString("prompt", ""),
+                arguments.optString("goal", ""),
+                arguments.optString("task", ""));
+        if (title.isEmpty()) {
+            return error("empty_background_job");
+        }
+        if (prompt.isEmpty()) {
+            return error("empty_background_job_prompt");
+        }
+        JSONObject schedule = arguments.optJSONObject("schedule");
+        if (schedule == null) {
+            schedule = new JSONObject();
+        }
+        long nextRunAt = firstPositive(arguments.optLong("run_at", 0L),
+                arguments.optLong("next_run_at", 0L),
+                arguments.optLong("due_at", 0L),
+                schedule.optLong("run_at", 0L),
+                schedule.optLong("next_run_at", 0L),
+                schedule.optLong("due_at", 0L));
+        if (nextRunAt <= 0) {
+            nextRunAt = System.currentTimeMillis() + 15_000L;
+        }
+        schedule.put("next_run_at", nextRunAt);
+        long intervalMs = firstPositive(arguments.optLong("interval_ms", 0L),
+                arguments.optLong("interval_millis", 0L),
+                schedule.optLong("interval_ms", 0L),
+                schedule.optLong("interval_millis", 0L));
+        if (intervalMs > 0) {
+            schedule.put("interval_ms", intervalMs);
+        }
+        JSONObject payload = arguments.optJSONObject("payload");
+        if (payload == null) {
+            payload = new JSONObject();
+        }
+        JSONObject delivery = arguments.optJSONObject("delivery");
+        if (delivery == null) {
+            delivery = new JSONObject().put("mode", "notification");
+        }
+        String notificationText = firstNonEmpty(arguments.optString("notification_text", ""),
+                arguments.optString("notification_message", ""),
+                delivery.optString("notification_text", ""),
+                delivery.optString("text", ""),
+                delivery.optString("message", ""));
+        if (!notificationText.isEmpty()) {
+            delivery.put("notification_text", notificationText);
+        }
+        long id = mAgentJobStore.createJob(
+                arguments.optString("type", "agent_turn"),
+                title,
+                prompt,
+                payload.toString(),
+                schedule.toString(),
+                arguments.optString("session_target", "main"),
+                delivery.toString(),
+                nextRunAt);
+        if (id >= 0) {
+            OpenPhoneAgentJobScheduler.scheduleNext(mContext);
+        }
+        return new JSONObject()
+                .put("status", id >= 0 ? "background_job.created"
+                        : "background_job.create_failed")
+                .put("job_id", id)
+                .put("title", title)
+                .put("next_run_at", nextRunAt)
+                .toString();
+    }
+
+    private String backgroundJobList(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query", "");
+        int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
+        JSONObject result = new JSONObject(mAgentJobStore.listJson(query, limit));
+        result.put("status", "background_job.list.results")
+                .put("query", query)
+                .put("limit", limit);
+        return result.toString();
+    }
+
+    private String backgroundJobStop(JSONObject arguments) throws JSONException {
+        long id = arguments.optLong("job_id", -1L);
+        if (id <= 0) {
+            return error("bad_background_job_stop");
+        }
+        boolean stopped = mAgentJobStore.stop(id);
+        OpenPhoneAgentJobScheduler.scheduleNext(mContext);
+        return new JSONObject()
+                .put("status", stopped ? "background_job.stopped"
+                        : "background_job.not_found")
+                .put("job_id", id)
                 .toString();
     }
 

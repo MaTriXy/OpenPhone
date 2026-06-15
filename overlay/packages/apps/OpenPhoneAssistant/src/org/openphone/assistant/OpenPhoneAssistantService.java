@@ -18,6 +18,7 @@ import org.openphone.assistant.agent.ScreenUnderstanding;
 import org.openphone.assistant.agent.TaskRegistry;
 import org.openphone.assistant.model.ModelEndpointConfig;
 import org.openphone.assistant.model.OpenAiResponsesAgentAdapter;
+import org.openphone.assistant.jobs.OpenPhoneAgentJobScheduler;
 import org.openphone.assistant.policy.AuditLog;
 import org.openphone.assistant.policy.PolicyDecision;
 import org.openphone.assistant.policy.PolicyEngine;
@@ -131,6 +132,7 @@ public final class OpenPhoneAssistantService extends Service {
             Log.w(TAG, "OpenPhone framework service is not available");
             OpenPhoneNotificationController.showReady(this);
             OpenPhoneWatcherScheduler.checkNow(this);
+            OpenPhoneAgentJobScheduler.checkNow(this);
             return;
         }
         Log.i(TAG, "OpenPhone framework service status: " + mAgentManager.getServiceStatus());
@@ -138,6 +140,7 @@ public final class OpenPhoneAssistantService extends Service {
         mPointerOverlayController.showMicButton();
         OpenPhoneNotificationController.showReady(this);
         OpenPhoneWatcherScheduler.checkNow(this);
+        OpenPhoneAgentJobScheduler.checkNow(this);
     }
 
     @Override
@@ -170,6 +173,7 @@ public final class OpenPhoneAssistantService extends Service {
         }
         OpenPhoneNotificationController.showReady(this);
         OpenPhoneWatcherScheduler.checkNow(this);
+        OpenPhoneAgentJobScheduler.checkNow(this);
         return START_STICKY;
     }
 

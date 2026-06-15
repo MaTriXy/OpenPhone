@@ -77,8 +77,8 @@ adb shell 'settings get secure accessibility_enabled'
 Expected current assistant package metadata after the preview OTA client build:
 
 ```text
-versionCode=57
-versionName=0.1.21-dev
+versionCode=129
+versionName=0.1.93-dev
 ```
 
 ## Assistant UI Smoke Test

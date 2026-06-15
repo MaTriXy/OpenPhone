@@ -5,11 +5,12 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=129`, `versionName=0.1.93-dev`.
+`versionCode=136`, `versionName=0.1.100-dev`.
 
-**Tree state (2026-06-15):** working tree clean, `./scripts/check.sh`
-green (56 assistant files against android-35). Phases 0, A, and B of
-the spine-first plan are code-complete and device-validated, plus
+**Baseline before the current Agent Runtime V1 working-tree slice
+(2026-06-15):** working tree clean, `./scripts/check.sh` green
+(56 assistant files against android-35). Phases 0, A, and B of
+the spine-first plan were code-complete and device-validated, plus
 eight Phase C connector slices (calendar-from-message, model-backed
 semantic watcher evaluation, browser/page context deepening,
 model-backed AI Sheet screen answers, message-reply watchers, the AI
@@ -78,6 +79,116 @@ Phase 10 hardening completed slices (in landing order):
     `frameworks_base/0018`) passes events through unless the
     chord is actively triggered. OTA sideloaded; build incremental
     advanced to 1781483055 (commit `fb7f1f7`).
+16. Agent Runtime V1 working-tree slice — adds
+    `docs/AGENT_RUNTIME_V1.md`, `docs/contracts/agent-job.schema.json`,
+    assistant-side durable background jobs, `background_job_create` /
+    `background_job_list` / `background_job_stop` model tools, boot/service
+    scheduling hooks, notification delivery, and a conservative background
+    safety rail that blocks state-changing tools until foreground review
+    exists. This slice also restructures the assistant-owned island around a
+    presentation state model for compact, transcript, reply, and approval
+    layouts, and refreshes public repo docs for contribution/release/device
+    readiness. Host validation: `./scripts/check.sh` green against 60
+    assistant files on 2026-06-15. EC2 focused `m OpenPhoneAssistant` build
+    passed for `openphone_tegu-bp4a-userdebug`; final pushed artifact copied to
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-agent-runtime-v1d.apk`
+    (`sha256=41c720677b79a117d18311c1eed52fe6fd50c22d872544330b9340fe43c50f7e`).
+    The live Pixel 9a `/system_ext/priv-app/OpenPhoneAssistant/OpenPhoneAssistant.apk`
+    hash matches that artifact and PackageManager reports `versionCode=129`,
+    `versionName=0.1.93-dev`. The live `/system_ext/etc/openphone/action_registry.json`
+    hash is `690aa4e7178dc32772cdca27cc017847d82a0b72318caf90ea9d9a6da3780a87`;
+    `/system_ext/etc/openphone/model_tools.json` hash is
+    `b7a81429ff66108a960c5c28dca2696f7ad307db78072a53fd2c580b7eb663c9`.
+    On-device screenshot/log evidence is under
+    `.worktree/artifacts/tegu/screens/agent-runtime-v1d-20260614-194019/`.
+    The V1D smoke created `background_job_create` job id 2, completed it with
+    `failure_count=0`, and posted notification id 7002 with both
+    `android.text` and `android.bigText` equal to `background job v1d visible`.
+    No `org.openphone.assistant` fatal process was present in the captured
+    logcat; repeated `com.google.android.gms.persistent` permission crashes
+    remain unrelated device noise.
+17. Dynamic island / volume-control follow-up — narrows and lowers the compact
+    island, switches listen/stop/approval labels to icon-only controls,
+    isolates `AgentControlActivity` into its own task, immediately backgrounds
+    volume-triggered control launches, and routes chat/orchestrator system
+    failures into the inspectable island `error` state. Host validation:
+    `./scripts/check.sh` and `git diff --check` passed on 2026-06-15. EC2
+    focused `m OpenPhoneAssistant` build passed for
+    `openphone_tegu-bp4a-userdebug`; final pushed artifact copied to
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-island-volume-v132.apk`
+    (`sha256=dfadc1133a8aaf5930b61676d3aa8a17f51cfd4b3c4adb6485148ea70aa2cf6c`).
+    The live Pixel 9a `/system_ext/priv-app/OpenPhoneAssistant/OpenPhoneAssistant.apk`
+    hash matches that artifact and PackageManager reports `versionCode=132`,
+    `versionName=0.1.96-dev`. On-device screenshot/window-focus evidence is
+    under
+    `.worktree/artifacts/tegu/screens/island-volume-v132-20260615-101144/`:
+    launcher focus remained during start/stop control toggles, and tapping a
+    compact error island on the launcher expanded the error detail in-place
+    without focusing `org.openphone.assistant`.
+18. Screen-question control-surface watchdog — backgrounds hidden
+    `AgentControlActivity` launches after dispatch, routes screen-question
+    failures/timeouts into inspectable island error states, and adds a
+    30-second UI watchdog so the island cannot stay glowing indefinitely when
+    a screen observation stalls. Host validation: `./scripts/check.sh` and
+    `git diff --check` passed on 2026-06-15. EC2 focused
+    `m OpenPhoneAssistant` build passed for `openphone_tegu-bp4a-userdebug`;
+    final pushed artifact copied to
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-screen-control-v133.apk`
+    (`sha256=91f5d6994c9ceb509bc8a70ad7cc7b47265596dbf3d4ad6b01a4e6ae30deccb8`).
+    The live Pixel 9a `/system_ext/priv-app/OpenPhoneAssistant/OpenPhoneAssistant.apk`
+    hash matches that artifact and PackageManager reports `versionCode=133`,
+    `versionName=0.1.97-dev`. On-device evidence is under
+    `.worktree/artifacts/tegu/screens/screen-control-v133-20260615-103407/`:
+    the hidden run for "can you see my screen?" returned a visible island reply
+    over the launcher and window focus stayed on
+    `com.android.launcher3/.uioverrides.QuickstepLauncher`.
+    Play Store launch investigation evidence is under
+    `.worktree/artifacts/tegu/screens/play-store-launch-v133-20260615-103810/`:
+    ActivityTaskManager accepted `com.android.vending/.AssetBrowserActivity`,
+    but focus returned to the launcher while `com.google.android.gms.persistent`
+    crash-looped with privileged-permission denials. PackageManager reports
+    both `com.android.vending` and `com.google.android.gms` installed from
+    `/data/app`, which is outside the supported recovery-sideload GMS path.
+19. Voice/screen-question island regression follow-up — adds a 25-second
+    orchestrator routing watchdog, keeps the island active while chat/listen
+    threads are still running, tunes the orchestrator `inspect_screen`
+    description for prompts like "can you see my screen?", routes
+    transcription misses into an inspectable island error, and reduces the
+    compact island to `320x82` at `y=32` so it sits lower and closer to the
+    camera/status-band center. Host validation: `./scripts/check.sh` and
+    `git diff --check` passed on 2026-06-15. EC2 focused
+    `m OpenPhoneAssistant` build passed for `openphone_tegu-bp4a-userdebug`;
+    final pushed artifact copied to
+    `.worktree/artifacts/tegu/OpenPhoneAssistant-voice-island-v136.apk`
+    (`sha256=ab23f4f2b9ca7ccc42b3a469b8d782c8df41f92138eab8aacf35e5c156363791`).
+    The live Pixel 9a `/system_ext/priv-app/OpenPhoneAssistant/OpenPhoneAssistant.apk`
+    hash matches that artifact and PackageManager reports `versionCode=136`,
+    `versionName=0.1.100-dev`. On-device evidence is under
+    `.worktree/artifacts/tegu/screens/voice-island-v136-20260615-110848/`:
+    the hidden run for "can you see my screen?" returned a visible island reply
+    over the launcher in about six seconds, then auto-collapsed to idle;
+    no-speech voice capture exited to a compact `!` and tapping the island
+    expanded "I didn't catch that..." in place while launcher focus remained.
+    A real spoken phone-microphone run is still pending user participation; a
+    laptop text-to-speech attempt was not counted because audio was routed to
+    headphones.
+20. GMS reinstall recovery — removed stale `/data/app` copies of the
+    MindTheGapps-owned packages (`com.android.vending`,
+    `com.google.android.gms`, Partner Setup, Google app, Restore, Wellbeing,
+    TalkBack, and Google TTS), cleared package cache, sideloaded the current
+    `openphone_tegu-volume-fix-ota.zip`
+    (`sha256=a97d1fb300f6b805542450438fb73c96dd2fd8cbbfb6a4e4c0b0f318c92ae31d`),
+    then sideloaded
+    `.worktree/downloads/gms/MindTheGapps-16.0.0-arm64-20260409_073023.zip`
+    (`sha256=a6ff8b8c31f7ccd0a9f2fd651fa4438a8e39a5f63b95be246ea1f98982af2c28`)
+    before booting Android. Evidence is under
+    `.worktree/artifacts/tegu/gms-reinstall-20260615-112518/`. Post-boot
+    PackageManager reports Play Store at `/product/priv-app/Phonesky`,
+    Play services at `/product/priv-app/GmsCore`, and GSF at
+    `/system_ext/priv-app/GoogleServicesFramework`, with Play Store and Play
+    services carrying `SYSTEM`, `PRIVILEGED`, and `PRODUCT` flags. Launching
+    Play Store now reaches the Google sign-in flow instead of returning to the
+    launcher or showing a crash dialog.
 
 OTA sideload order on the Pixel 9a (most recent last):
 1. `openphone_tegu-assistant-data-service-ota.zip` —
@@ -98,9 +209,9 @@ OTA sideload order on the Pixel 9a (most recent last):
    `ro.build.version.incremental=1781483055`.
 
 After each OTA the assistant APK iterates without another full
-reboot cycle. The current APK on the device is v129 0.1.93-dev,
+reboot cycle. The current APK on the device is v136 0.1.100-dev,
 sha256
-`bc2f83d18efd99b70d9124f6e4deafbde6a02ee87ec52e993feaa73007571921`.
+`ab23f4f2b9ca7ccc42b3a469b8d782c8df41f92138eab8aacf35e5c156363791`.
 
 Current physically validated Pixel 9a baseline:
 

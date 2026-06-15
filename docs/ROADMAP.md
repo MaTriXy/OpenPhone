@@ -22,12 +22,23 @@ Status: in progress.
 - CUA-informed observe/reason/act loop implemented on the phone, not through
   ADB.
 - Structured model tool schema.
+- Durable Agent Runtime V1 background jobs for scheduled or deferred agent
+  turns.
 - Screenshot-based one-step action selection.
 - Multi-step task loop with max step/time limits.
 - Trajectory logging for screenshots, model calls, actions, policy decisions,
   and failures.
 - Repeatable eval tasks.
 - User-facing chat surface for text/voice task entry.
+
+Remaining:
+
+- Move `agent_jobs` storage behind the OS-owned `openphone_assistant_data`
+  service.
+- Add post-turn review workers that propose memories, commitments, and
+  watchers from ordinary conversations.
+- Add resumable reviewed approvals for background jobs that need
+  state-changing tools.
 
 ## OS Integration v1
 
@@ -40,6 +51,8 @@ Status: partially implemented.
 - OS-mediated action execution.
 - Policy, confirmation, pointer event, and audit plumbing.
 - Assistant-owned cursor/status surface.
+- Assistant-owned dynamic island state model for compact, reply, transcript,
+  and approval states.
 - Settings-owned OpenPhone dashboard, task-grant defaults, and audit pages.
 - SystemUI Quick Settings tile.
 

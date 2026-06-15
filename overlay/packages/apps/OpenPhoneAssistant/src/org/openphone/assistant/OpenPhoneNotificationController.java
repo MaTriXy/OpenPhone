@@ -9,20 +9,26 @@ import android.content.Intent;
 import android.os.Build;
 
 import org.openphone.assistant.commitments.CommitmentRecord;
+import org.openphone.assistant.jobs.AgentJobRecord;
 import org.openphone.assistant.watchers.OpenPhoneWatcherReceiver;
 import org.openphone.assistant.watchers.WatcherRecord;
 import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public final class OpenPhoneNotificationController {
     static final String CHANNEL_ID = "openphone_agent";
     private static final String COMMITMENT_CHANNEL_ID = "openphone_commitments";
     private static final String WATCHER_CHANNEL_ID = "openphone_watchers";
+    private static final String AGENT_JOB_CHANNEL_ID = "openphone_agent_jobs";
     static final String ACTION_START = "org.openphone.assistant.action.START";
     static final String ACTION_STOP = "org.openphone.assistant.action.STOP";
     static final String ACTION_OPEN = "org.openphone.assistant.action.OPEN";
     static final int NOTIFICATION_ID = 1001;
     private static final int COMMITMENT_NOTIFICATION_BASE_ID = 5000;
     private static final int WATCHER_NOTIFICATION_BASE_ID = 6000;
+    private static final int AGENT_JOB_NOTIFICATION_BASE_ID = 7000;
 
     private OpenPhoneNotificationController() {}
 
@@ -154,6 +160,67 @@ public final class OpenPhoneNotificationController {
         manager.notify(watcherNotificationId(watcher.id), builder.build());
     }
 
+    public static void showAgentJobFinished(Context context, AgentJobRecord job, String result) {
+        if (context == null || job == null) {
+            return;
+        }
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return;
+        }
+        ensureAgentJobChannel(manager);
+        String detail = agentJobFinishedText(job, result);
+        Notification.Builder builder = new Notification.Builder(context)
+                .setSmallIcon(R.drawable.ic_openphone_tile)
+                .setContentTitle(job.title)
+                .setContentText(detail)
+                .setStyle(new Notification.BigTextStyle().bigText(detail))
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
+                .setContentIntent(pendingBroadcast(context, ACTION_OPEN,
+                        jobRequestCode(job.id, 10)))
+                .addAction(new Notification.Action.Builder(
+                        R.drawable.ic_openphone_tile,
+                        "Open",
+                        pendingBroadcast(context, ACTION_OPEN,
+                                jobRequestCode(job.id, 11))).build());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setChannelId(AGENT_JOB_CHANNEL_ID);
+        }
+        manager.notify(agentJobNotificationId(job.id), builder.build());
+    }
+
+    public static void showAgentJobFailed(Context context, AgentJobRecord job, String reason) {
+        if (context == null || job == null) {
+            return;
+        }
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return;
+        }
+        ensureAgentJobChannel(manager);
+        String detail = reason == null || reason.trim().isEmpty()
+                ? job.title : job.title + ": " + reason.trim();
+        Notification.Builder builder = new Notification.Builder(context)
+                .setSmallIcon(R.drawable.ic_openphone_tile)
+                .setContentTitle("Background job needs attention")
+                .setContentText(detail)
+                .setStyle(new Notification.BigTextStyle().bigText(detail))
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
+                .setContentIntent(pendingBroadcast(context, ACTION_OPEN,
+                        jobRequestCode(job.id, 20)))
+                .addAction(new Notification.Action.Builder(
+                        R.drawable.ic_openphone_tile,
+                        "Open",
+                        pendingBroadcast(context, ACTION_OPEN,
+                                jobRequestCode(job.id, 21))).build());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setChannelId(AGENT_JOB_CHANNEL_ID);
+        }
+        manager.notify(agentJobNotificationId(job.id), builder.build());
+    }
+
     private static void show(Context context, boolean active, String text) {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null) {
@@ -239,6 +306,16 @@ public final class OpenPhoneNotificationController {
         }
     }
 
+    private static void ensureAgentJobChannel(NotificationManager manager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    AGENT_JOB_CHANNEL_ID,
+                    "OpenPhone background jobs",
+                    NotificationManager.IMPORTANCE_DEFAULT);
+            manager.createNotificationChannel(channel);
+        }
+    }
+
     private static int notificationId(long commitmentId) {
         long bounded = Math.max(0L, Math.min(commitmentId, 999_999L));
         return COMMITMENT_NOTIFICATION_BASE_ID + (int) bounded;
@@ -249,8 +326,131 @@ public final class OpenPhoneNotificationController {
         return WATCHER_NOTIFICATION_BASE_ID + (int) bounded;
     }
 
+    private static int agentJobNotificationId(long jobId) {
+        long bounded = Math.max(0L, Math.min(jobId, 999_999L));
+        return AGENT_JOB_NOTIFICATION_BASE_ID + (int) bounded;
+    }
+
     private static int requestCode(long commitmentId, int actionCode) {
         long bounded = Math.max(0L, Math.min(commitmentId, 999_999L));
         return (int) (COMMITMENT_NOTIFICATION_BASE_ID + bounded * 10L + actionCode);
+    }
+
+    private static int jobRequestCode(long jobId, int actionCode) {
+        long bounded = Math.max(0L, Math.min(jobId, 999_999L));
+        return (int) (AGENT_JOB_NOTIFICATION_BASE_ID + bounded * 10L + actionCode);
+    }
+
+    private static String summarize(String text) {
+        String clean = text.replace('\n', ' ').replace('\r', ' ').trim();
+        return clean.length() <= 240 ? clean : clean.substring(0, 240);
+    }
+
+    private static String agentJobFinishedText(AgentJobRecord job, String result) {
+        String deliveryText = firstNonEmpty(
+                jsonString(job.deliveryJson, "notification_text"),
+                jsonString(job.deliveryJson, "text"),
+                jsonString(job.deliveryJson, "message"),
+                jsonString(job.payloadJson, "notification_text"),
+                jsonString(job.payloadJson, "text"),
+                jsonString(job.payloadJson, "message"));
+        if (!deliveryText.isEmpty()) {
+            return summarize(deliveryText);
+        }
+        String exactPhrase = extractExactPhrase(job.prompt);
+        if (!exactPhrase.isEmpty()) {
+            return summarize(exactPhrase);
+        }
+        String resultSummary = resultSummary(result);
+        if (!resultSummary.isEmpty()) {
+            return summarize(resultSummary);
+        }
+        return job.title == null || job.title.trim().isEmpty()
+                ? "Background job completed" : job.title.trim();
+    }
+
+    private static String resultSummary(String result) {
+        String clean = result == null ? "" : result.trim();
+        if (clean.isEmpty()) {
+            return "";
+        }
+        if (!clean.startsWith("{")) {
+            return clean;
+        }
+        try {
+            JSONObject object = new JSONObject(clean);
+            String rootSummary = firstNonEmpty(object.optString("summary", ""),
+                    object.optString("message", ""),
+                    object.optString("result", ""));
+            if (!rootSummary.isEmpty()) {
+                return rootSummary;
+            }
+            JSONArray steps = object.optJSONArray("steps");
+            if (steps != null) {
+                for (int i = steps.length() - 1; i >= 0; i--) {
+                    JSONObject step = steps.optJSONObject(i);
+                    if (step == null) {
+                        continue;
+                    }
+                    JSONObject arguments = step.optJSONObject("arguments");
+                    if (arguments == null) {
+                        continue;
+                    }
+                    String summary = arguments.optString("summary", "");
+                    if (!summary.trim().isEmpty()) {
+                        return summary;
+                    }
+                }
+            }
+        } catch (JSONException ignored) {
+        }
+        return "Background job completed";
+    }
+
+    private static String jsonString(String json, String key) {
+        if (json == null || json.trim().isEmpty()) {
+            return "";
+        }
+        try {
+            return new JSONObject(json).optString(key, "").trim();
+        } catch (JSONException e) {
+            return "";
+        }
+    }
+
+    private static String extractExactPhrase(String text) {
+        String clean = text == null ? "" : text.trim();
+        if (clean.isEmpty()) {
+            return "";
+        }
+        String marker = "exact phrase:";
+        int index = clean.toLowerCase(java.util.Locale.US).indexOf(marker);
+        if (index < 0) {
+            return "";
+        }
+        String phrase = clean.substring(index + marker.length()).trim();
+        if (phrase.startsWith("\"")) {
+            int end = phrase.indexOf('"', 1);
+            if (end > 1) {
+                return phrase.substring(1, end).trim();
+            }
+        }
+        int newline = phrase.indexOf('\n');
+        if (newline >= 0) {
+            phrase = phrase.substring(0, newline).trim();
+        }
+        if (phrase.endsWith(".") && phrase.indexOf('.') == phrase.length() - 1) {
+            phrase = phrase.substring(0, phrase.length() - 1).trim();
+        }
+        return phrase;
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value.trim();
+            }
+        }
+        return "";
     }
 }

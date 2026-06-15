@@ -10,6 +10,27 @@ flow, and device support.
 
 ### Added
 
+- Agent Runtime V1 design and first assistant-side background job runtime,
+  exposed through `background_job_create`, `background_job_list`, and
+  `background_job_stop`.
+- Background job completion notifications now use explicit delivery text
+  instead of dumping raw model/tool trace JSON.
+- Dynamic island compact mode is narrower/lower, uses icon-only controls for
+  listen/stop/approve/deny, and expands terminal detail in-place before
+  opening the full assistant.
+- Volume-chord control launches use an isolated control task and immediate
+  backgrounding so the full assistant app does not flash open.
+- Chat/orchestrator system failures now surface as inspectable dynamic-island
+  error states instead of only appearing in the full assistant chat.
+- Screen-question failures and timeouts now surface as inspectable
+  dynamic-island error states.
+- Orchestrator routing now has a UI watchdog, so model routing stalls return a
+  visible island error instead of leaving the island glowing indefinitely.
+- Voice transcription misses now expand in-place with the actual failure detail
+  instead of only showing a generic compact retry state.
+- Agent job contract schema for future OS-owned `agent_jobs` storage.
+- Dynamic island presentation state model for compact, transcript, reply, and
+  approval states.
 - User-facing OpenPhone Assistant control surface.
 - Active-agent status indication and assistant-owned cursor overlay.
 - Development voice capture and OpenAI transcription path.
@@ -159,6 +180,9 @@ flow, and device support.
 
 ### Changed
 
+- Contribution policy now accepts external contributions once contributors
+  agree that OpenPhone / the project company can own, modify, sublicense, and
+  redistribute the contribution.
 - The OpenPhone framework service status JSON now includes active task count
   and task IDs so trusted OS surfaces can show and stop current work.
 - The OpenPhone framework service SELinux label now lives in private platform
@@ -178,6 +202,17 @@ flow, and device support.
 - The assistant app now hides the background service island while the app
   itself is foregrounded, avoiding two competing assistant controls on the same
   screen.
+- Hidden control-surface launches now background themselves after starting a
+  screen question, so the launcher or current app remains focused while the
+  island shows the answer.
+- Screen-question runs now have a 30-second UI watchdog that cancels the model
+  adapter and returns a visible timeout instead of leaving the island glowing.
+- GMS documentation now calls out the unsupported `/data/app` Play
+  Store/Play services install state that causes repeated privileged-permission
+  crash loops on developer devices.
+- Pixel 9a GMS recovery evidence now documents removing stale user-installed
+  Google package copies, reinstalling the OpenPhone OTA, and sideloading
+  MindTheGapps before first post-OTA boot.
 
 ## [0.0.1] - Unreleased
 
