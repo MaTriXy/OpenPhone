@@ -24,8 +24,14 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import org.openphone.assistant.jobs.AgentJobRecord;
+import org.openphone.assistant.jobs.AgentJobStore;
+import org.openphone.assistant.watchers.WatcherRecord;
+import org.openphone.assistant.watchers.WatcherStore;
+
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.WeakHashMap;
 
@@ -637,8 +643,10 @@ public final class PointerOverlayController {
             }
             return;
         }
-        // idle / watching
-        launchVoiceCapture();
+        if ("idle".equals(mMode) || "watching".equals(mMode)) {
+            mInspectExpanded = !mInspectExpanded;
+            updateIslandViews();
+        }
     }
 
     /**
@@ -758,10 +766,145 @@ public final class PointerOverlayController {
             return IslandPresentation.compact("!", "", 0xffff6b6b);
         }
         if ("watching".equals(mMode)) {
+            if (mInspectExpanded) {
+                return IslandPresentation.expanded("AI", backgroundStatusBody(),
+                        false, REPLY_MAX_LINES);
+            }
             return IslandPresentation.compact(yoloPrefix() + "AI",
                     mWatchingCount > 1 ? "◎ " + mWatchingCount : "◎", 0xff9ab8ff);
         }
+        if (mInspectExpanded) {
+            return IslandPresentation.expanded("AI", backgroundStatusBody(),
+                    false, REPLY_MAX_LINES);
+        }
         return IslandPresentation.compact(yoloPrefix() + "AI", "◉", 0xff72e0c4);
+    }
+
+    private String backgroundStatusBody() {
+        List<WatcherRecord> watchers = activeWatchers(4);
+        List<AgentJobRecord> jobs = activeJobs(4);
+        int watcherCount = Math.max(mWatchingCount, watchers.size());
+        int jobCount = activeJobCount();
+        StringBuilder body = new StringBuilder();
+        body.append("State: idle");
+        if (watcherCount <= 0 && jobCount <= 0) {
+            body.append("\nNo active watchers or background runs.");
+            return body.toString();
+        }
+        body.append("\nWatchers: ").append(watcherCount).append(" active");
+        for (WatcherRecord watcher : watchers) {
+            body.append("\n").append(compactStatusLine(watcher.title,
+                    watcher.type, watcher.status, watcher.nextRunAtMillis));
+        }
+        if (watcherCount > watchers.size()) {
+            body.append("\n").append(watcherCount - watchers.size()).append(" more watcher");
+            if (watcherCount - watchers.size() != 1) {
+                body.append("s");
+            }
+        }
+        body.append("\nBackground runs: ").append(jobCount).append(" active");
+        for (AgentJobRecord job : jobs) {
+            body.append("\n").append(compactStatusLine(job.title,
+                    job.type, job.status, job.nextRunAtMillis));
+        }
+        return body.toString();
+    }
+
+    private List<WatcherRecord> activeWatchers(int limit) {
+        try {
+            return new WatcherStore(mContext).active(limit);
+        } catch (RuntimeException e) {
+            return new ArrayList<>();
+        }
+    }
+
+    private List<AgentJobRecord> activeJobs(int limit) {
+        List<AgentJobRecord> out = new ArrayList<>();
+        try {
+            for (AgentJobRecord job : new AgentJobStore(mContext).list("", 50)) {
+                if (!isLiveJob(job)) {
+                    continue;
+                }
+                if (out.size() < Math.max(1, limit)) {
+                    out.add(job);
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return out;
+    }
+
+    private int activeJobCount() {
+        int count = 0;
+        try {
+            for (AgentJobRecord job : new AgentJobStore(mContext).list("", 50)) {
+                if (isLiveJob(job)) {
+                    count++;
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return count;
+    }
+
+    private static boolean isLiveJob(AgentJobRecord job) {
+        return job != null && ("active".equals(job.status) || "running".equals(job.status));
+    }
+
+    private static String compactStatusLine(String title, String type, String status,
+            long nextRunAtMillis) {
+        String cleanTitle = shortText(firstNonEmpty(title, type, "Background item"), 44);
+        String cleanType = shortText(type, 18);
+        String cleanStatus = shortText(status, 18);
+        String timing = relativeTime(nextRunAtMillis);
+        StringBuilder line = new StringBuilder();
+        line.append("- ").append(cleanTitle);
+        if (!cleanType.isEmpty()) {
+            line.append(" (").append(cleanType).append(")");
+        }
+        if (!cleanStatus.isEmpty() && !"active".equals(cleanStatus)) {
+            line.append(" ").append(cleanStatus);
+        }
+        if (!timing.isEmpty()) {
+            line.append(" ").append(timing);
+        }
+        return line.toString();
+    }
+
+    private static String relativeTime(long epochMillis) {
+        if (epochMillis <= 0) {
+            return "";
+        }
+        long deltaMillis = epochMillis - System.currentTimeMillis();
+        if (deltaMillis <= 0) {
+            return "due now";
+        }
+        long minutes = Math.max(1L, Math.round(deltaMillis / 60000.0));
+        if (minutes < 60) {
+            return "in " + minutes + "m";
+        }
+        long hours = Math.max(1L, Math.round(minutes / 60.0));
+        if (hours < 24) {
+            return "in " + hours + "h";
+        }
+        long days = Math.max(1L, Math.round(hours / 24.0));
+        return "in " + days + "d";
+    }
+
+    private static String firstNonEmpty(String first, String second, String fallback) {
+        if (first != null && !first.trim().isEmpty()) {
+            return first.trim();
+        }
+        if (second != null && !second.trim().isEmpty()) {
+            return second.trim();
+        }
+        return fallback;
+    }
+
+    private static String shortText(String text, int maxChars) {
+        String clean = text == null ? "" : text.trim().replace('\n', ' ');
+        int max = Math.max(4, maxChars);
+        return clean.length() <= max ? clean : clean.substring(0, max - 3) + "...";
     }
 
     private boolean hasMultiLineTranscript() {
