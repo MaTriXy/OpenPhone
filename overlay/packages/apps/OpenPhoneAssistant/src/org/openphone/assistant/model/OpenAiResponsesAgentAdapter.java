@@ -17,7 +17,40 @@ import org.json.JSONObject;
 import org.openphone.assistant.actions.ToolCatalog;
 
 public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
-    private static final String MODEL = "gpt-5.5";
+    // gpt-5.5 was way too slow for interactive voice replies (multi-second
+    // latency on simple "what's on my screen" answers). gpt-5.4-mini is one
+    // generation back but is the fastest mini variant currently published —
+    // gpt-5.5 has no mini sibling — and answer quality is fine for the agent
+    // surface where vision + tool-routing matter more than reasoning depth.
+    //
+    // To experiment with other models without a rebuild, write the model id
+    // to /data/local/tmp/openphone_model_override (no trailing newline):
+    //   adb shell 'echo -n gpt-5-mini > /data/local/tmp/openphone_model_override'
+    //   # restore default by deleting the file:
+    //   adb shell rm /data/local/tmp/openphone_model_override
+    // The override is consulted lazily on each call, so changes take effect
+    // on the next request without restarting the assistant.
+    private static final String DEFAULT_MODEL = "gpt-5.4-mini";
+    private static final java.io.File MODEL_OVERRIDE_FILE =
+            new java.io.File("/data/local/tmp/openphone_model_override");
+
+    private static String resolvedModel() {
+        if (!MODEL_OVERRIDE_FILE.exists() || !MODEL_OVERRIDE_FILE.canRead()) {
+            return DEFAULT_MODEL;
+        }
+        try {
+            byte[] raw = java.nio.file.Files.readAllBytes(MODEL_OVERRIDE_FILE.toPath());
+            String override = new String(raw, StandardCharsets.UTF_8).trim();
+            return override.isEmpty() ? DEFAULT_MODEL : override;
+        } catch (java.io.IOException ignored) {
+            return DEFAULT_MODEL;
+        }
+    }
+    // Legacy alias kept so the rest of the file does not need to change every
+    // call site at once. It is computed lazily via the static helper above so
+    // override changes take effect on the next call without restarting the
+    // assistant.
+    private static String MODEL() { return resolvedModel(); }
     private static final int MAX_STEPS = 25;
     private static final int MAX_CONSECUTIVE_TOOL_ERRORS = 2;
     private static final int MAX_CONSECUTIVE_NO_PROGRESS_ACTIONS = 2;
@@ -48,7 +81,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
 
     @Override
     public String modelName() {
-        return MODEL;
+        return MODEL();
     }
 
     @Override
@@ -151,7 +184,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "\n\nPage content (may be truncated):\n"
                 + (observedText == null ? "" : observedText);
         JSONObject body = new JSONObject()
-                .put("model", MODEL)
+                .put("model", MODEL())
                 .put("input", new JSONArray()
                         .put(new JSONObject()
                                 .put("role", "user")
@@ -378,7 +411,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "as an action request. Keep the reply brief and helpful.\n\n"
                 + "User message: " + (userMessage == null ? "" : userMessage.trim());
         JSONObject body = new JSONObject()
-                .put("model", MODEL)
+                .put("model", MODEL())
                 .put("input", new JSONArray()
                         .put(new JSONObject()
                                 .put("role", "user")
@@ -496,7 +529,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "has_active_task: " + hasActiveTask + "\n"
                 + "user_message: " + (userMessage == null ? "" : userMessage.trim());
         JSONObject body = new JSONObject()
-                .put("model", MODEL)
+                .put("model", MODEL())
                 .put("input", new JSONArray()
                         .put(new JSONObject()
                                 .put("role", "user")
@@ -535,7 +568,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                     .put("detail", "low"));
         }
         JSONObject body = new JSONObject()
-                .put("model", MODEL)
+                .put("model", MODEL())
                 .put("input", new JSONArray()
                         .put(new JSONObject()
                                 .put("role", "user")
@@ -689,7 +722,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
         }
 
         JSONObject body = new JSONObject()
-                .put("model", MODEL)
+                .put("model", MODEL())
                 .put("input", new JSONArray()
                         .put(new JSONObject()
                                 .put("role", "user")
@@ -1338,7 +1371,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
         return new JSONObject()
                 .put("status", status)
                 .put("provider", "openai_responses")
-                .put("model", MODEL)
+                .put("model", MODEL())
                 .put("goal", userGoal == null ? "" : userGoal)
                 .put("steps", steps)
                 .toString(2);
