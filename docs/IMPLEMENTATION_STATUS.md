@@ -5,9 +5,9 @@ This document tracks current implementation evidence against `SPEC.md`.
 ## Current Snapshot
 
 As of the current repository manifest, the assistant package is
-`versionCode=123`, `versionName=0.1.87-dev`.
+`versionCode=129`, `versionName=0.1.93-dev`.
 
-**Tree state (2026-06-13):** working tree clean, `./scripts/check.sh`
+**Tree state (2026-06-15):** working tree clean, `./scripts/check.sh`
 green (56 assistant files against android-35). Phases 0, A, and B of
 the spine-first plan are code-complete and device-validated, plus
 eight Phase C connector slices (calendar-from-message, model-backed
@@ -55,6 +55,29 @@ Phase 10 hardening completed slices (in landing order):
     suite (`scripts/run-eval-suite.sh`) against a self-hosted
     runner with a Pixel on USB; `.github/RUNNERS.md` operator
     runbook (commit `5ddf51d`).
+12. Approve/Deny handler wiring — the activity-side
+    PointerOverlayController instance had no ConfirmationHandler
+    set, so tapping Approve fired onClick but the handler was null.
+    Wired through `confirmPending(true|false)` on the UI thread
+    (commit `6bfe330`).
+13. Agent model fast-path — switched the Responses adapter from
+    the heavy `gpt-5.5` to `gpt-5.4-mini` for screen-question and
+    agent-step calls; added a file-based override at
+    `/data/local/tmp/openphone_model_override` so future model
+    swaps don't require an APK rebuild (commit `e31cf2c`).
+14. "What reminders do you have?" fix — empty-query
+    `commitment_search` now merges the active list with a
+    status-agnostic FTS query so recently-fired commitments still
+    show up; the `commitments.search` registry description was
+    rewritten to steer the model away from generic FTS terms like
+    "reminder" / "task" that match nothing (commit `65b9241`).
+15. Volume keys pass-through — the original chord interceptor
+    consumed every volume key and tried to replay singles via
+    MediaSessionLegacyHelper, which silently dropped most volume
+    adjustments. Rewrite (patch
+    `frameworks_base/0018`) passes events through unless the
+    chord is actively triggered. OTA sideloaded; build incremental
+    advanced to 1781483055 (commit `fb7f1f7`).
 
 OTA sideload order on the Pixel 9a (most recent last):
 1. `openphone_tegu-assistant-data-service-ota.zip` —
@@ -68,17 +91,16 @@ OTA sideload order on the Pixel 9a (most recent last):
    — patch `frameworks_base/0016`.
 4. `openphone_tegu-screen-extraction-ota.zip` —
    `0fdb57725c47334d741e2c3d081803c3e9d68076ebfd4cfcf8b80b9fa9056757`
-   — patch `frameworks_base/0017`. Current device build:
-   `ro.build.version.incremental=1781255333`.
+   — patch `frameworks_base/0017`.
+5. `openphone_tegu-volume-fix-ota.zip` —
+   `a97d1fb300f6b805542450438fb73c96dd2fd8cbbfb6a4e4c0b0f318c92ae31d`
+   — patch `frameworks_base/0018`. Current device build:
+   `ro.build.version.incremental=1781483055`.
 
-After the screen-extraction OTA the assistant APK iterates without
-needing another full reboot cycle. The current APK on the device is
-v123 0.1.87-dev, sha256
-`44b6839260f3aa4e7db489e93fbe2536540f025baed3b9727985a2d83afc8344`.
-`/data/system/openphone/assistant_data.db` with row ids preserved —
-2 memories, 4 commitments, 9 watchers, including three sentinel
-marker rows that kept their exact pre-OTA ids), with the device
-reset to `openphone_autonomy_mode=reviewed`.
+After each OTA the assistant APK iterates without another full
+reboot cycle. The current APK on the device is v129 0.1.93-dev,
+sha256
+`bc2f83d18efd99b70d9124f6e4deafbde6a02ee87ec52e993feaa73007571921`.
 
 Current physically validated Pixel 9a baseline:
 

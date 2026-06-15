@@ -1836,10 +1836,29 @@ Tasks:
 seven have first slices landed (OTA migrations, screen extraction,
 SELinux domains, audit storage, store promotions, **process
 separation (listener split)**, **release/eval test suites**). One
-remains unstarted: broker identity/session handling — and the user
-has explicitly deferred this since OpenPhone will be open-sourced
-as bring-your-own-key. Forensic-archive for tampered audit events
-is the remaining honest gap.
+remains explicitly deferred: broker identity/session handling —
+the user said OpenPhone will be open-sourced as bring-your-own-key.
+Forensic-archive for tampered audit events is the remaining honest
+gap.
+
+**Bug fixes that landed in 2026-06-15 session** (not part of Phase
+10 plan but documenting them here for the changelog trail):
+
+- Inline Approve/Deny handler wired on the activity-side
+  PointerOverlayController (commit `6bfe330`). The earlier slice
+  only wired the service instance, so taps in needs_review fired
+  onClick but the handler was null.
+- Agent model swap from `gpt-5.5` to `gpt-5.4-mini` plus a
+  file-based override at `/data/local/tmp/openphone_model_override`
+  for fast iteration without rebuilding (commit `e31cf2c`).
+- "What reminders do you have?" empty-query merge + registry
+  description rewrite to keep recently-fired commitments visible
+  and steer the model away from generic FTS terms (commit
+  `65b9241`).
+- Volume keys pass through to the system unless the chord is
+  actively triggered (patch `frameworks_base/0018`, commit
+  `fb7f1f7`). Replaces the broken replay-via-MediaSessionLegacyHelper
+  path that silently dropped most volume adjustments.
 
 Exit criteria:
 
