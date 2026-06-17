@@ -18,8 +18,8 @@ work.
 
 Change-Id: Ic1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0
 ---
- .../server/policy/PhoneWindowManager.java     | 144 ++++++++++++++++++
- 1 file changed, 144 insertions(+)
+ .../server/policy/PhoneWindowManager.java     | 151 ++++++++++++++++++
+ 1 file changed, 151 insertions(+)
 
 diff --git a/services/core/java/com/android/server/policy/PhoneWindowManager.java b/services/core/java/com/android/server/policy/PhoneWindowManager.java
 index e4cc1c73b8dc..ed5d8e356ba2 100644
@@ -44,7 +44,7 @@ index e4cc1c73b8dc..ed5d8e356ba2 100644
      boolean mVolumeAnswerCall;
  
      private boolean mPendingKeyguardOccluded;
-@@ -4386,6 +4398,133 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+@@ -4386,6 +4398,140 @@ public class PhoneWindowManager implements WindowManagerPolicy {
          return false;
      }
  
@@ -185,7 +185,7 @@ index e4cc1c73b8dc..ed5d8e356ba2 100644
      // TODO(b/117479243): handle it in InputPolicy
      /** {@inheritDoc} */
      @Override
-@@ -5185,6 +5324,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
+@@ -5185,6 +5331,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
              case KeyEvent.KEYCODE_VOLUME_DOWN:
              case KeyEvent.KEYCODE_VOLUME_UP:
              case KeyEvent.KEYCODE_VOLUME_MUTE: {

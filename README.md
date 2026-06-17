@@ -1,5 +1,7 @@
 # OpenPhone
 
+![OpenPhone GitHub hero](docs/assets/github_hero.png)
+
 OpenPhone is an Android-based operating system project where an AI agent is a
 first-class system capability instead of a normal app layered on top of Android.
 

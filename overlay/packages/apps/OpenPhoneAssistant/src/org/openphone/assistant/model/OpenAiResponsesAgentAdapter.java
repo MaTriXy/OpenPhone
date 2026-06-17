@@ -308,7 +308,8 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 }
 
                 if ("finish_task".equals(toolName)) {
-                    JSONObject finishEvidence = finishEvidence(userGoal, screenJson);
+                    JSONObject finishEvidence = finishEvidence(userGoal,
+                            decision.optString("success_criteria"), screenJson);
                     stepJson.put("finish_evidence", finishEvidence);
                     if (!finishEvidence.optBoolean("has_screen_evidence", false)) {
                         String toolResult = executor.callTool("wait", new JSONObject()
@@ -494,9 +495,12 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "Modes:\n"
                 + "- answer: reply conversationally now. Greetings, general questions, advice, "
                 + "anything that needs no phone data and no phone action.\n"
-                + "- clarify: the request is actionable but ambiguous in a way that would risk "
-                + "a wrong action. Put the clarifying question in reply. Prefer acting over "
-                + "clarifying when a reasonable default exists.\n"
+                + "- clarify: last resort only. Use it only when missing information would "
+                + "make the first action irreversible, sensitive, or likely harmful. Do not "
+                + "clarify for normal preference gaps, random/any/surprise requests, broad "
+                + "exploration, app navigation, media playback, search, or visible UI choices; "
+                + "choose a reasonable default, top result, random item, or reversible first "
+                + "step and continue.\n"
                 + "- retrieve: answer using on-device data via one or more read-only tool "
                 + "calls in proposed_actions (notifications, messages, calendar, contacts, "
                 + "calls, memories, commitments, watchers, context). Use a small bundle when "
@@ -511,9 +515,15 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "\"what does this say?\" should choose inspect_screen. No "
                 + "proposed_actions needed.\n"
                 + "- act: change device or external state. If ONE registry tool call clearly "
-                + "completes it (create/update/delete a calendar event, draft a message, open "
-                + "an app, place a call, open a notification), put that single call in "
-                + "proposed_actions. Moving or cancelling an existing event needs its "
+                + "completes the whole user goal (create/update/delete a calendar event, "
+                + "draft a message, place a call, open a notification, or simply open an "
+                + "app when the user only asked to open/launch/show that app), put that "
+                + "single call in proposed_actions. If the user asks to do anything inside "
+                + "an app after opening it (play media, search, choose content, change a "
+                + "setting, buy/book/post/send/select something, or otherwise navigate UI), "
+                + "do not use open_app as a one-shot proposed_action; leave proposed_actions "
+                + "empty and set task_goal for the autonomous multi-step agent. Moving or "
+                + "cancelling an existing event needs its "
                 + "event_id: if you do not have one, set task_goal so the agent can "
                 + "calendar_search first. Use calendar_check_availability (retrieve) for "
                 + "free/busy questions. "
@@ -545,6 +555,13 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "arguments matching its schema, including a specific \"reason\" argument "
                 + "where the tool requires one.\n"
                 + "- Never invent device data in answer mode; use retrieve.\n"
+                + "- Bias toward taking action. If the user gave an actionable goal and a safe "
+                + "reversible first step exists, choose act/retrieve/watch/memory instead of "
+                + "clarify. Put assumptions in task_goal; do not ask the user to make "
+                + "ordinary product/content/navigation choices for you.\n"
+                + "- For words like random, any, surprise me, something, whatever, best, or "
+                + "quick, make the choice yourself and proceed. The whole point is that the "
+                + "phone agent should decide and execute, not hand the task back.\n"
                 + "- If the user asks a broad personal-state question, prefer retrieve with "
                 + "the most relevant stores over answer mode. Examples: reminders and "
                 + "follow-ups use commitment_search query=\"\"; active monitors use "
@@ -683,10 +700,11 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
 
         String prompt = "You are OpenPhone Agent, a mobile GUI agent running inside Android. "
                 + "Your job is to complete the user's real phone task, not to demonstrate "
-                + "one action. Work like an AndroidWorld/M3A-style agent: observe the "
-                + "current screen, maintain task state from prior steps, choose the next "
-                + "subgoal, execute exactly one action, then verify progress on the next "
-                + "observation. Return exactly one JSON object and no markdown.\n\n"
+                + "one action, narrate a plan, or hand ordinary choices back to the user. "
+                + "Work like a long-horizon mobile agent: observe the current screen, "
+                + "maintain task state from prior steps, choose the next subgoal, execute "
+                + "exactly one action, then verify progress on the next observation. Return "
+                + "exactly one JSON object and no markdown.\n\n"
                 + "Agent rules:\n"
                 + "- Treat this as a long-horizon task. Use up to the available step budget.\n"
                 + "- First understand where you are: foreground app, visible text, UI tree, "
@@ -699,16 +717,32 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "target, scroll, press back, wait for loading, or fail with a precise reason.\n"
                 + "- Do not repeat the same failed/no-op action.\n"
                 + "- Do not finish just because an app opened. Finish only when the current "
-                + "screen visibly satisfies the user's goal.\n"
+                + "screen visibly satisfies the user's goal and your success_criteria.\n"
                 + "- For goals phrased as \"open <app/site>\", stop once that app or site is "
                 + "visibly open. Do not click login, sign up, get app, install, notification, "
                 + "or feed-personalization surfaces unless the user explicitly asked for that.\n"
                 + "- If the goal requires credentials, payment, purchase, posting, sending, "
                 + "calling, deleting, or installing from an unsafe source, ask for "
                 + "confirmation or stop at the safe boundary.\n"
+                + "- Do not ask the user to choose among ordinary visible options. If the user "
+                + "said random, any, something, surprise me, best, or did not specify a "
+                + "preference, choose a reasonable/default/top visible option yourself and "
+                + "continue. Only ask when missing information blocks every safe reversible "
+                + "next step or when a policy/safety confirmation is required.\n"
                 + "- If the foreground screen is OpenPhone Assistant, the task is already "
                 + "running; do not tap Speak, Run, or Developer. Start by opening the "
                 + "target app, URL, or system surface needed for the user goal.\n\n"
+                + "Long-task contract:\n"
+                + "- Opening an app, site, settings surface, search page, or conversation is "
+                + "usually only setup. It is completion only when the user's entire goal was "
+                + "to open that surface.\n"
+                + "- For in-app workflows, keep going through navigation, search, selection, "
+                + "and execution until there is visible end-state evidence: requested content "
+                + "is playing/open, a setting changed, an item is selected/created, a draft is "
+                + "ready, or the workflow has reached a real confirmation/safety boundary.\n"
+                + "- Prefer useful progress over asking. Explore reversible UI, use visible "
+                + "top/default/random choices when appropriate, and recover from no-ops before "
+                + "declaring the task blocked.\n\n"
                 + "Allowed JSON schema:\n"
                 + "{\"task_state\":\"what is already true and what remains\","
                 + "\"next_subgoal\":\"the immediate objective for this one action\","
@@ -1085,7 +1119,8 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
         return ToolCatalog.get().drivesVisibleUi(toolName);
     }
 
-    private static JSONObject finishEvidence(String userGoal, JSONObject screenJson)
+    private static JSONObject finishEvidence(String userGoal, String successCriteria,
+            JSONObject screenJson)
             throws JSONException {
         JSONArray visibleTextArray = screenArray(screenJson, "visible_text");
         String visibleText = joinedArray(visibleTextArray, 80);
@@ -1094,10 +1129,11 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
         JSONObject screenshot = screenJson.optJSONObject("screenshot");
         boolean hasScreenshot = screenshot != null && !screenshot.optString("data").isEmpty();
         JSONArray matchedTerms = new JSONArray();
-        JSONArray requiredTerms = finishEvidenceTerms(userGoal);
+        JSONArray requiredTerms = finishEvidenceTerms(userGoal, successCriteria);
         String haystack = visibleText.toLowerCase(Locale.US);
         String goal = userGoal == null ? "" : userGoal.toLowerCase(Locale.US);
-        if (isSimpleOpenGoalSatisfied(goal, haystack)) {
+        boolean simpleOpenGoalSatisfied = isSimpleOpenGoalSatisfied(goal, haystack);
+        if (simpleOpenGoalSatisfied) {
             matchedTerms.put("simple_open_goal_visible");
         }
         for (int i = 0; i < requiredTerms.length(); i++) {
@@ -1107,15 +1143,18 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
             }
         }
         boolean hasStructuredEvidence = !visibleText.isEmpty() || elementCount > 0;
+        int requiredMatchCount = simpleOpenGoalSatisfied ? 1
+                : Math.min(2, Math.max(1, requiredTerms.length()));
         boolean hasTermEvidence = requiredTerms.length() == 0
-                || matchedTerms.length() > 0
-                || hasScreenshot;
+                || matchedTerms.length() >= requiredMatchCount;
         return new JSONObject()
                 .put("has_screen_evidence", (hasStructuredEvidence || hasScreenshot)
                         && hasTermEvidence)
                 .put("has_screenshot", hasScreenshot)
                 .put("visible_text_count", visibleTextArray == null ? 0 : visibleTextArray.length())
                 .put("interactive_element_count", elementCount)
+                .put("success_criteria", successCriteria == null ? "" : successCriteria)
+                .put("required_match_count", requiredMatchCount)
                 .put("required_terms", requiredTerms)
                 .put("matched_terms", matchedTerms);
     }
@@ -1132,30 +1171,48 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
         return uiTree == null ? null : uiTree.optJSONArray(name);
     }
 
-    private static JSONArray finishEvidenceTerms(String userGoal) {
+    private static JSONArray finishEvidenceTerms(String... texts) {
         JSONArray terms = new JSONArray();
-        String goal = userGoal == null ? "" : userGoal;
-        String[] words = goal.split("[^A-Za-z0-9._-]+");
-        for (String word : words) {
-            String value = word == null ? "" : word.trim();
-            if (value.length() < 4 || isStopword(value)) {
-                continue;
-            }
-            if (value.contains(".")) {
-                String[] pieces = value.split("[.]");
-                for (String piece : pieces) {
-                    if (piece.length() >= 4 && !isStopword(piece)) {
-                        terms.put(piece);
-                    }
+        if (texts == null) {
+            return terms;
+        }
+        for (String text : texts) {
+            String goal = text == null ? "" : text;
+            String[] words = goal.split("[^A-Za-z0-9._-]+");
+            for (String word : words) {
+                String value = word == null ? "" : word.trim();
+                if (value.length() < 4 || isStopword(value) || containsTerm(terms, value)) {
+                    continue;
                 }
-            } else {
-                terms.put(value);
-            }
-            if (terms.length() >= 8) {
-                break;
+                if (value.contains(".")) {
+                    String[] pieces = value.split("[.]");
+                    for (String piece : pieces) {
+                        if (piece.length() >= 4 && !isStopword(piece)
+                                && !containsTerm(terms, piece)) {
+                            terms.put(piece);
+                        }
+                    }
+                } else {
+                    terms.put(value);
+                }
+                if (terms.length() >= 10) {
+                    return terms;
+                }
             }
         }
         return terms;
+    }
+
+    private static boolean containsTerm(JSONArray terms, String value) {
+        if (value == null) {
+            return false;
+        }
+        for (int i = 0; i < terms.length(); i++) {
+            if (value.equalsIgnoreCase(terms.optString(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isStopword(String word) {
@@ -1174,6 +1231,8 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 || "into".equals(value)
                 || "that".equals(value)
                 || "this".equals(value)
+                || "play".equals(value)
+                || "random".equals(value)
                 || "https".equals(value)
                 || "http".equals(value);
     }

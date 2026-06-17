@@ -467,6 +467,18 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "calls_place only when the user explicitly asks you to place a call. "
                 + "Use phone_context for who-is-this/call-prep questions; it includes "
                 + "missed calls not yet returned. "
+                + "For app-internal tasks, opening the app is only the first step. If the "
+                + "user asks to play media, search, choose content, change a setting, book, "
+                + "buy, post, send, or otherwise operate inside an app, continue through "
+                + "the visible workflow until the requested result is visible or a safe "
+                + "confirmation boundary is reached. For media playback, finish only when "
+                + "visible playback evidence exists, such as a now-playing screen, pause "
+                + "button, media title/source, or mini-player; never tell the user to choose "
+                + "the content themselves. Do not ask the user to choose among ordinary visible "
+                + "options. For random, any, something, surprise me, best, or unspecified "
+                + "preference requests, choose a reasonable/default/top visible option "
+                + "yourself and continue. Ask only when missing information blocks every safe "
+                + "reversible next step or when policy/safety confirmation is required. "
                 + "Use browser_fetch_page when the user asks to summarize or answer "
                 + "questions about a specific URL; its result includes headings and "
                 + "links, so follow a returned link with another browser_fetch_page "
@@ -489,10 +501,12 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
     private static String textOnlyCorrectionPrompt(String modelText) {
         return "You replied with text instead of taking a phone-agent step: "
                 + (modelText == null ? "" : modelText.trim())
-                + "\n\nDo not ask for review or narrate. Choose exactly one tool call now. "
+                + "\n\nDo not ask for review, ask a preference question, or narrate. Choose "
+                + "exactly one tool call now. "
                 + "If you have not observed the phone yet, call get_screen. If the task is "
                 + "already visibly complete, call finish_task. If it is impossible or unsafe, "
-                + "call fail_task or ask_user_confirmation.";
+                + "call fail_task or ask_user_confirmation. For random, any, or unspecified "
+                + "preference requests, choose a reasonable option yourself.";
     }
 
     private static String realtimeInstructions() {
@@ -519,6 +533,18 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "falling back to visible browser UI; it returns headings and links, "
                 + "and you may chain another browser_fetch_page on a returned link to "
                 + "reach the page that actually answers the question. "
+                + "For app-internal tasks, opening the app is only the first step. If the "
+                + "user asks to play media, search, choose content, change a setting, book, "
+                + "buy, post, send, or otherwise operate inside an app, continue through "
+                + "the visible workflow until the requested result is visible or a safe "
+                + "confirmation boundary is reached. For media playback, finish only when "
+                + "visible playback evidence exists, such as a now-playing screen, pause "
+                + "button, media title/source, or mini-player; never tell the user to choose "
+                + "the content themselves. Do not ask the user to choose among ordinary visible "
+                + "options. For random, any, something, surprise me, best, or unspecified "
+                + "preference requests, choose a reasonable/default/top visible option "
+                + "yourself and continue. Ask only when missing information blocks every safe "
+                + "reversible next step or when policy/safety confirmation is required. "
                 + "Use memory_save only when the user explicitly asks you to "
                 + "remember durable information. Use commitment_create for explicit open "
                 + "loops and follow-up requests. Use watcher_create for durable background "

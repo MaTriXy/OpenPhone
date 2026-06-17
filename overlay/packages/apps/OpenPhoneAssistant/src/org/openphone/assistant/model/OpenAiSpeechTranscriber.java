@@ -28,6 +28,7 @@ public final class OpenAiSpeechTranscriber {
 
     private final ModelEndpointConfig mEndpointConfig;
     private volatile boolean mCancelled;
+    private volatile boolean mStopRecording;
     private volatile AudioRecord mCurrentRecorder;
     private volatile HttpURLConnection mCurrentConnection;
 
@@ -57,11 +58,33 @@ public final class OpenAiSpeechTranscriber {
         if (!mEndpointConfig.isConfigured()) {
             throw new IOException(mEndpointConfig.missingCredentialReason());
         }
-        byte[] wav = recordWav(maxMillis);
+        byte[] wav = recordWav(maxMillis, true);
         if (mCancelled) {
             throw new IOException("voice_cancelled");
         }
         return transcribe(wav);
+    }
+
+    public String recordAndTranscribeUntilStopped(int maxMillis) throws IOException {
+        if (!mEndpointConfig.isConfigured()) {
+            throw new IOException(mEndpointConfig.missingCredentialReason());
+        }
+        byte[] wav = recordWav(maxMillis, false);
+        if (mCancelled) {
+            throw new IOException("voice_cancelled");
+        }
+        return transcribe(wav);
+    }
+
+    public void stopRecording() {
+        mStopRecording = true;
+        AudioRecord recorder = mCurrentRecorder;
+        if (recorder != null) {
+            try {
+                recorder.stop();
+            } catch (IllegalStateException ignored) {
+            }
+        }
     }
 
     public void cancel() {
@@ -80,7 +103,7 @@ public final class OpenAiSpeechTranscriber {
         }
     }
 
-    private byte[] recordWav(int maxMillis) throws IOException {
+    private byte[] recordWav(int maxMillis, boolean useVoiceActivityStop) throws IOException {
         int minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
         int bufferSize = Math.max(minBuffer, SAMPLE_RATE / 5);
@@ -101,8 +124,22 @@ public final class OpenAiSpeechTranscriber {
         try {
             mCurrentRecorder = recorder;
             recorder.startRecording();
-            while (!mCancelled && System.currentTimeMillis() < endAt) {
-                int read = recorder.read(buffer, 0, buffer.length);
+            while (!mCancelled && !mStopRecording && System.currentTimeMillis() < endAt) {
+                int read;
+                try {
+                    read = recorder.read(buffer, 0, buffer.length);
+                } catch (IllegalStateException e) {
+                    if (mCancelled || mStopRecording) {
+                        break;
+                    }
+                    throw new IOException("microphone_read_failed", e);
+                }
+                if (read <= 0) {
+                    if (mCancelled || mStopRecording) {
+                        break;
+                    }
+                    continue;
+                }
                 if (read > 0) {
                     pcm.write(buffer, 0, read);
                     long now = System.currentTimeMillis();
@@ -110,7 +147,7 @@ public final class OpenAiSpeechTranscriber {
                         heardVoice = true;
                         lastVoiceAt = now;
                     }
-                    if (now - startedAt >= MIN_RECORD_MILLIS) {
+                    if (useVoiceActivityStop && now - startedAt >= MIN_RECORD_MILLIS) {
                         if (heardVoice && now - lastVoiceAt >= END_SILENCE_MILLIS) {
                             break;
                         }

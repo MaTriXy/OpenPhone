@@ -2030,7 +2030,7 @@
     },
     {
       "name": "apps.open",
-      "description": "Open an installed Android app.",
+      "description": "Open an installed Android app. This tool completes only simple goals whose whole intent is to open, launch, or show the app. If the user wants something done inside the app, such as playing media, searching, selecting content, changing settings, ordering, booking, posting, sending, or any other in-app workflow, use the autonomous multi-step agent: open the app as one step, then keep observing and acting until the requested result is visibly complete or blocked.",
       "model_tool": "open_app",
       "kind": "action",
       "input_schema_json": {
@@ -2655,7 +2655,7 @@
     },
     {
       "name": "assistant.ask_user_confirmation",
-      "description": "Ask the user to approve a pending risky action.",
+      "description": "Ask the user to approve a pending risky action. Do not use this to ask preference, content-selection, navigation, or ordinary clarification questions. For random, any, surprise-me, top-result, or unspecified preference tasks, choose a reasonable option yourself and continue. Use only for irreversible/sensitive actions or policy/safety confirmation boundaries.",
       "model_tool": "ask_user_confirmation",
       "kind": "control",
       "input_schema_json": {

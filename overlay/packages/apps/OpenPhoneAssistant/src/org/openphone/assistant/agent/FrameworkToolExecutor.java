@@ -57,6 +57,7 @@ public final class FrameworkToolExecutor {
     private final MemoryStore mMemoryStore;
     private final WatcherStore mWatcherStore;
     private final ActionRegistry mActionRegistry;
+    private JSONObject mLastScreenJson;
 
     public FrameworkToolExecutor(Context context, OpenPhoneAgentManager agentManager) {
         mContext = context;
@@ -2250,15 +2251,27 @@ public final class FrameworkToolExecutor {
         }
         JSONObject screenJson = new JSONObject(screen);
         screenJson.put("ui_tree", uiTree);
-        JSONArray visibleText = uiTree.optJSONArray("visible_text");
+        JSONObject context = screenJson.optJSONObject("context");
+        JSONArray frameworkVisibleText = context == null
+                ? null : context.optJSONArray("visible_text");
+        JSONArray frameworkElements = context == null
+                ? null : context.optJSONArray("interactive_elements");
+        JSONArray visibleText = nonEmptyArray(uiTree.optJSONArray("visible_text"))
+                ? uiTree.optJSONArray("visible_text") : frameworkVisibleText;
         if (visibleText != null) {
             screenJson.put("visible_text", visibleText);
         }
-        JSONArray elements = uiTree.optJSONArray("interactive_elements");
+        JSONArray elements = nonEmptyArray(uiTree.optJSONArray("interactive_elements"))
+                ? uiTree.optJSONArray("interactive_elements") : frameworkElements;
         if (elements != null) {
             screenJson.put("interactive_elements", elements);
         }
+        mLastScreenJson = new JSONObject(screenJson.toString());
         return screenJson.toString();
+    }
+
+    private static boolean nonEmptyArray(JSONArray array) {
+        return array != null && array.length() > 0;
     }
 
     private static JSONObject accessibilitySnapshot() throws JSONException {
@@ -2552,15 +2565,36 @@ public final class FrameworkToolExecutor {
         return new JSONObject().put("x", x).put("y", y);
     }
 
-    private static JSONObject elementCenter(JSONObject arguments) throws JSONException {
+    private JSONObject elementCenter(JSONObject arguments) throws JSONException {
         String elementId = arguments.optString("element_id", "").trim();
         if (elementId.isEmpty()) {
             throw new JSONException("missing_element_id");
         }
         JSONObject snapshot = accessibilitySnapshot();
-        JSONArray elements = snapshot.optJSONArray("interactive_elements");
+        JSONObject center = centerFromElements(snapshot.optJSONArray("interactive_elements"),
+                elementId);
+        if (center != null) {
+            return center;
+        }
+        JSONObject lastScreen = mLastScreenJson;
+        center = centerFromElements(lastScreen == null
+                ? null : lastScreen.optJSONArray("interactive_elements"), elementId);
+        if (center != null) {
+            return center;
+        }
+        JSONObject context = lastScreen == null ? null : lastScreen.optJSONObject("context");
+        center = centerFromElements(context == null
+                ? null : context.optJSONArray("interactive_elements"), elementId);
+        if (center != null) {
+            return center;
+        }
+        throw new JSONException("element_not_found:" + elementId);
+    }
+
+    private static JSONObject centerFromElements(JSONArray elements, String elementId)
+            throws JSONException {
         if (elements == null) {
-            throw new JSONException("interactive_elements_unavailable");
+            return null;
         }
         for (int i = 0; i < elements.length(); i++) {
             JSONObject element = elements.optJSONObject(i);
@@ -2583,7 +2617,7 @@ public final class FrameworkToolExecutor {
             }
             return point((left + right) / 2.0, (top + bottom) / 2.0);
         }
-        throw new JSONException("element_not_found:" + elementId);
+        return null;
     }
 
     private String resolvePackageOrLabel(String packageOrLabel) {

@@ -72,6 +72,10 @@ public class AssistantActivityBackend extends ComponentActivity {
             "org.openphone.assistant.extra.STOP_AGENT";
     static final String EXTRA_TOGGLE_AGENT =
             "org.openphone.assistant.extra.TOGGLE_AGENT";
+    static final String EXTRA_HOLD_TO_RECORD =
+            "org.openphone.assistant.extra.HOLD_TO_RECORD";
+    static final String EXTRA_FINISH_VOICE_CAPTURE =
+            "org.openphone.assistant.extra.FINISH_VOICE_CAPTURE";
     static final String EXTRA_CONFIRM_APPROVE =
             "org.openphone.assistant.extra.CONFIRM_APPROVE";
     static final String EXTRA_CONFIRM_DENY =
@@ -103,7 +107,10 @@ public class AssistantActivityBackend extends ComponentActivity {
     // questions about a screen ("Can you see what I'm looking at and tell me…")
     // were hitting the cap mid-sentence.
     private static final int VOICE_CAPTURE_MILLIS = 30000;
-    private static final int ROUTING_TIMEOUT_MILLIS = 25000;
+    // Safety cap for volume-button hold-to-record. Normal completion comes
+    // from the framework key-up signal, not this timer.
+    private static final int VOICE_HOLD_CAPTURE_MAX_MILLIS = 120000;
+    private static final int ROUTING_TIMEOUT_MILLIS = 65000;
     private static final int SCREEN_QUESTION_TIMEOUT_MILLIS = 30000;
     private static final String PREFS = "openphone_assistant";
     private static final String PREF_GRANT_INPUT = "grant_input";
@@ -145,6 +152,8 @@ public class AssistantActivityBackend extends ComponentActivity {
     private volatile OpenAiSpeechTranscriber mRunningSpeechTranscriber;
     private OtaUpdateClient.Update mLatestOtaUpdate;
     private boolean mListening;
+    private boolean mVoiceHoldToRecord;
+    private boolean mVoiceCaptureFinishRequested;
     private long mLastVoiceStartUptimeMillis;
     private boolean mVoicePipelineToggleProtected;
     private long mVoicePipelineStartedUptimeMillis;
@@ -275,11 +284,20 @@ public class AssistantActivityBackend extends ComponentActivity {
         if (intent == null) {
             return;
         }
+        final boolean holdToRecord = intent.getBooleanExtra(EXTRA_HOLD_TO_RECORD, false);
         if (intent.getBooleanExtra(EXTRA_START_VOICE, false)) {
             postToUi(new Runnable() {
                 @Override
                 public void run() {
-                    startIslandVoiceAgent();
+                    startIslandVoiceAgent(holdToRecord);
+                }
+            });
+        }
+        if (intent.getBooleanExtra(EXTRA_FINISH_VOICE_CAPTURE, false)) {
+            postToUi(new Runnable() {
+                @Override
+                public void run() {
+                    finishVoiceCaptureFromHold();
                 }
             });
         }
@@ -344,7 +362,7 @@ public class AssistantActivityBackend extends ComponentActivity {
                         stopTask();
                         moveTaskToBack(true);
                     } else {
-                        startIslandVoiceAgent();
+                        startIslandVoiceAgent(holdToRecord);
                     }
                 }
             });
@@ -818,6 +836,10 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void startVoiceAgent() {
+        startVoiceAgent(false);
+    }
+
+    private void startVoiceAgent(boolean holdToRecord) {
         if (mListening) {
             return;
         }
@@ -832,12 +854,14 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
+            mVoiceHoldToRecord = holdToRecord;
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
             return;
         }
         Log.i(TAG, "voice start control=" + isControlSurface()
-                + " island=" + mIslandVoiceLaunch);
-        listenThenRun();
+                + " island=" + mIslandVoiceLaunch
+                + " hold=" + holdToRecord);
+        listenThenRun(holdToRecord);
         if (mIslandVoiceLaunch) {
             getWindow().getDecorView().post(new Runnable() {
                 @Override
@@ -849,12 +873,35 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void startIslandVoiceAgent() {
+        startIslandVoiceAgent(false);
+    }
+
+    private void startIslandVoiceAgent(boolean holdToRecord) {
         mIslandVoiceLaunch = true;
-        startVoiceAgent();
+        startVoiceAgent(holdToRecord);
     }
 
     private void finishIslandVoiceLaunch() {
         mIslandVoiceLaunch = false;
+        moveTaskToBack(true);
+    }
+
+    private void finishVoiceCaptureFromHold() {
+        AssistantActivityBackend runner = sActiveControlRunner;
+        if (runner != null && runner != this) {
+            runner.finishVoiceCaptureFromHold();
+            moveTaskToBack(true);
+            return;
+        }
+        if (!mListening || !mVoiceHoldToRecord) {
+            moveTaskToBack(true);
+            return;
+        }
+        mVoiceCaptureFinishRequested = true;
+        OpenAiSpeechTranscriber speechTranscriber = mRunningSpeechTranscriber;
+        if (speechTranscriber != null) {
+            speechTranscriber.stopRecording();
+        }
         moveTaskToBack(true);
     }
 
@@ -866,19 +913,21 @@ public class AssistantActivityBackend extends ComponentActivity {
             return;
         }
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            listenThenRun();
+            listenThenRun(mVoiceHoldToRecord);
         } else {
             setTaskText("Microphone permission is needed before I can listen.");
             updateIsland("Mic blocked");
         }
     }
 
-    private void listenThenRun() {
+    private void listenThenRun(boolean holdToRecord) {
         final ModelEndpointConfig endpointConfig = modelEndpointConfig();
         if (isControlSurface()) {
             sActiveControlRunner = this;
         }
         mListening = true;
+        mVoiceHoldToRecord = holdToRecord;
+        mVoiceCaptureFinishRequested = false;
         mLastVoiceStartUptimeMillis = SystemClock.uptimeMillis();
         protectVoicePipelineFromToggle();
         updateComposerActionButton();
@@ -897,7 +946,15 @@ public class AssistantActivityBackend extends ComponentActivity {
                 OpenAiSpeechTranscriber transcriber = new OpenAiSpeechTranscriber(endpointConfig);
                 mRunningSpeechTranscriber = transcriber;
                 try {
-                    text = transcriber.recordAndTranscribe(VOICE_CAPTURE_MILLIS);
+                    if (holdToRecord) {
+                        if (mVoiceCaptureFinishRequested) {
+                            transcriber.stopRecording();
+                        }
+                        text = transcriber.recordAndTranscribeUntilStopped(
+                                VOICE_HOLD_CAPTURE_MAX_MILLIS);
+                    } else {
+                        text = transcriber.recordAndTranscribe(VOICE_CAPTURE_MILLIS);
+                    }
                 } catch (IOException e) {
                     error = e.getMessage();
                 } finally {
@@ -914,6 +971,8 @@ public class AssistantActivityBackend extends ComponentActivity {
                             return;
                         }
                         mListening = false;
+                        mVoiceHoldToRecord = false;
+                        mVoiceCaptureFinishRequested = false;
                         updateComposerActionButton();
                         if (mIslandVoiceLaunch) {
                             mIslandVoiceLaunch = false;
@@ -1867,6 +1926,8 @@ public class AssistantActivityBackend extends ComponentActivity {
         mVoiceRunGeneration++;
         mListening = false;
         mIslandVoiceLaunch = false;
+        mVoiceHoldToRecord = false;
+        mVoiceCaptureFinishRequested = false;
         clearVoicePipelineProtection();
         OpenAiSpeechTranscriber speechTranscriber = mRunningSpeechTranscriber;
         if (speechTranscriber != null) {
