@@ -8,6 +8,8 @@ import android.content.pm.PackageManager;
 import android.openphone.OpenPhoneAgentManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Base64;
@@ -30,6 +32,7 @@ import org.openphone.assistant.model.LocalHeuristicModelAdapter;
 import org.openphone.assistant.model.ModelEndpointConfig;
 import org.openphone.assistant.model.ModelAdapter;
 import org.openphone.assistant.model.OpenAiRealtimeAdapter;
+import org.openphone.assistant.model.OpenAiRealtimeVoiceSession;
 import org.openphone.assistant.model.OpenAiSpeechTranscriber;
 import org.openphone.assistant.orchestrator.OpenPhoneOrchestrator;
 import org.openphone.assistant.orchestrator.OperatingMode;
@@ -47,7 +50,8 @@ public class AssistantActivityBackend extends ComponentActivity {
         void setContextText(String text);
         void setAuditText(String text);
         void setModelDisclosure(String text);
-        void setModelConfig(boolean useRealtime, boolean useBroker, String apiKey,
+        void setModelConfig(boolean useRealtime, boolean useRealtime2,
+                boolean useLiveRealtimeVoice, boolean useBroker, String apiKey,
                 String brokerUrl, String brokerToken);
         void setOtaStatus(String text, boolean canDownload);
         void setRuntimeStatus(String text, String activeTaskId, boolean running,
@@ -102,6 +106,8 @@ public class AssistantActivityBackend extends ComponentActivity {
     private static final int REQUEST_RECORD_AUDIO = 1001;
     private static final long VOICE_TOGGLE_DUPLICATE_GRACE_MILLIS = 2500L;
     private static final long VOICE_PIPELINE_TOGGLE_PROTECTION_MILLIS = 60000L;
+    private static final long VOLUME_CHORD_CLASSIC_HOLD_MILLIS = 520L;
+    private static final long VOLUME_CHORD_DOUBLE_TAP_MILLIS = 700L;
     // Cap is a safety net; the transcriber stops earlier on speech-end silence
     // (END_SILENCE_MILLIS in OpenAiSpeechTranscriber). Bumped from 12s — long
     // questions about a screen ("Can you see what I'm looking at and tell me…")
@@ -119,14 +125,20 @@ public class AssistantActivityBackend extends ComponentActivity {
     private static final String PREF_GRANT_SHARE = "grant_share";
     private static final String PREF_GRANT_NETWORK = "grant_network";
     private static final String PREF_AUTONOMY_MODE = "autonomy_mode";
+    private static final String PREF_VOICE_MODE = "voice_mode";
+    private static final String VOICE_MODE_CLASSIC = "classic";
+    private static final String VOICE_MODE_LIVE_REALTIME_2 = "live_realtime_2";
     private static final String SECURE_GRANT_INPUT = "openphone_task_grant_input";
     private static final String SECURE_GRANT_SCREEN_CAPTURE = "openphone_task_grant_screenshot";
     private static final String SECURE_GRANT_CLIPBOARD = "openphone_task_grant_clipboard";
     private static final String SECURE_GRANT_SHARE = "openphone_task_grant_share";
     private static final String SECURE_GRANT_NETWORK = "openphone_task_grant_network";
     private static final String SECURE_AUTONOMY_MODE = "openphone_autonomy_mode";
+    private static final String SECURE_VOICE_MODE = "openphone_voice_mode";
     private static final String SECURE_DEV_OPENAI_API_KEY = "openphone_dev_openai_api_key";
     private static AssistantActivityBackend sActiveControlRunner;
+    private static long sLastQuickVolumeChordUptimeMillis;
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private final OpenPhoneOrchestrator mOrchestrator = new OpenPhoneOrchestrator();
     private OpenPhoneAgentManager mAgentManager;
     private PointerOverlayController mPointerOverlayController;
@@ -150,10 +162,17 @@ public class AssistantActivityBackend extends ComponentActivity {
     private ModelAdapter mRunningModelAdapter;
     private ModelAdapter mRunningChatAdapter;
     private volatile OpenAiSpeechTranscriber mRunningSpeechTranscriber;
+    private volatile OpenAiRealtimeVoiceSession mRunningRealtimeVoiceSession;
+    private volatile String mRealtimeVoiceTaskId;
     private OtaUpdateClient.Update mLatestOtaUpdate;
     private boolean mListening;
     private boolean mVoiceHoldToRecord;
     private boolean mVoiceCaptureFinishRequested;
+    private boolean mRealtimeVoiceErrorShown;
+    private boolean mPendingVoiceForceClassic;
+    private boolean mVolumeChordPendingClassic;
+    private boolean mVolumeChordClassicStarted;
+    private int mVolumeChordGeneration;
     private long mLastVoiceStartUptimeMillis;
     private boolean mVoicePipelineToggleProtected;
     private long mVoicePipelineStartedUptimeMillis;
@@ -170,12 +189,14 @@ public class AssistantActivityBackend extends ComponentActivity {
     private String mComposeOtaStatusText = "";
     private boolean mComposeUseBroker;
     private boolean mComposeUseRealtime;
+    private boolean mComposeUseRealtime2;
+    private boolean mComposeUseLiveRealtimeVoice;
     private boolean mComposeInputGrant = true;
     private boolean mComposeScreenCaptureGrant = true;
     private boolean mComposeClipboardGrant;
     private boolean mComposeShareGrant;
     private boolean mComposeNetworkGrant;
-    private String mAutonomyMode = "reviewed";
+    private String mAutonomyMode = "yolo";
     private boolean mComposeAdvancedVisible;
     private ComposeStateCallbacks mComposeStateCallbacks;
 
@@ -285,6 +306,13 @@ public class AssistantActivityBackend extends ComponentActivity {
             return;
         }
         final boolean holdToRecord = intent.getBooleanExtra(EXTRA_HOLD_TO_RECORD, false);
+        Log.i(TAG, "control intent startVoice="
+                + intent.getBooleanExtra(EXTRA_START_VOICE, false)
+                + " finishVoice=" + intent.getBooleanExtra(EXTRA_FINISH_VOICE_CAPTURE, false)
+                + " stop=" + intent.getBooleanExtra(EXTRA_STOP_AGENT, false)
+                + " toggle=" + intent.getBooleanExtra(EXTRA_TOGGLE_AGENT, false)
+                + " hold=" + holdToRecord
+                + " control=" + isControlSurface());
         if (intent.getBooleanExtra(EXTRA_START_VOICE, false)) {
             postToUi(new Runnable() {
                 @Override
@@ -305,7 +333,14 @@ public class AssistantActivityBackend extends ComponentActivity {
             postToUi(new Runnable() {
                 @Override
                 public void run() {
-                    stopTask();
+                    AssistantActivityBackend runner = sActiveControlRunner;
+                    if (runner != null && runner != AssistantActivityBackend.this) {
+                        Log.i(TAG, "control stop routed to active runner");
+                        runner.stopTask();
+                        runner.moveTaskToBack(true);
+                    } else {
+                        stopTask();
+                    }
                     moveTaskToBack(true);
                 }
             });
@@ -342,6 +377,11 @@ public class AssistantActivityBackend extends ComponentActivity {
             postToUi(new Runnable() {
                 @Override
                 public void run() {
+                    if (holdToRecord) {
+                        handleVolumeChordToggle();
+                        moveTaskToBack(true);
+                        return;
+                    }
                     AssistantActivityBackend runner = sActiveControlRunner;
                     if (runner != null && runner.isAgentOrVoiceActive()) {
                         if (runner.isVoiceToggleProtected()) {
@@ -404,7 +444,84 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     private boolean isAgentOrVoiceActive() {
         return mListening || mActiveTaskId != null || mAgentThread != null
-                || mChatThread != null || mRunningChatAdapter != null;
+                || mChatThread != null || mRunningChatAdapter != null
+                || mRunningRealtimeVoiceSession != null;
+    }
+
+    private boolean hasPendingVolumeChord() {
+        return mVolumeChordPendingClassic;
+    }
+
+    private void handleVolumeChordToggle() {
+        AssistantActivityBackend runner = sActiveControlRunner;
+        if (runner != null && runner != this) {
+            if (runner.hasPendingVolumeChord()) {
+                runner.handleVolumeChordToggleOnRunner();
+                runner.moveTaskToBack(true);
+                return;
+            }
+            if (runner.isAgentOrVoiceActive()) {
+                if (runner.isVoiceToggleProtected()) {
+                    Log.i(TAG, "voice toggle ignored while pipeline is active");
+                    runner.moveTaskToBack(true);
+                    return;
+                }
+                runner.stopTask();
+                runner.moveTaskToBack(true);
+                return;
+            }
+        }
+        handleVolumeChordToggleOnRunner();
+    }
+
+    private void handleVolumeChordToggleOnRunner() {
+        if (isAgentOrVoiceActive() && !mVolumeChordPendingClassic) {
+            if (isVoiceToggleProtected()) {
+                Log.i(TAG, "voice toggle ignored while pipeline is active");
+                return;
+            }
+            stopTask();
+            return;
+        }
+        long now = SystemClock.uptimeMillis();
+        if (mVolumeChordPendingClassic
+                || (sLastQuickVolumeChordUptimeMillis > 0
+                        && now - sLastQuickVolumeChordUptimeMillis
+                                <= VOLUME_CHORD_DOUBLE_TAP_MILLIS)) {
+            Log.i(TAG, "volume chord double tap starts live realtime");
+            cancelPendingVolumeChord();
+            sLastQuickVolumeChordUptimeMillis = 0L;
+            startIslandVoiceAgent(false, false);
+            return;
+        }
+        Log.i(TAG, "volume chord waiting for hold-or-double");
+        mVolumeChordPendingClassic = true;
+        mVolumeChordClassicStarted = false;
+        sLastQuickVolumeChordUptimeMillis = 0L;
+        if (isControlSurface()) {
+            sActiveControlRunner = this;
+        }
+        final int generation = ++mVolumeChordGeneration;
+        setTaskText("Hold for classic, double-click for live Realtime 2.");
+        updateIsland("Volume chord");
+        postToUi(new Runnable() {
+            @Override
+            public void run() {
+                if (generation != mVolumeChordGeneration || !mVolumeChordPendingClassic) {
+                    return;
+                }
+                Log.i(TAG, "volume chord hold starts classic voice");
+                mVolumeChordPendingClassic = false;
+                mVolumeChordClassicStarted = true;
+                startIslandVoiceAgent(true, true);
+            }
+        }, VOLUME_CHORD_CLASSIC_HOLD_MILLIS);
+    }
+
+    private void cancelPendingVolumeChord() {
+        mVolumeChordGeneration++;
+        mVolumeChordPendingClassic = false;
+        mVolumeChordClassicStarted = false;
     }
 
     private boolean isRecentVoiceStart() {
@@ -460,7 +577,11 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void postToUi(Runnable runnable) {
-        getWindow().getDecorView().post(runnable);
+        mMainHandler.post(runnable);
+    }
+
+    private void postToUi(Runnable runnable, long delayMillis) {
+        mMainHandler.postDelayed(runnable, Math.max(0L, delayMillis));
     }
 
     public void setComposeStateCallbacks(ComposeStateCallbacks callbacks) {
@@ -479,13 +600,18 @@ public class AssistantActivityBackend extends ComponentActivity {
         mComposeActionJson = text == null ? "" : text;
     }
 
-    public void onComposeModelConfigChanged(boolean useRealtime, boolean useBroker,
-            String apiKey, String brokerUrl, String brokerToken) {
+    public void onComposeModelConfigChanged(boolean useRealtime, boolean useRealtime2,
+            boolean useLiveRealtimeVoice, boolean useBroker, String apiKey, String brokerUrl,
+            String brokerToken) {
         mComposeUseRealtime = useRealtime;
+        mComposeUseRealtime2 = useRealtime && useRealtime2;
+        mComposeUseLiveRealtimeVoice = useLiveRealtimeVoice;
         mComposeUseBroker = useBroker;
         mComposeApiKey = apiKey == null ? "" : apiKey;
         mComposeBrokerUrl = brokerUrl == null ? "" : brokerUrl;
         mComposeBrokerToken = brokerToken == null ? "" : brokerToken;
+        persistVoiceMode(useLiveRealtimeVoice
+                ? VOICE_MODE_LIVE_REALTIME_2 : VOICE_MODE_CLASSIC);
         refreshModelDisclosure();
     }
 
@@ -641,6 +767,19 @@ public class AssistantActivityBackend extends ComponentActivity {
         return mComposeUseRealtime;
     }
 
+    private boolean useLiveRealtimeVoice() {
+        if (VOICE_MODE_LIVE_REALTIME_2.equals(voiceModeDefault())) {
+            return true;
+        }
+        return mComposeUseLiveRealtimeVoice;
+    }
+
+    private String realtimeModelId() {
+        return mComposeUseRealtime2
+                ? OpenAiRealtimeAdapter.REALTIME_2_MODEL
+                : OpenAiRealtimeAdapter.DEFAULT_REALTIME_MODEL;
+    }
+
     private boolean useBrokerModel() {
         return mComposeUseBroker;
     }
@@ -675,8 +814,9 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     private void pushComposeModelConfig() {
         if (mComposeStateCallbacks != null) {
-            mComposeStateCallbacks.setModelConfig(mComposeUseRealtime, mComposeUseBroker,
-                    mComposeApiKey, mComposeBrokerUrl, mComposeBrokerToken);
+            mComposeStateCallbacks.setModelConfig(mComposeUseRealtime, mComposeUseRealtime2,
+                    mComposeUseLiveRealtimeVoice, mComposeUseBroker, mComposeApiKey,
+                    mComposeBrokerUrl, mComposeBrokerToken);
         }
     }
 
@@ -702,6 +842,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         mComposeShareGrant = grantDefault(PREF_GRANT_SHARE, SECURE_GRANT_SHARE, false);
         mComposeNetworkGrant = grantDefault(PREF_GRANT_NETWORK, SECURE_GRANT_NETWORK, false);
         mAutonomyMode = autonomyModeDefault();
+        mComposeUseLiveRealtimeVoice = VOICE_MODE_LIVE_REALTIME_2.equals(voiceModeDefault());
         pushIslandAutonomy();
         if (debugIntentExtrasAllowed()) {
             String apiKey = Settings.Secure.getString(getContentResolver(),
@@ -712,6 +853,11 @@ public class AssistantActivityBackend extends ComponentActivity {
                 mComposeUseBroker = false;
             }
         }
+        if (mComposeUseLiveRealtimeVoice) {
+            mComposeUseRealtime = true;
+            mComposeUseRealtime2 = true;
+            mComposeUseBroker = false;
+        }
     }
 
     private SharedPreferences grantPrefs() {
@@ -719,9 +865,31 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private String autonomyModeDefault() {
-        String fallback = grantPrefs().getString(PREF_AUTONOMY_MODE, "reviewed");
+        String fallback = grantPrefs().getString(PREF_AUTONOMY_MODE, "yolo");
         String secure = Settings.Secure.getString(getContentResolver(), SECURE_AUTONOMY_MODE);
         return cleanAutonomyMode(secure == null || secure.trim().isEmpty() ? fallback : secure);
+    }
+
+    private String voiceModeDefault() {
+        String fallback = grantPrefs().getString(PREF_VOICE_MODE, VOICE_MODE_CLASSIC);
+        String secure = Settings.Secure.getString(getContentResolver(), SECURE_VOICE_MODE);
+        return cleanVoiceMode(secure == null || secure.trim().isEmpty() ? fallback : secure);
+    }
+
+    private void persistVoiceMode(String voiceMode) {
+        String clean = cleanVoiceMode(voiceMode);
+        grantPrefs().edit().putString(PREF_VOICE_MODE, clean).apply();
+        try {
+            Settings.Secure.putString(getContentResolver(), SECURE_VOICE_MODE, clean);
+        } catch (SecurityException ignored) {
+        }
+    }
+
+    private static String cleanVoiceMode(String voiceMode) {
+        if (VOICE_MODE_LIVE_REALTIME_2.equals(voiceMode)) {
+            return VOICE_MODE_LIVE_REALTIME_2;
+        }
+        return VOICE_MODE_CLASSIC;
     }
 
     private void reloadAutonomyMode() {
@@ -792,19 +960,27 @@ public class AssistantActivityBackend extends ComponentActivity {
         String disclosure = modelRunDisclosure(adapter);
         if (adapter.usesCloud()) {
             ModelEndpointConfig endpointConfig = modelEndpointConfig();
-            disclosure += "\n\nVoice command: "
-                    + (endpointConfig.isBrokerMode()
-                            ? endpointConfig.providerDisplayName()
-                            : OpenAiSpeechTranscriber.providerDisplayName())
-                    + " / " + OpenAiSpeechTranscriber.modelName()
-                    + ". " + voicePrivacyDisclosure(endpointConfig);
+            if (useLiveRealtimeVoice()) {
+                disclosure += "\n\nVoice: OpenAI Live Realtime 2 / "
+                        + OpenAiRealtimeVoiceSession.MODEL
+                        + ". Volume buttons start a live speech-to-speech session. "
+                        + "Mic audio streams to OpenAI while the session is active, "
+                        + "and model audio is played back on the phone.";
+            } else {
+                disclosure += "\n\nVoice: "
+                        + (endpointConfig.isBrokerMode()
+                                ? endpointConfig.providerDisplayName()
+                                : OpenAiSpeechTranscriber.providerDisplayName())
+                        + " / " + OpenAiSpeechTranscriber.modelName()
+                        + ". " + voicePrivacyDisclosure(endpointConfig);
+            }
         }
         setModelDisclosureText(disclosure);
     }
 
     private ModelAdapter selectedModelAdapter(ModelEndpointConfig endpointConfig) {
         return useRealtimeModel()
-                ? new OpenAiRealtimeAdapter(endpointConfig)
+                ? new OpenAiRealtimeAdapter(endpointConfig, realtimeModelId())
                 : new LocalHeuristicModelAdapter();
     }
 
@@ -840,6 +1016,17 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void startVoiceAgent(boolean holdToRecord) {
+        startVoiceAgent(holdToRecord, false);
+    }
+
+    private void startVoiceAgent(boolean holdToRecord, boolean forceClassic) {
+        Log.i(TAG, "voice start requested listening=" + mListening
+                + " live=" + useLiveRealtimeVoice()
+                + " forceClassic=" + forceClassic
+                + " configured=" + modelEndpointConfig().isConfigured()
+                + " broker=" + modelEndpointConfig().isBrokerMode()
+                + " control=" + isControlSurface()
+                + " hold=" + holdToRecord);
         if (mListening) {
             return;
         }
@@ -855,7 +1042,12 @@ public class AssistantActivityBackend extends ComponentActivity {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             mVoiceHoldToRecord = holdToRecord;
+            mPendingVoiceForceClassic = forceClassic;
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
+            return;
+        }
+        if (!forceClassic && useLiveRealtimeVoice()) {
+            startRealtimeVoiceAgent();
             return;
         }
         Log.i(TAG, "voice start control=" + isControlSurface()
@@ -877,8 +1069,12 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void startIslandVoiceAgent(boolean holdToRecord) {
+        startIslandVoiceAgent(holdToRecord, false);
+    }
+
+    private void startIslandVoiceAgent(boolean holdToRecord, boolean forceClassic) {
         mIslandVoiceLaunch = true;
-        startVoiceAgent(holdToRecord);
+        startVoiceAgent(holdToRecord, forceClassic);
     }
 
     private void finishIslandVoiceLaunch() {
@@ -890,6 +1086,20 @@ public class AssistantActivityBackend extends ComponentActivity {
         AssistantActivityBackend runner = sActiveControlRunner;
         if (runner != null && runner != this) {
             runner.finishVoiceCaptureFromHold();
+            moveTaskToBack(true);
+            return;
+        }
+        if (mVolumeChordPendingClassic) {
+            Log.i(TAG, "volume chord quick tap recorded");
+            cancelPendingVolumeChord();
+            sLastQuickVolumeChordUptimeMillis = SystemClock.uptimeMillis();
+            if (sActiveControlRunner == this && !isAgentOrVoiceActive()) {
+                sActiveControlRunner = null;
+            }
+            moveTaskToBack(true);
+            return;
+        }
+        if (mRunningRealtimeVoiceSession != null) {
             moveTaskToBack(true);
             return;
         }
@@ -913,11 +1123,290 @@ public class AssistantActivityBackend extends ComponentActivity {
             return;
         }
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            listenThenRun(mVoiceHoldToRecord);
+            if (!mPendingVoiceForceClassic && useLiveRealtimeVoice()) {
+                startRealtimeVoiceAgent();
+            } else {
+                listenThenRun(mVoiceHoldToRecord);
+            }
+            mPendingVoiceForceClassic = false;
         } else {
             setTaskText("Microphone permission is needed before I can listen.");
             updateIsland("Mic blocked");
+            mPendingVoiceForceClassic = false;
         }
+    }
+
+    private void startRealtimeVoiceAgent() {
+        if (mRunningRealtimeVoiceSession != null) {
+            return;
+        }
+        final ModelEndpointConfig endpointConfig = modelEndpointConfig();
+        if (endpointConfig.isBrokerMode()) {
+            String setupMessage = "Live Realtime 2 needs a direct OpenAI API key for now.";
+            setTaskText(setupMessage);
+            updateIsland("Setup needed");
+            if (mIslandVoiceLaunch) {
+                finishIslandVoiceLaunch();
+            }
+            return;
+        }
+        if (mAgentManager == null) {
+            String setupMessage = "OpenPhone system service is unavailable.";
+            setTaskText(setupMessage);
+            updateIsland("Unavailable");
+            if (mIslandVoiceLaunch) {
+                finishIslandVoiceLaunch();
+            }
+            return;
+        }
+        if (isControlSurface()) {
+            sActiveControlRunner = this;
+        }
+        mListening = true;
+        mVoiceHoldToRecord = false;
+        mVoiceCaptureFinishRequested = false;
+        mRealtimeVoiceErrorShown = false;
+        mLastVoiceStartUptimeMillis = SystemClock.uptimeMillis();
+        clearVoicePipelineProtection();
+        mAgentRunCancelled = false;
+        final int voiceGeneration = ++mVoiceRunGeneration;
+        final int runGeneration = ++mAgentRunGeneration;
+        final OpenAiRealtimeVoiceSession session = new OpenAiRealtimeVoiceSession(endpointConfig);
+        mRunningRealtimeVoiceSession = session;
+        Log.i(TAG, "live realtime voice start control=" + isControlSurface());
+        setTaskText("Live Realtime 2 is listening.");
+        updateIsland("Live");
+        updateComposerActionButton();
+        if (mIslandVoiceLaunch) {
+            getWindow().getDecorView().post(new Runnable() {
+                @Override
+                public void run() {
+                    moveTaskToBack(true);
+                }
+            });
+        }
+        Thread realtimeThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String taskId = null;
+                try {
+                    String response = mAgentManager.startTask(taskRequestJson(
+                            "Live Realtime 2 voice session"));
+                    taskId = parseString(response, "task_id");
+                    if (taskId == null || taskId.isEmpty()) {
+                        postRealtimeVoiceError(voiceGeneration,
+                                "Could not start the live voice task.");
+                        postRealtimeVoiceStopped(voiceGeneration, null);
+                        return;
+                    }
+                    final String liveTaskId = taskId;
+                    mRealtimeVoiceTaskId = liveTaskId;
+                    Log.i(TAG, "live realtime task started id=" + liveTaskId);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (voiceGeneration == mVoiceRunGeneration) {
+                                mActiveTaskId = liveTaskId;
+                                mActiveTaskGoal = "Live Realtime 2 voice session";
+                                updateComposerActionButton();
+                            }
+                        }
+                    });
+                    FrameworkToolExecutor toolExecutor = new FrameworkToolExecutor(
+                            AssistantActivityBackend.this, mAgentManager);
+                    session.run(liveTaskId, new ModelAdapter.ToolExecutor() {
+                        @Override
+                        public String callTool(String toolName, String argumentsJson) {
+                            if (isCancelled()) {
+                                return "{\"status\":\"cancelled\",\"reason\":\"user_stopped\"}";
+                            }
+                            try {
+                                JSONObject toolArguments = new JSONObject(argumentsJson);
+                                String dryRunPreview = dryRunPreview(toolName, toolArguments);
+                                if (dryRunPreview != null) {
+                                    return dryRunPreview;
+                                }
+                                String grantDenied = preflightDenial(toolName, toolArguments);
+                                if (grantDenied != null) {
+                                    return grantDenied;
+                                }
+                                movePointerFromTool(toolName, toolArguments);
+                                if (isCancelled()) {
+                                    return "{\"status\":\"cancelled\",\"reason\":\"user_stopped\"}";
+                                }
+                                return toolExecutor.execute(liveTaskId, toolName, toolArguments);
+                            } catch (JSONException e) {
+                                return "{\"status\":\"error\",\"reason\":\"bad_tool_json\"}";
+                            }
+                        }
+
+                        @Override
+                        public boolean isCancelled() {
+                            return mAgentRunCancelled
+                                    || runGeneration != mAgentRunGeneration
+                                    || voiceGeneration != mVoiceRunGeneration
+                                    || Thread.currentThread().isInterrupted();
+                        }
+                    }, new OpenAiRealtimeVoiceSession.Callback() {
+                        @Override
+                        public void onStatus(String status) {
+                            postRealtimeVoiceStatus(voiceGeneration, status);
+                        }
+
+                        @Override
+                        public void onUserTranscript(String transcript) {
+                            postRealtimeVoiceUserTranscript(voiceGeneration, transcript);
+                        }
+
+                        @Override
+                        public void onAssistantTranscript(String transcript) {
+                            postRealtimeVoiceAssistantTranscript(voiceGeneration, transcript);
+                        }
+
+                        @Override
+                        public void onToolCall(String toolName) {
+                            postRealtimeVoiceStatus(voiceGeneration,
+                                    "Using " + (toolName == null ? "tool" : toolName));
+                        }
+
+                        @Override
+                        public void onError(String message) {
+                            postRealtimeVoiceError(voiceGeneration, message);
+                        }
+
+                        @Override
+                        public void onStopped() {
+                            postRealtimeVoiceStopped(voiceGeneration, liveTaskId);
+                        }
+                    });
+                } catch (RuntimeException e) {
+                    postRealtimeVoiceError(voiceGeneration, e.getClass().getSimpleName());
+                    postRealtimeVoiceStopped(voiceGeneration, taskId);
+                }
+            }
+        }, "OpenPhoneRealtimeVoice");
+        mAgentThread = realtimeThread;
+        realtimeThread.start();
+    }
+
+    private void postRealtimeVoiceStatus(final int voiceGeneration, final String status) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (voiceGeneration != mVoiceRunGeneration) {
+                    return;
+                }
+                String clean = status == null || status.trim().isEmpty()
+                        ? "Live Realtime 2" : status.trim();
+                setTaskText(clean);
+                updateIsland("Live");
+            }
+        });
+    }
+
+    private void postRealtimeVoiceUserTranscript(final int voiceGeneration,
+            final String transcript) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (voiceGeneration != mVoiceRunGeneration || transcript == null
+                        || transcript.trim().isEmpty()) {
+                    return;
+                }
+                appendConversation("You", transcript.trim());
+                if (mPointerOverlayController != null) {
+                    mPointerOverlayController.setIslandState("realtime", "Live Realtime 2");
+                }
+            }
+        });
+    }
+
+    private void postRealtimeVoiceAssistantTranscript(final int voiceGeneration,
+            final String transcript) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (voiceGeneration != mVoiceRunGeneration || transcript == null
+                        || transcript.trim().isEmpty()) {
+                    return;
+                }
+                appendConversation("OpenPhone", transcript.trim());
+                if (mPointerOverlayController != null) {
+                    mPointerOverlayController.setIslandState("realtime", "Live Realtime 2");
+                }
+            }
+        });
+    }
+
+    private void postRealtimeVoiceError(final int voiceGeneration, final String message) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (voiceGeneration != mVoiceRunGeneration) {
+                    return;
+                }
+                String reply = "Live Realtime 2 failed."
+                        + (message == null || message.trim().isEmpty()
+                                ? "" : "\n\n" + message.trim());
+                Log.w(TAG, "live realtime voice error: " + previewForLog(message));
+                mRealtimeVoiceErrorShown = true;
+                setTaskText(reply);
+                showTerminalReplyOnIsland(reply);
+            }
+        });
+    }
+
+    private void postRealtimeVoiceStopped(final int voiceGeneration, final String taskId) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (voiceGeneration != mVoiceRunGeneration) {
+                    return;
+                }
+                Log.i(TAG, "live realtime voice stopped task=" + taskId);
+                stopFrameworkTaskAsync(taskId, "live_realtime_voice_stopped");
+                mListening = false;
+                mIslandVoiceLaunch = false;
+                mRunningRealtimeVoiceSession = null;
+                mAgentThread = null;
+                if (taskId != null && taskId.equals(mRealtimeVoiceTaskId)) {
+                    mRealtimeVoiceTaskId = null;
+                }
+                if (taskId != null && taskId.equals(mActiveTaskId)) {
+                    mActiveTaskId = null;
+                    mActiveTaskGoal = null;
+                }
+                if (sActiveControlRunner == AssistantActivityBackend.this) {
+                    sActiveControlRunner = null;
+                }
+                PointerOverlayController.publishIdleState();
+                OpenPhoneNotificationController.showReady(AssistantActivityBackend.this);
+                if (!mRealtimeVoiceErrorShown) {
+                    setTaskText("OpenPhone is ready.");
+                    updateIsland("Ready");
+                }
+                updateComposerActionButton();
+            }
+        });
+    }
+
+    private void stopFrameworkTaskAsync(final String taskId, final String reason) {
+        if (taskId == null || taskId.trim().isEmpty() || mAgentManager == null) {
+            return;
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    JSONObject payload = new JSONObject()
+                            .put("reason", reason == null ? "assistant_stopped" : reason);
+                    mAgentManager.stopTask(taskId, payload.toString());
+                } catch (JSONException | RuntimeException e) {
+                    Log.w(TAG, "failed to stop framework task " + taskId
+                            + ": " + e.getClass().getSimpleName());
+                }
+            }
+        }, "OpenPhoneTaskStop").start();
     }
 
     private void listenThenRun(boolean holdToRecord) {
@@ -1709,6 +2198,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         if (mContextIndexStore != null) {
             mContextIndexStore.recordConversationMessage(speaker, message.trim());
         }
+        PointerOverlayController.rememberConversationMessage(speaker, message.trim());
         if (mComposeStateCallbacks != null) {
             mComposeStateCallbacks.addConversationMessage(speaker, message.trim());
         }
@@ -1776,6 +2266,8 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     private static String islandStateForStatus(String status) {
         switch (status) {
+            case "Live":
+                return "realtime";
             case "Thinking":
             case "Reading screen":
                 return "thinking";
@@ -1921,6 +2413,22 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void stopTask() {
+        cancelPendingVolumeChord();
+        String taskId = mActiveTaskId;
+        if ((taskId == null || taskId.isEmpty()) && mRealtimeVoiceTaskId != null) {
+            taskId = mRealtimeVoiceTaskId;
+        }
+        Log.i(TAG, "stop task requested taskId=" + taskId
+                + " realtimeTaskId=" + mRealtimeVoiceTaskId
+                + " control=" + isControlSurface());
+        try {
+            if (mAgentManager != null && taskId != null) {
+                mAgentManager.stopTask(taskId, "{\"reason\":\"user_stopped_from_assistant\"}");
+                Log.i(TAG, "framework task stopped taskId=" + taskId);
+            }
+        } catch (RuntimeException ignored) {
+            Log.w(TAG, "framework task stop failed taskId=" + taskId);
+        }
         cancelAgentRun();
         cancelChatRun();
         mVoiceRunGeneration++;
@@ -1928,34 +2436,37 @@ public class AssistantActivityBackend extends ComponentActivity {
         mIslandVoiceLaunch = false;
         mVoiceHoldToRecord = false;
         mVoiceCaptureFinishRequested = false;
+        mRealtimeVoiceErrorShown = false;
         clearVoicePipelineProtection();
         OpenAiSpeechTranscriber speechTranscriber = mRunningSpeechTranscriber;
         if (speechTranscriber != null) {
             speechTranscriber.cancel();
             mRunningSpeechTranscriber = null;
         }
-        String taskId = mActiveTaskId;
-        try {
-            if (mAgentManager != null && taskId != null) {
-                mAgentManager.stopTask(taskId, "{\"reason\":\"user_stopped_from_assistant\"}");
+        OpenAiRealtimeVoiceSession realtimeVoiceSession = mRunningRealtimeVoiceSession;
+        if (realtimeVoiceSession != null) {
+            try {
+                realtimeVoiceSession.cancel();
+            } catch (RuntimeException e) {
+                Log.w(TAG, "live realtime cancel failed: " + e.getClass().getSimpleName());
             }
-        } catch (RuntimeException ignored) {
-        } finally {
-            mActiveTaskId = null;
-            mActiveTaskGoal = null;
-            mAgentThread = null;
-            mChatThread = null;
-            mRunningModelAdapter = null;
-            mRunningChatAdapter = null;
-            mPendingActionId = null;
-            mPendingOneShotMessage = null;
-            clearPendingToolAction();
-            hidePendingConfirmation();
-            mPointerOverlayController.showMicButton();
-            OpenPhoneNotificationController.showReady(this);
-            if (sActiveControlRunner == this) {
-                sActiveControlRunner = null;
-            }
+            mRunningRealtimeVoiceSession = null;
+        }
+        mActiveTaskId = null;
+        mActiveTaskGoal = null;
+        mRealtimeVoiceTaskId = null;
+        mAgentThread = null;
+        mChatThread = null;
+        mRunningModelAdapter = null;
+        mRunningChatAdapter = null;
+        mPendingActionId = null;
+        mPendingOneShotMessage = null;
+        clearPendingToolAction();
+        hidePendingConfirmation();
+        PointerOverlayController.publishIdleState();
+        OpenPhoneNotificationController.showReady(this);
+        if (sActiveControlRunner == this) {
+            sActiveControlRunner = null;
         }
         setTaskText("Task stopped");
         recordContextAgentEvent("assistant.agent.task_stopped", "Agent task stopped",

@@ -30,7 +30,7 @@ index e4cc1c73b8dc..ed5d8e356ba2 100644
      boolean mVolumeMuteWakeTriggered;
  
 +    private static final long OPENPHONE_VOLUME_CHORD_WINDOW_MILLIS = 280;
-+    private static final long OPENPHONE_VOLUME_CHORD_REARM_MILLIS = 1000;
++    private static final long OPENPHONE_VOLUME_CHORD_REARM_MILLIS = 120;
 +    private boolean mOpenPhoneVolumeUpPressed;
 +    private boolean mOpenPhoneVolumeDownPressed;
 +    private boolean mOpenPhoneVolumeChordTriggered;

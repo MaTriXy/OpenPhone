@@ -33,6 +33,8 @@ object AssistantComposeHost {
 
             override fun setModelConfig(
                 useRealtime: Boolean,
+                useRealtime2: Boolean,
+                useLiveRealtimeVoice: Boolean,
                 useBroker: Boolean,
                 apiKey: String,
                 brokerUrl: String,
@@ -41,6 +43,8 @@ object AssistantComposeHost {
                 viewModel.updateModelConfig {
                     it.copy(
                         useRealtimeVision = useRealtime,
+                        useRealtime2 = useRealtime2,
+                        useLiveRealtimeVoice = useLiveRealtimeVoice,
                         useBroker = useBroker,
                         devApiKey = apiKey,
                         brokerUrl = brokerUrl,
@@ -144,6 +148,8 @@ object AssistantComposeHost {
                             viewModel.setModelConfig(it)
                             activity.onComposeModelConfigChanged(
                                 it.useRealtimeVision,
+                                it.useRealtime2,
+                                it.useLiveRealtimeVoice,
                                 it.useBroker,
                                 it.devApiKey,
                                 it.brokerUrl,

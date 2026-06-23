@@ -176,6 +176,19 @@ public final class WatcherStore {
         return queryWatchers(request);
     }
 
+    public List<WatcherRecord> search(String query, int limit) {
+        String cleanQuery = query == null ? "" : query.trim();
+        JSONObject request = new JSONObject();
+        try {
+            request.put("mode", cleanQuery.isEmpty() ? "active" : "search")
+                    .put("query", cleanQuery)
+                    .put("limit", Math.max(1, Math.min(limit, 50)));
+        } catch (JSONException e) {
+            return new ArrayList<>();
+        }
+        return queryWatchers(request);
+    }
+
     public List<WatcherRecord> due(long nowMillis, int limit) {
         JSONObject request = new JSONObject();
         try {
@@ -190,6 +203,9 @@ public final class WatcherStore {
     public long nextRunAt(long nowMillis) {
         if (mManager == null) {
             return 0L;
+        }
+        if (!due(nowMillis, 1).isEmpty()) {
+            return nowMillis;
         }
         JSONObject request = new JSONObject();
         try {
@@ -212,17 +228,8 @@ public final class WatcherStore {
     }
 
     public String listJson(String query, int limit) {
-        String cleanQuery = query == null ? "" : query.trim();
-        JSONObject request = new JSONObject();
-        try {
-            request.put("mode", cleanQuery.isEmpty() ? "active" : "search")
-                    .put("query", cleanQuery)
-                    .put("limit", Math.max(1, Math.min(limit, 50)));
-        } catch (JSONException e) {
-            return "{\"watchers\":[]}";
-        }
         JSONArray array = new JSONArray();
-        for (WatcherRecord watcher : queryWatchers(request)) {
+        for (WatcherRecord watcher : search(query, limit)) {
             array.put(watcherJson(watcher));
         }
         try {

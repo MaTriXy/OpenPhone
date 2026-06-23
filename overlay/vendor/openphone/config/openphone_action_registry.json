@@ -1498,7 +1498,7 @@
     },
     {
       "name": "watchers.create",
-      "description": "Create a durable OpenPhone watcher that runs after the conversation and alerts when a future external condition is met. Use for proactive monitoring of message replies/no-reply deadlines, calls/no-call deadlines, notification matches, web/page changes, semantic page conditions, and user requests like tell me when, remind me if, watch this, let me know, or make sure I do not forget. Do not use for explicit background jobs, queued agent work, run-as-soon-as-possible tasks, or keep-working-and-notify-me tasks; use background_job_create for those.",
+      "description": "Create a durable OpenPhone watcher: a future trigger plus an optional reaction. Use for proactive monitoring of message replies/no-reply deadlines, calls/no-call deadlines, notification matches, web/page changes, semantic page conditions, and requests like tell me when, remind me if, watch this, let me know, or make sure I do not forget. If the user asks the phone to do something when the trigger happens, store that reaction in delivery using delivery.tool plus delivery.arguments, or delivery.prompt for a background agent job. Tool arguments may reference trigger data with templates such as {{event.number}}, {{event.address}}, {{event.title}}, {{event.text}}, {{event.url}}, {{watcher.id}}, and {{watcher.title}}. Do not use watcher_create for explicit run-as-soon-as-possible queued agent work; use background_job_create for that.",
       "model_tool": "watcher_create",
       "kind": "action",
       "input_schema_json": {
@@ -1530,7 +1530,11 @@
           },
           "number": {
             "type": "string",
-            "description": "Phone number to watch when source is call."
+            "description": "Phone number to watch when source is call. Omit and set match_any=true for every caller."
+          },
+          "match_any": {
+            "type": "boolean",
+            "description": "For call watchers, true means match any phone number. Use for requests like every incoming call or any caller."
           },
           "direction": {
             "type": "string",
@@ -1562,7 +1566,27 @@
           },
           "delivery": {
             "type": "object",
-            "description": "Delivery details, usually notification."
+            "description": "Delivery or reaction details. Use {\"mode\":\"notification\"} for alerts, {\"tool\":\"model_tool_name\",\"arguments\":{...}} for a stored tool reaction, or {\"mode\":\"background_job\",\"prompt\":\"...\"} for an observe-first background agent turn. Set notify=false or mode=silent to avoid a notification after the reaction."
+          },
+          "tool": {
+            "type": "string",
+            "description": "Shortcut for delivery.tool: the model-facing tool to run when the watcher fires."
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Shortcut for delivery.arguments. Values may use event templates such as {{event.number}}."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Shortcut for delivery.prompt when the watcher should enqueue a background agent job after the trigger."
+          },
+          "recurring": {
+            "type": "boolean",
+            "description": "True when the watcher should continue after matching, such as every matching call or notification."
+          },
+          "sms_body": {
+            "type": "string",
+            "description": "Legacy shortcut only; prefer delivery.tool with delivery.arguments for new watcher reactions."
           },
           "next_run_at": {
             "type": "integer",
@@ -1657,7 +1681,7 @@
     },
     {
       "name": "watchers.stop",
-      "description": "Stop an active OpenPhone watcher.",
+      "description": "Stop active OpenPhone watchers. Use watcher_id when the user names a specific watcher id. Use scope=all or all=true when the user asks to turn off, disable, clear, remove, delete, cancel, stop, or kill all watchers. Use query when the user describes a watcher by title, source, or condition instead of giving an id.",
       "model_tool": "watcher_stop",
       "kind": "action",
       "input_schema_json": {
@@ -1665,7 +1689,19 @@
         "properties": {
           "watcher_id": {
             "type": "integer",
-            "description": "Watcher id."
+            "description": "Specific watcher id. Omit when stopping all watchers or a query-matched set."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Use all to stop every active watcher."
+          },
+          "all": {
+            "type": "boolean",
+            "description": "True to stop every active watcher."
+          },
+          "query": {
+            "type": "string",
+            "description": "Optional search text to stop matching active watchers when the user described the watcher but did not provide an id."
           },
           "reason": {
             "type": "string",
@@ -1673,7 +1709,6 @@
           }
         },
         "required": [
-          "watcher_id",
           "reason"
         ]
       },
@@ -1685,6 +1720,12 @@
           },
           "watcher_id": {
             "type": "integer"
+          },
+          "stopped_count": {
+            "type": "integer"
+          },
+          "stopped_watcher_ids": {
+            "type": "array"
           }
         }
       },

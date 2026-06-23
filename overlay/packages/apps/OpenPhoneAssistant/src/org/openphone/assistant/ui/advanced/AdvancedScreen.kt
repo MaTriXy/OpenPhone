@@ -66,7 +66,7 @@ fun AdvancedScreen(
         ) {
             IconCapsule(glyph = AssistantGlyph.Back, contentDescription = "Back", onClick = onBack)
             Text(
-                text = "Developer settings",
+                text = "Settings",
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(start = 12.dp),
             )

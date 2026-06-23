@@ -591,9 +591,9 @@ index 000000000000..0b99175f5b93
 +                        long nextDueAt = 0L;
 +                        try (Cursor cursor = db.rawQuery("SELECT due_at FROM commitment "
 +                                + "WHERE status IN ('pending','active','snoozed') "
-+                                + "AND deleted_at IS NULL AND due_at > ? "
++                                + "AND deleted_at IS NULL AND due_at > 0 "
 +                                + "ORDER BY due_at ASC LIMIT 1",
-+                                new String[]{Long.toString(now)})) {
++                                new String[0])) {
 +                            if (cursor.moveToFirst()) {
 +                                nextDueAt = cursor.getLong(0);
 +                            }
@@ -840,8 +840,8 @@ index 000000000000..0b99175f5b93
 +                        long nextRunAt = 0L;
 +                        try (Cursor cursor = db.rawQuery("SELECT next_run_at FROM watcher "
 +                                + "WHERE status = 'active' AND deleted_at IS NULL "
-+                                + "AND next_run_at > ? ORDER BY next_run_at ASC LIMIT 1",
-+                                new String[]{Long.toString(now)})) {
++                                + "AND next_run_at > 0 ORDER BY next_run_at ASC LIMIT 1",
++                                new String[0])) {
 +                            if (cursor.moveToFirst()) {
 +                                nextRunAt = cursor.getLong(0);
 +                            }
@@ -1306,4 +1306,3 @@ index f60d864a210f..247558e7ded3 100644
                  t.traceBegin("StartSupervisionService");
 -- 
 2.43.0
-

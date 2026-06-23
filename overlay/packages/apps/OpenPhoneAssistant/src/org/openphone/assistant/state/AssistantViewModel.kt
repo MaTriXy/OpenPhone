@@ -169,9 +169,11 @@ class AssistantViewModel(
             advanced = AdvancedUiState(
                 model = ModelConfig(
                     useRealtimeVision = true,
-                    useBroker = true,
+                    useRealtime2 = true,
+                    useLiveRealtimeVoice = true,
+                    useBroker = false,
                     brokerUrl = "https://broker.openphone.invalid/v1",
-                    disclosure = "Realtime vision through the OpenPhone model broker.",
+                    disclosure = "Live Realtime 2 with the classic OpenPhone agent available.",
                 ),
                 ota = OtaState(
                     feedUrl = "https://updates.openphone.invalid/ota.json",

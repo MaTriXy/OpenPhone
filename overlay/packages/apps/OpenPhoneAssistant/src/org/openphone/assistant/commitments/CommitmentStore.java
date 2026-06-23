@@ -147,6 +147,9 @@ public final class CommitmentStore {
         if (mManager == null) {
             return 0L;
         }
+        if (!due(nowMillis, 1).isEmpty()) {
+            return nowMillis;
+        }
         JSONObject request = new JSONObject();
         try {
             request.put("mode", "next_due_at").put("now", nowMillis);

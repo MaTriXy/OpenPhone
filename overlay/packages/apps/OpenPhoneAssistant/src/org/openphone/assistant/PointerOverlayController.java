@@ -17,15 +17,22 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.RoundedCorner;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.openphone.assistant.context.ContextIndexStore;
 import org.openphone.assistant.jobs.AgentJobRecord;
 import org.openphone.assistant.jobs.AgentJobStore;
+import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
 import org.openphone.assistant.watchers.WatcherRecord;
 import org.openphone.assistant.watchers.WatcherStore;
 
@@ -61,6 +68,8 @@ public final class PointerOverlayController {
     private static final int ISLAND_EXPANDED_PADDING_VERTICAL = 22;
     private static final int ISLAND_EXPANDED_PADDING_HORIZONTAL = 34;
     private static final int ISLAND_EXPANDED_PANEL_GAP = -8;
+    private static final int ISLAND_DRAG_HANDLE_HEIGHT = 72;
+    private static final float ISLAND_DRAG_EXPAND_THRESHOLD = 24f;
     private static final long ISLAND_RESIZE_MS = 260L;
     private static final long THINKING_DOTS_INTERVAL_MS = 420L;
     private static final long REPLY_AUTO_COLLAPSE_MS = 7000L;
@@ -76,6 +85,12 @@ public final class PointerOverlayController {
     private static final long DONE_VISIBLE_MS = 2200;
     private static final Set<PointerOverlayController> sControllers =
             Collections.newSetFromMap(new WeakHashMap<>());
+    private static String sLatestUserMessage = "";
+    private static String sLatestAssistantMessage = "";
+    private static long sLatestConversationAtMillis;
+    private static final int STATUS_TAB_CHAT = 0;
+    private static final int STATUS_TAB_WATCHERS = 1;
+    private static final int STATUS_TAB_RUNS = 2;
 
     private final Context mContext;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -95,8 +110,16 @@ public final class PointerOverlayController {
     private TextView mLeftIslandText;
     private TextView mRightIslandText;
     private LinearLayout mIslandCompactRow;
+    private View mIslandDragHandle;
     private LinearLayout mIslandExpandedColumn;
+    private LinearLayout mIslandTabRow;
+    private TextView mChatTabButton;
+    private TextView mWatchersTabButton;
+    private TextView mRunsTabButton;
+    private ScrollView mIslandBodyScroll;
+    private FrameLayout mIslandBodyFrame;
     private TextView mIslandBodyText;
+    private LinearLayout mIslandChatColumn;
     private LinearLayout mIslandActionRow;
     private TextView mApproveButton;
     private TextView mDenyButton;
@@ -109,6 +132,10 @@ public final class PointerOverlayController {
     private int mWatchingCount;
     private boolean mIslandExpanded;
     private boolean mInspectExpanded;
+    private boolean mLargeExpanded;
+    private boolean mIslandDragExpanded;
+    private float mIslandTouchDownY;
+    private int mStatusTab = STATUS_TAB_CHAT;
     private int mThinkingDotsFrame;
     private final Runnable mReplyAutoCollapse = () -> {
         if ("reply".equals(mMode) || "transcript".equals(mMode)) {
@@ -118,7 +145,7 @@ public final class PointerOverlayController {
     private final Runnable mThinkingDotsTicker = new Runnable() {
         @Override
         public void run() {
-            if (!"thinking".equals(mMode)) {
+            if (!"thinking".equals(mMode) && !"realtime".equals(mMode)) {
                 return;
             }
             mThinkingDotsFrame = (mThinkingDotsFrame + 1) % 3;
@@ -184,14 +211,24 @@ public final class PointerOverlayController {
             mLeftIslandText = null;
             mRightIslandText = null;
             mIslandCompactRow = null;
+            mIslandDragHandle = null;
             mIslandExpandedColumn = null;
+            mIslandTabRow = null;
+            mChatTabButton = null;
+            mWatchersTabButton = null;
+            mRunsTabButton = null;
+            mIslandBodyScroll = null;
+            mIslandBodyFrame = null;
             mIslandBodyText = null;
+            mIslandChatColumn = null;
             mIslandActionRow = null;
             mApproveButton = null;
             mDenyButton = null;
             mActionLabel = null;
             mIslandExpanded = false;
             mInspectExpanded = false;
+            mLargeExpanded = false;
+            mIslandDragExpanded = false;
         });
     }
 
@@ -201,8 +238,9 @@ public final class PointerOverlayController {
             mStateDetail = detail == null ? "" : detail.trim();
             if (!clean.equals(mMode)) {
                 mInspectExpanded = false;
+                mLargeExpanded = false;
             }
-            if (!"thinking".equals(clean)) {
+            if (!"thinking".equals(clean) && !"realtime".equals(clean)) {
                 stopThinkingDots();
             }
             switch (clean) {
@@ -215,6 +253,16 @@ public final class PointerOverlayController {
                 case "thinking":
                     mMode = clean;
                     removeAllPointerLayers();
+                    ensureIslandWindow();
+                    updateIslandViews();
+                    startThinkingDots();
+                    mHandler.removeCallbacks(mWatchdogHide);
+                    return;
+                case "realtime":
+                    mMode = clean;
+                    mInspectExpanded = false;
+                    ensurePointerLayer();
+                    hidePointerDot();
                     ensureIslandWindow();
                     updateIslandViews();
                     startThinkingDots();
@@ -292,9 +340,9 @@ public final class PointerOverlayController {
         stopThinkingDots();
         mMode = "listening";
         mInspectExpanded = false;
+        mLargeExpanded = false;
         mTranscriptText = "";
-        ensurePointerLayer();
-        hidePointerDot();
+        removeAllPointerLayers();
         ensureIslandWindow();
         updateIslandViews();
     }
@@ -304,8 +352,10 @@ public final class PointerOverlayController {
             stopThinkingDots();
             mMode = "transcript";
             mInspectExpanded = false;
+            mLargeExpanded = false;
             mTranscriptText = transcript == null ? "" : transcript.trim();
             mReplyText = "";
+            rememberUserMessage(mTranscriptText);
             removeAllPointerLayers();
             ensureIslandWindow();
             updateIslandViews();
@@ -326,7 +376,9 @@ public final class PointerOverlayController {
             stopThinkingDots();
             mMode = "reply";
             mInspectExpanded = false;
+            mLargeExpanded = false;
             mReplyText = clean;
+            rememberAssistantMessage(clean);
             removeAllPointerLayers();
             ensureIslandWindow();
             updateIslandViews();
@@ -344,6 +396,7 @@ public final class PointerOverlayController {
         stopThinkingDots();
         mMode = mWatchingCount > 0 ? "watching" : "idle";
         mInspectExpanded = false;
+        mLargeExpanded = false;
         mTranscriptText = "";
         mReplyText = "";
         mStateDetail = "";
@@ -361,6 +414,16 @@ public final class PointerOverlayController {
         }
         for (PointerOverlayController controller : controllers) {
             controller.setWatchingCount(count);
+        }
+    }
+
+    static void publishIdleState() {
+        ArrayList<PointerOverlayController> controllers;
+        synchronized (sControllers) {
+            controllers = new ArrayList<>(sControllers);
+        }
+        for (PointerOverlayController controller : controllers) {
+            controller.showMicButton();
         }
     }
 
@@ -515,10 +578,21 @@ public final class PointerOverlayController {
         row.setGravity(Gravity.CENTER);
         row.setClickable(true);
         row.setOnClickListener(this::handleIslandTap);
+        row.setOnTouchListener(this::handleIslandTouch);
         row.setBackground(chipBackground(mYoloActive, false));
         row.setPadding(10, 0, 10, 0);
         mIslandRoot.addView(row, compactRowParams(false));
         mIslandCompactRow = row;
+
+        mIslandDragHandle = new View(mContext);
+        mIslandDragHandle.setBackgroundColor(Color.TRANSPARENT);
+        mIslandDragHandle.setClickable(true);
+        mIslandDragHandle.setOnTouchListener(this::handleIslandTouch);
+        FrameLayout.LayoutParams dragHandleParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, ISLAND_DRAG_HANDLE_HEIGHT);
+        dragHandleParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        dragHandleParams.topMargin = ISLAND_HEIGHT - 2;
+        mIslandRoot.addView(mIslandDragHandle, dragHandleParams);
 
         mLeftIslandText = islandText();
         row.addView(mLeftIslandText, new LinearLayout.LayoutParams(0,
@@ -537,13 +611,40 @@ public final class PointerOverlayController {
         // the compact row, hidden in compact modes.
         mIslandExpandedColumn = new LinearLayout(mContext);
         mIslandExpandedColumn.setOrientation(LinearLayout.VERTICAL);
-        mIslandExpandedColumn.setGravity(Gravity.CENTER_VERTICAL);
+        mIslandExpandedColumn.setGravity(Gravity.TOP);
         mIslandExpandedColumn.setVisibility(View.GONE);
         mIslandExpandedColumn.setBackground(chipBackground(mYoloActive, false));
         mIslandExpandedColumn.setPadding(ISLAND_EXPANDED_PADDING_HORIZONTAL,
                 ISLAND_EXPANDED_PADDING_VERTICAL,
                 ISLAND_EXPANDED_PADDING_HORIZONTAL,
                 ISLAND_EXPANDED_PADDING_VERTICAL);
+
+        mIslandTabRow = new LinearLayout(mContext);
+        mIslandTabRow.setOrientation(LinearLayout.HORIZONTAL);
+        mIslandTabRow.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        mIslandTabRow.setVisibility(View.GONE);
+        mChatTabButton = islandTabButton("Chat", STATUS_TAB_CHAT);
+        mWatchersTabButton = islandTabButton("Watchers", STATUS_TAB_WATCHERS);
+        mRunsTabButton = islandTabButton("Runs", STATUS_TAB_RUNS);
+        addTabButton(mIslandTabRow, mChatTabButton, 10);
+        addTabButton(mIslandTabRow, mWatchersTabButton, 10);
+        addTabButton(mIslandTabRow, mRunsTabButton, 0);
+        LinearLayout.LayoutParams tabRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        tabRowLp.bottomMargin = 14;
+        mIslandExpandedColumn.addView(mIslandTabRow, tabRowLp);
+
+        mIslandBodyScroll = new ScrollView(mContext);
+        mIslandBodyScroll.setFillViewport(false);
+        mIslandBodyScroll.setClipToPadding(false);
+        mIslandBodyScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        mIslandBodyFrame = new FrameLayout(mContext);
+        mIslandBodyScroll.addView(mIslandBodyFrame, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT));
+        mIslandBodyFrame.setClickable(true);
+        mIslandBodyFrame.setOnClickListener(this::handleIslandTap);
 
         mIslandBodyText = new TextView(mContext);
         mIslandBodyText.setTextColor(0xfff4f7f8);
@@ -555,7 +656,19 @@ public final class PointerOverlayController {
         mIslandBodyText.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         mIslandBodyText.setClickable(true);
         mIslandBodyText.setOnClickListener(this::handleIslandTap);
-        mIslandExpandedColumn.addView(mIslandBodyText, new LinearLayout.LayoutParams(
+        mIslandBodyFrame.addView(mIslandBodyText, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT));
+
+        mIslandChatColumn = new LinearLayout(mContext);
+        mIslandChatColumn.setOrientation(LinearLayout.VERTICAL);
+        mIslandChatColumn.setGravity(Gravity.START);
+        mIslandChatColumn.setVisibility(View.GONE);
+        mIslandBodyFrame.addView(mIslandChatColumn, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT));
+
+        mIslandExpandedColumn.addView(mIslandBodyScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -594,7 +707,7 @@ public final class PointerOverlayController {
 
         mIslandParams = new WindowManager.LayoutParams(
                 ISLAND_WIDTH,
-                ISLAND_HEIGHT,
+                compactIslandWindowHeight(),
                 WindowManager.LayoutParams.TYPE_SYSTEM_ERROR,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -615,7 +728,11 @@ public final class PointerOverlayController {
             mLeftIslandText = null;
             mRightIslandText = null;
             mIslandCompactRow = null;
+            mIslandDragHandle = null;
+            mIslandBodyScroll = null;
+            mIslandBodyFrame = null;
             mIslandBodyText = null;
+            mIslandChatColumn = null;
         }
     }
 
@@ -626,12 +743,13 @@ public final class PointerOverlayController {
      */
     private void handleIslandTap(View view) {
         if ("listening".equals(mMode) || "action_running".equals(mMode)
-                || "thinking".equals(mMode)) {
+                || "thinking".equals(mMode) || "realtime".equals(mMode)) {
             launchStopAgent();
             return;
         }
         if ("error".equals(mMode) || "answer_ready".equals(mMode)) {
             mInspectExpanded = !mInspectExpanded;
+            mLargeExpanded = false;
             updateIslandViews();
             return;
         }
@@ -644,8 +762,58 @@ public final class PointerOverlayController {
             return;
         }
         if ("idle".equals(mMode) || "watching".equals(mMode)) {
-            mInspectExpanded = !mInspectExpanded;
+            if (mInspectExpanded) {
+                mInspectExpanded = false;
+                mLargeExpanded = false;
+            } else {
+                mInspectExpanded = true;
+                mLargeExpanded = false;
+                mStatusTab = STATUS_TAB_CHAT;
+            }
             updateIslandViews();
+        }
+    }
+
+    private boolean handleIslandTouch(View view, MotionEvent event) {
+        if (!"idle".equals(mMode) && !"watching".equals(mMode)) {
+            return false;
+        }
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                mIslandTouchDownY = event.getRawY();
+                mIslandDragExpanded = false;
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                if (!mIslandDragExpanded
+                        && event.getRawY() - mIslandTouchDownY > ISLAND_DRAG_EXPAND_THRESHOLD) {
+                    mIslandDragExpanded = true;
+                    mInspectExpanded = true;
+                    mLargeExpanded = true;
+                    mStatusTab = STATUS_TAB_CHAT;
+                    updateIslandViews();
+                    return true;
+                }
+                return mIslandDragExpanded;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (!mIslandDragExpanded && event.getActionMasked() == MotionEvent.ACTION_UP
+                        && event.getRawY() - mIslandTouchDownY > ISLAND_DRAG_EXPAND_THRESHOLD) {
+                    mInspectExpanded = true;
+                    mLargeExpanded = true;
+                    mStatusTab = STATUS_TAB_CHAT;
+                    updateIslandViews();
+                    return true;
+                }
+                if (mIslandDragExpanded) {
+                    mIslandDragExpanded = false;
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    handleIslandTap(view);
+                }
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -686,14 +854,24 @@ public final class PointerOverlayController {
         mLeftIslandText = null;
         mRightIslandText = null;
         mIslandCompactRow = null;
+        mIslandDragHandle = null;
         mIslandExpandedColumn = null;
-        mIslandBodyText = null;
-        mIslandActionRow = null;
+        mIslandTabRow = null;
+        mChatTabButton = null;
+        mWatchersTabButton = null;
+            mRunsTabButton = null;
+            mIslandBodyScroll = null;
+            mIslandBodyFrame = null;
+            mIslandBodyText = null;
+            mIslandChatColumn = null;
+            mIslandActionRow = null;
         mApproveButton = null;
         mDenyButton = null;
         mActionLabel = null;
         mIslandExpanded = false;
         mInspectExpanded = false;
+        mLargeExpanded = false;
+        mIslandDragExpanded = false;
     }
 
     private TextView islandText() {
@@ -707,9 +885,60 @@ public final class PointerOverlayController {
         return view;
     }
 
+    private TextView islandTabButton(String label, int tab) {
+        TextView view = new TextView(mContext);
+        view.setText(label);
+        view.setContentDescription(label);
+        view.setTextSize(12);
+        view.setTypeface(Typeface.DEFAULT_BOLD);
+        view.setGravity(Gravity.CENTER);
+        view.setSingleLine(true);
+        view.setPadding(20, 10, 20, 10);
+        view.setMinHeight(40);
+        view.setClickable(true);
+        view.setFocusable(true);
+        view.setOnClickListener(v -> {
+            if (mStatusTab == tab) {
+                return;
+            }
+            mStatusTab = tab;
+            updateIslandViews();
+        });
+        return view;
+    }
+
+    private static void addTabButton(LinearLayout row, TextView button, int rightMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = Math.max(0, rightMargin);
+        row.addView(button, lp);
+    }
+
+    private void updateTabViews(boolean visible) {
+        if (mIslandTabRow == null) {
+            return;
+        }
+        mIslandTabRow.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (!visible) {
+            return;
+        }
+        styleTabButton(mChatTabButton, mStatusTab == STATUS_TAB_CHAT);
+        styleTabButton(mWatchersTabButton, mStatusTab == STATUS_TAB_WATCHERS);
+        styleTabButton(mRunsTabButton, mStatusTab == STATUS_TAB_RUNS);
+    }
+
+    private static void styleTabButton(TextView button, boolean selected) {
+        if (button == null) {
+            return;
+        }
+        button.setTextColor(selected ? 0xff101418 : 0xfff4f7f8);
+        button.setBackground(tabBackground(selected));
+    }
+
     private void updateIslandViews() {
         if (mLeftIslandText == null || mRightIslandText == null
-                || mIslandBodyText == null) {
+                || mIslandBodyText == null || mIslandChatColumn == null) {
             return;
         }
         IslandPresentation presentation = presentationForMode();
@@ -717,11 +946,27 @@ public final class PointerOverlayController {
         mRightIslandText.setText(presentation.rightText);
         mRightIslandText.setTextColor(presentation.accentColor);
         mIslandBodyText.setText(presentation.bodyText);
-        mIslandBodyText.setMaxLines(presentation.maxBodyLines);
+        mIslandBodyText.setTextSize(presentation.showTabs ? 13 : 15);
+        mIslandBodyText.setMaxLines(Integer.MAX_VALUE);
+        mIslandBodyText.setEllipsize(null);
+        updateBodyContentViews(presentation);
+        updateTabViews(presentation.showTabs);
         if (presentation.expanded) {
             applyExpandedIslandLayout(presentation);
         } else {
             applyCompactIslandLayout();
+        }
+    }
+
+    private void updateBodyContentViews(IslandPresentation presentation) {
+        boolean showChat = presentation.showTabs && mStatusTab == STATUS_TAB_CHAT;
+        if (showChat) {
+            mIslandBodyText.setVisibility(View.GONE);
+            mIslandChatColumn.setVisibility(View.VISIBLE);
+            populateChatColumn();
+        } else {
+            mIslandChatColumn.setVisibility(View.GONE);
+            mIslandBodyText.setVisibility(View.VISIBLE);
         }
     }
 
@@ -750,6 +995,9 @@ public final class PointerOverlayController {
         if ("thinking".equals(mMode)) {
             return IslandPresentation.compact("", thinkingDots(), 0xff9ab8ff);
         }
+        if ("realtime".equals(mMode)) {
+            return IslandPresentation.compact("⚡", thinkingDots(), 0xffffcc6c);
+        }
         if ("action_running".equals(mMode)) {
             return IslandPresentation.compact(yoloPrefix() + "●", "■", 0xffff6b6b);
         }
@@ -767,33 +1015,152 @@ public final class PointerOverlayController {
         }
         if ("watching".equals(mMode)) {
             if (mInspectExpanded) {
-                return IslandPresentation.expanded("AI", backgroundStatusBody(),
-                        false, REPLY_MAX_LINES);
+                return backgroundStatusPresentation();
             }
             return IslandPresentation.compact(yoloPrefix() + "AI",
                     mWatchingCount > 1 ? "◎ " + mWatchingCount : "◎", 0xff9ab8ff);
         }
         if (mInspectExpanded) {
-            return IslandPresentation.expanded("AI", backgroundStatusBody(),
-                    false, REPLY_MAX_LINES);
+            return backgroundStatusPresentation();
         }
         return IslandPresentation.compact(yoloPrefix() + "AI", "◉", 0xff72e0c4);
     }
 
+    private IslandPresentation backgroundStatusPresentation() {
+        int watcherCount = Math.max(mWatchingCount, activeWatchers(50).size());
+        boolean showStop = mStatusTab == STATUS_TAB_WATCHERS && watcherCount > 0;
+        return IslandPresentation.expandedStatus("AI", backgroundStatusBody(),
+                true, showStop, 10);
+    }
+
     private String backgroundStatusBody() {
-        List<WatcherRecord> watchers = activeWatchers(4);
-        List<AgentJobRecord> jobs = activeJobs(4);
-        int watcherCount = Math.max(mWatchingCount, watchers.size());
+        switch (mStatusTab) {
+            case STATUS_TAB_WATCHERS:
+                return watchersStatusBody();
+            case STATUS_TAB_RUNS:
+                return runsStatusBody();
+            case STATUS_TAB_CHAT:
+            default:
+                return chatStatusBody();
+        }
+    }
+
+    private String chatStatusBody() {
+        int watcherCount = Math.max(mWatchingCount, activeWatchers(50).size());
         int jobCount = activeJobCount();
         StringBuilder body = new StringBuilder();
-        body.append("State: idle");
-        if (watcherCount <= 0 && jobCount <= 0) {
-            body.append("\nNo active watchers or background runs.");
+        body.append(mYoloActive ? "YOLO idle" : "Idle");
+        if (mStateDetail != null && !mStateDetail.trim().isEmpty()) {
+            body.append("\n").append(shortText(mStateDetail, 96));
+        }
+        String latest = latestConversationBody();
+        if (!latest.isEmpty()) {
+            body.append("\n").append(latest);
+        } else {
+            body.append("\nNo recent chat.");
+        }
+        body.append("\nWatchers: ").append(watcherCount);
+        body.append("  Runs: ").append(jobCount);
+        return body.toString();
+    }
+
+    private void populateChatColumn() {
+        if (mIslandChatColumn == null) {
+            return;
+        }
+        mIslandChatColumn.removeAllViews();
+        int watcherCount = Math.max(mWatchingCount, activeWatchers(50).size());
+        int jobCount = activeJobCount();
+        addChatMetaLine((mYoloActive ? "YOLO idle" : "Idle")
+                + "  Watchers " + watcherCount + "  Runs " + jobCount);
+        if (mStateDetail != null && !mStateDetail.trim().isEmpty()) {
+            addChatMetaLine(shortText(mStateDetail, 120));
+        }
+        String[] pair = latestConversationPair();
+        boolean hasUser = pair[0] != null && !pair[0].trim().isEmpty();
+        boolean hasAssistant = pair[1] != null && !pair[1].trim().isEmpty();
+        if (!hasUser && !hasAssistant) {
+            addEmptyState("◌", "No recent chat");
+            return;
+        }
+        if (hasUser) {
+            addChatBubble("You", pair[0], true);
+        }
+        if (hasAssistant) {
+            addChatBubble("OpenPhone", pair[1], false);
+        }
+    }
+
+    private void addChatMetaLine(String text) {
+        TextView view = new TextView(mContext);
+        view.setText(text);
+        view.setTextColor(0xffaeb8bf);
+        view.setTextSize(11);
+        view.setSingleLine(false);
+        view.setPadding(2, 0, 2, 10);
+        mIslandChatColumn.addView(view, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void addEmptyState(String icon, String text) {
+        TextView view = new TextView(mContext);
+        view.setText(icon + "\n" + text);
+        view.setTextColor(0xffcbd3d8);
+        view.setTextSize(13);
+        view.setGravity(Gravity.CENTER);
+        view.setLineSpacing(4f, 1.0f);
+        view.setPadding(0, 22, 0, 22);
+        mIslandChatColumn.addView(view, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void addChatBubble(String label, String text, boolean fromUser) {
+        TextView labelView = new TextView(mContext);
+        labelView.setText(label);
+        labelView.setTextColor(0xffaeb8bf);
+        labelView.setTextSize(10);
+        labelView.setGravity(fromUser ? Gravity.END : Gravity.START);
+        labelView.setPadding(6, 4, 6, 4);
+        mIslandChatColumn.addView(labelView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout row = new LinearLayout(mContext);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(fromUser ? Gravity.END : Gravity.START);
+        TextView bubble = new TextView(mContext);
+        bubble.setText(shortText(text, mLargeExpanded ? 900 : 280));
+        bubble.setTextColor(0xfff4f7f8);
+        bubble.setTextSize(14);
+        bubble.setLineSpacing(3f, 1.08f);
+        bubble.setGravity(Gravity.START);
+        bubble.setPadding(20, 14, 20, 14);
+        bubble.setMaxWidth(Math.max(260, expandedIslandWidth() - 170));
+        bubble.setBackground(chatBubbleBackground(fromUser));
+        row.addView(bubble, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowLp.bottomMargin = 10;
+        mIslandChatColumn.addView(row, rowLp);
+    }
+
+    private String watchersStatusBody() {
+        List<WatcherRecord> watchers = activeWatchers(5);
+        int watcherCount = Math.max(mWatchingCount, watchers.size());
+        StringBuilder body = new StringBuilder();
+        body.append("Monitors events and reacts later.");
+        if (watcherCount <= 0) {
+            body.append("\n\n◎\nNo active watchers");
             return body.toString();
         }
         body.append("\nWatchers: ").append(watcherCount).append(" active");
         for (WatcherRecord watcher : watchers) {
-            body.append("\n").append(compactStatusLine(watcher.title,
+            body.append("\n").append(compactStatusLine(watcher.id, watcher.title,
                     watcher.type, watcher.status, watcher.nextRunAtMillis));
         }
         if (watcherCount > watchers.size()) {
@@ -802,9 +1169,21 @@ public final class PointerOverlayController {
                 body.append("s");
             }
         }
-        body.append("\nBackground runs: ").append(jobCount).append(" active");
+        return body.toString();
+    }
+
+    private String runsStatusBody() {
+        List<AgentJobRecord> jobs = activeJobs(5);
+        int jobCount = activeJobCount();
+        StringBuilder body = new StringBuilder();
+        body.append("Queued agent tasks that keep working after current chat.");
+        if (jobCount <= 0) {
+            body.append("\n\n◌\nNo queued runs");
+            return body.toString();
+        }
+        body.append("\nRuns: ").append(jobCount).append(" active");
         for (AgentJobRecord job : jobs) {
-            body.append("\n").append(compactStatusLine(job.title,
+            body.append("\n").append(compactStatusLine(job.id, job.title,
                     job.type, job.status, job.nextRunAtMillis));
         }
         return body.toString();
@@ -851,14 +1230,123 @@ public final class PointerOverlayController {
         return job != null && ("active".equals(job.status) || "running".equals(job.status));
     }
 
-    private static String compactStatusLine(String title, String type, String status,
+    private String latestConversationBody() {
+        String[] pair = latestConversationPair();
+        return formatLatestConversation(pair[0], pair[1]);
+    }
+
+    private String[] latestConversationPair() {
+        String[] local = latestConversationPairFromMemory();
+        if (!local[0].isEmpty() || !local[1].isEmpty()) {
+            return local;
+        }
+        try {
+            JSONArray conversation = new JSONArray(
+                    new ContextIndexStore(mContext).recentConversationJson(6));
+            String user = "";
+            String assistant = "";
+            for (int i = conversation.length() - 1; i >= 0; i--) {
+                JSONObject item = conversation.optJSONObject(i);
+                if (item == null) {
+                    continue;
+                }
+                String speaker = item.optString("speaker", "");
+                String text = item.optString("text", "").trim();
+                if (text.isEmpty()) {
+                    continue;
+                }
+                if (user.isEmpty() && isUserSpeaker(speaker)) {
+                    user = text;
+                } else if (assistant.isEmpty()) {
+                    assistant = text;
+                }
+                if (!user.isEmpty() && !assistant.isEmpty()) {
+                    break;
+                }
+            }
+            return new String[] { user, assistant };
+        } catch (JSONException | RuntimeException e) {
+            return new String[] { "", "" };
+        }
+    }
+
+    private static boolean isUserSpeaker(String speaker) {
+        return speaker != null && "you".equals(speaker.trim().toLowerCase(java.util.Locale.US));
+    }
+
+    static void rememberConversationMessage(String speaker, String text) {
+        if (isUserSpeaker(speaker)) {
+            rememberUserMessage(text);
+        } else {
+            rememberAssistantMessage(text);
+        }
+    }
+
+    private static void rememberUserMessage(String text) {
+        String clean = text == null ? "" : text.trim();
+        if (clean.isEmpty()) {
+            return;
+        }
+        synchronized (PointerOverlayController.class) {
+            sLatestUserMessage = clean;
+            sLatestConversationAtMillis = System.currentTimeMillis();
+        }
+    }
+
+    private static void rememberAssistantMessage(String text) {
+        String clean = text == null ? "" : text.trim();
+        if (clean.isEmpty()) {
+            return;
+        }
+        synchronized (PointerOverlayController.class) {
+            sLatestAssistantMessage = clean;
+            sLatestConversationAtMillis = System.currentTimeMillis();
+        }
+    }
+
+    private static String latestConversationBodyFromMemory() {
+        String[] pair = latestConversationPairFromMemory();
+        return formatLatestConversation(pair[0], pair[1]);
+    }
+
+    private static String[] latestConversationPairFromMemory() {
+        synchronized (PointerOverlayController.class) {
+            if (sLatestConversationAtMillis <= 0L
+                    || (sLatestUserMessage.isEmpty() && sLatestAssistantMessage.isEmpty())) {
+                return new String[] { "", "" };
+            }
+            return new String[] { sLatestUserMessage, sLatestAssistantMessage };
+        }
+    }
+
+    private static String formatLatestConversation(String user, String assistant) {
+        String cleanUser = shortText(user, 96);
+        String cleanAssistant = shortText(assistant, 150);
+        StringBuilder body = new StringBuilder();
+        if (!cleanUser.isEmpty()) {
+            body.append("You\n").append(cleanUser);
+        }
+        if (!cleanAssistant.isEmpty()) {
+            if (body.length() > 0) {
+                body.append("\n");
+            }
+            body.append("OpenPhone\n").append(cleanAssistant);
+        }
+        return body.toString();
+    }
+
+    private static String compactStatusLine(long id, String title, String type, String status,
             long nextRunAtMillis) {
         String cleanTitle = shortText(firstNonEmpty(title, type, "Background item"), 44);
         String cleanType = shortText(type, 18);
         String cleanStatus = shortText(status, 18);
         String timing = relativeTime(nextRunAtMillis);
         StringBuilder line = new StringBuilder();
-        line.append("- ").append(cleanTitle);
+        line.append("- ");
+        if (id > 0) {
+            line.append("#").append(id).append(" ");
+        }
+        line.append(cleanTitle);
         if (!cleanType.isEmpty()) {
             line.append(" (").append(cleanType).append(")");
         }
@@ -916,18 +1404,23 @@ public final class PointerOverlayController {
             return;
         }
         mIslandExpanded = false;
+        mLargeExpanded = false;
         mIslandCompactRow.setVisibility(View.VISIBLE);
         mIslandCompactRow.animate().cancel();
         mIslandCompactRow.setAlpha(1f);
         mIslandCompactRow.setBackground(chipBackground(mYoloActive, false));
         mIslandCompactRow.setLayoutParams(compactRowParams(false));
+        if (mIslandDragHandle != null) {
+            mIslandDragHandle.setVisibility(View.VISIBLE);
+        }
         mIslandExpandedColumn.animate().cancel();
         mIslandExpandedColumn.setVisibility(View.GONE);
         mIslandExpandedColumn.setAlpha(1f);
         if (mIslandActionRow != null) {
             mIslandActionRow.setVisibility(View.GONE);
         }
-        animateIslandTo(compactIslandWidth(), ISLAND_HEIGHT, CAMERA_ISLAND_FALLBACK_TOP);
+        animateIslandTo(compactIslandWidth(), compactIslandWindowHeight(),
+                CAMERA_ISLAND_FALLBACK_TOP);
     }
 
     private void applyExpandedIslandLayout(IslandPresentation presentation) {
@@ -940,14 +1433,29 @@ public final class PointerOverlayController {
         mIslandCompactRow.setAlpha(1f);
         mIslandCompactRow.setBackground(chipBackground(mYoloActive, true));
         mIslandCompactRow.setLayoutParams(compactRowParams(true));
+        if (mIslandDragHandle != null) {
+            mIslandDragHandle.setVisibility(View.GONE);
+        }
         mIslandExpandedColumn.setVisibility(View.VISIBLE);
         mIslandExpandedColumn.animate().cancel();
         mIslandExpandedColumn.setAlpha(1f);
         if (mIslandActionRow != null) {
-            mIslandActionRow.setVisibility(presentation.showActions ? View.VISIBLE : View.GONE);
+            if (presentation.showActions) {
+                configureReviewActions();
+                mIslandActionRow.setVisibility(View.VISIBLE);
+            } else if (presentation.showStopWatcherAction) {
+                configureStopWatcherAction();
+                mIslandActionRow.setVisibility(View.VISIBLE);
+            } else {
+                mIslandActionRow.setVisibility(View.GONE);
+            }
         }
         int targetWidth = expandedIslandWidth();
-        int panelHeight = measureExpandedHeight(targetWidth);
+        setBodyScrollFillMode(false);
+        int panelHeight = mLargeExpanded
+                ? largeExpandedPanelHeight()
+                : measureExpandedHeight(targetWidth);
+        setBodyScrollFillMode(true);
         mIslandExpandedColumn.setLayoutParams(expandedColumnParams(panelHeight));
         int targetHeight = ISLAND_HEIGHT + ISLAND_EXPANDED_PANEL_GAP + panelHeight;
         animateIslandTo(targetWidth, targetHeight, CAMERA_ISLAND_FALLBACK_TOP);
@@ -986,6 +1494,10 @@ public final class PointerOverlayController {
         return Math.max(260, Math.min(ISLAND_WIDTH, width - ISLAND_SIDE_MARGIN * 2));
     }
 
+    private static int compactIslandWindowHeight() {
+        return ISLAND_HEIGHT + ISLAND_DRAG_HANDLE_HEIGHT;
+    }
+
     private int measureExpandedHeight(int expandedWidth) {
         if (mIslandExpandedColumn == null) {
             return ISLAND_EXPANDED_MIN_HEIGHT;
@@ -996,6 +1508,76 @@ public final class PointerOverlayController {
         int columnHeight = mIslandExpandedColumn.getMeasuredHeight();
         return Math.max(ISLAND_EXPANDED_MIN_HEIGHT,
                 Math.min(ISLAND_EXPANDED_MAX_HEIGHT, columnHeight));
+    }
+
+    private int largeExpandedPanelHeight() {
+        int displayHeight = displayHeight();
+        if (displayHeight <= 0) {
+            return ISLAND_EXPANDED_MAX_HEIGHT;
+        }
+        int targetTotalHeight = Math.round(displayHeight * 0.75f);
+        int maxTotalHeight = Math.max(ISLAND_HEIGHT + ISLAND_EXPANDED_MIN_HEIGHT,
+                displayHeight - CAMERA_ISLAND_FALLBACK_TOP - 24);
+        targetTotalHeight = Math.min(targetTotalHeight, maxTotalHeight);
+        return Math.max(ISLAND_EXPANDED_MIN_HEIGHT,
+                targetTotalHeight - ISLAND_HEIGHT - ISLAND_EXPANDED_PANEL_GAP);
+    }
+
+    private void setBodyScrollFillMode(boolean fill) {
+        if (mIslandBodyScroll == null) {
+            return;
+        }
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                fill ? 0 : LinearLayout.LayoutParams.WRAP_CONTENT);
+        if (fill) {
+            params.weight = 1f;
+        }
+        mIslandBodyScroll.setLayoutParams(params);
+    }
+
+    private void configureReviewActions() {
+        if (mDenyButton == null || mApproveButton == null) {
+            return;
+        }
+        mDenyButton.setVisibility(View.VISIBLE);
+        styleActionButton(mDenyButton, "×", "Deny", 0xfff4f7f8, 0x33ffffff,
+                v -> {
+                    if (mConfirmationHandler != null) {
+                        mConfirmationHandler.deny();
+                    }
+                });
+        styleActionButton(mApproveButton, "✓", "Approve", 0xff101418, 0xff20e36a,
+                v -> {
+                    if (mConfirmationHandler != null) {
+                        mConfirmationHandler.approve();
+                    }
+                });
+    }
+
+    private void configureStopWatcherAction() {
+        if (mDenyButton == null || mApproveButton == null) {
+            return;
+        }
+        mDenyButton.setVisibility(View.GONE);
+        styleActionButton(mApproveButton, "×", "Stop all watchers",
+                0xfffff2f2, 0xff7b1f2a, v -> stopAllWatchersFromIsland());
+    }
+
+    private void styleActionButton(TextView button, String label, String contentDescription,
+            int textColor, int backgroundColor, View.OnClickListener listener) {
+        if (button == null) {
+            return;
+        }
+        button.setText(label);
+        button.setContentDescription(contentDescription);
+        button.setTextColor(textColor);
+        button.setOnClickListener(listener);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(28f);
+        bg.setColor(backgroundColor);
+        button.setBackground(bg);
     }
 
     private TextView islandActionButton(String label, String contentDescription,
@@ -1018,6 +1600,32 @@ public final class PointerOverlayController {
         bg.setColor(backgroundColor);
         button.setBackground(bg);
         return button;
+    }
+
+    private void stopAllWatchersFromIsland() {
+        int stopped = 0;
+        try {
+            WatcherStore store = new WatcherStore(mContext);
+            for (WatcherRecord watcher : store.active(50)) {
+                if (watcher != null && watcher.id > 0 && store.stop(watcher.id)) {
+                    stopped++;
+                }
+            }
+            if (stopped > 0) {
+                OpenPhoneWatcherScheduler.scheduleNext(mContext);
+            }
+            mWatchingCount = activeWatchers(50).size();
+            if (mWatchingCount <= 0 && "watching".equals(mMode)) {
+                mMode = "idle";
+            }
+            publishWatchingCount(mWatchingCount);
+            mStateDetail = stopped == 1 ? "Stopped 1 watcher."
+                    : "Stopped " + stopped + " watchers.";
+        } catch (RuntimeException e) {
+            mStateDetail = "Could not stop watchers.";
+        }
+        mInspectExpanded = true;
+        updateIslandViews();
     }
 
     private void animateIslandTo(int targetWidth, int targetHeight, int targetTop) {
@@ -1125,6 +1733,19 @@ public final class PointerOverlayController {
         return mContext.getResources().getDisplayMetrics().widthPixels;
     }
 
+    private int displayHeight() {
+        if (mRoot != null && mRoot.getHeight() > 0) {
+            return mRoot.getHeight();
+        }
+        if (mWindowManager != null) {
+            try {
+                return mWindowManager.getCurrentWindowMetrics().getBounds().height();
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return mContext.getResources().getDisplayMetrics().heightPixels;
+    }
+
     private static int measuredWidth(View view) {
         if (view.getWidth() > 0) {
             return view.getWidth();
@@ -1147,29 +1768,40 @@ public final class PointerOverlayController {
         final String rightText;
         final String bodyText;
         final boolean showActions;
+        final boolean showTabs;
+        final boolean showStopWatcherAction;
         final int accentColor;
         final int maxBodyLines;
 
         private IslandPresentation(boolean expanded, String leftText, String rightText,
-                String bodyText, boolean showActions, int accentColor, int maxBodyLines) {
+                String bodyText, boolean showActions, boolean showTabs,
+                boolean showStopWatcherAction, int accentColor, int maxBodyLines) {
             this.expanded = expanded;
             this.leftText = leftText;
             this.rightText = rightText;
             this.bodyText = bodyText;
             this.showActions = showActions;
+            this.showTabs = showTabs;
+            this.showStopWatcherAction = showStopWatcherAction;
             this.accentColor = accentColor;
             this.maxBodyLines = maxBodyLines;
         }
 
         static IslandPresentation compact(String leftText, String rightText, int accentColor) {
             return new IslandPresentation(false, safe(leftText), safe(rightText), "",
-                    false, accentColor, 1);
+                    false, false, false, accentColor, 1);
         }
 
         static IslandPresentation expanded(String leftText, String bodyText,
                 boolean showActions, int maxBodyLines) {
             return new IslandPresentation(true, safe(leftText), "", safe(bodyText),
-                    showActions, 0xfff4f7f8, maxBodyLines);
+                    showActions, false, false, 0xfff4f7f8, maxBodyLines);
+        }
+
+        static IslandPresentation expandedStatus(String leftText, String bodyText,
+                boolean showTabs, boolean showStopWatcherAction, int maxBodyLines) {
+            return new IslandPresentation(true, safe(leftText), "", safe(bodyText),
+                    false, showTabs, showStopWatcherAction, 0xfff4f7f8, maxBodyLines);
         }
 
         private static String safe(String text) {
@@ -1378,6 +2010,26 @@ public final class PointerOverlayController {
         drawable.setColor(0xee72e0c4);
         drawable.setCornerRadius(28);
         drawable.setStroke(2, 0xaa101418);
+        return drawable;
+    }
+
+    private static GradientDrawable tabBackground(boolean selected) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(selected ? 0xfff4f7f8 : 0x22ffffff);
+        drawable.setCornerRadius(22);
+        if (!selected) {
+            drawable.setStroke(1, 0x33ffffff);
+        }
+        return drawable;
+    }
+
+    private static GradientDrawable chatBubbleBackground(boolean fromUser) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fromUser ? 0xff1f5eff : 0xff20272d);
+        drawable.setCornerRadius(24);
+        if (!fromUser) {
+            drawable.setStroke(1, 0x33ffffff);
+        }
         return drawable;
     }
 

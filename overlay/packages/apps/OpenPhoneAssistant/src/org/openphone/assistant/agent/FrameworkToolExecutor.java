@@ -32,6 +32,7 @@ import org.openphone.assistant.jobs.AgentJobStore;
 import org.openphone.assistant.jobs.OpenPhoneAgentJobScheduler;
 import org.openphone.assistant.memory.MemoryStore;
 import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
+import org.openphone.assistant.watchers.WatcherRecord;
 import org.openphone.assistant.watchers.WatcherStore;
 
 import java.io.BufferedInputStream;
@@ -1890,6 +1891,7 @@ public final class FrameworkToolExecutor {
                 .put("title", title)
                 .put("type", normalized.optString("type", "time"))
                 .put("condition", condition == null ? new JSONObject() : condition)
+                .put("delivery", delivery == null ? new JSONObject() : delivery)
                 .put("next_run_at", nextRunAt)
                 .toString();
     }
@@ -1904,6 +1906,11 @@ public final class FrameworkToolExecutor {
         if (schedule == null) {
             schedule = new JSONObject();
         }
+        JSONObject delivery = out.optJSONObject("delivery");
+        if (delivery == null) {
+            delivery = new JSONObject();
+        }
+        normalizeWatcherDeliveryShortcuts(out, delivery);
 
         String source = firstNonEmpty(out.optString("source", ""),
                 condition.optString("source", ""));
@@ -2004,6 +2011,9 @@ public final class FrameworkToolExecutor {
                     condition.optString("address", ""),
                     condition.optString("phone", ""),
                     condition.optString("phone_number", ""));
+            boolean matchAny = out.optBoolean("match_any", false)
+                    || condition.optBoolean("match_any", false)
+                    || isAnyNumberToken(number);
             if (!number.isEmpty()) {
                 condition.put("number", number);
             }
@@ -2028,6 +2038,14 @@ public final class FrameworkToolExecutor {
                     condition.optString("direction", ""));
             if (!direction.isEmpty()) {
                 condition.put("direction", direction.toLowerCase(Locale.US));
+            }
+            boolean hasReaction = hasWatcherReaction(delivery);
+            if (matchAny || (number.isEmpty() && hasReaction)) {
+                condition.put("match_any", true);
+            }
+            if (hasReaction && condition.optBoolean("match_any", false)
+                    && !condition.has("recurring")) {
+                condition.put("recurring", true);
             }
         }
         if (evaluator.isEmpty() && "web_change".equals(type)) {
@@ -2065,7 +2083,100 @@ public final class FrameworkToolExecutor {
         out.put("type", type);
         out.put("condition", condition);
         out.put("schedule", schedule);
+        out.put("delivery", delivery);
         return out;
+    }
+
+    private static void normalizeWatcherDeliveryShortcuts(JSONObject arguments,
+            JSONObject delivery) throws JSONException {
+        String tool = firstNonEmpty(arguments.optString("tool", ""),
+                arguments.optString("action_tool", ""),
+                arguments.optString("model_tool", ""),
+                delivery.optString("tool", ""),
+                delivery.optString("action_tool", ""),
+                delivery.optString("model_tool", ""));
+        String action = firstNonEmpty(arguments.optString("action", ""),
+                arguments.optString("on_match_action", ""),
+                delivery.optString("action", ""));
+        if (tool.isEmpty() && !action.isEmpty() && !isPassiveDeliveryAction(action)
+                && !isSendSmsDelivery(action)) {
+            tool = action;
+        }
+        JSONObject toolArguments = arguments.optJSONObject("arguments");
+        if (toolArguments == null) {
+            toolArguments = arguments.optJSONObject("tool_arguments");
+        }
+        if (toolArguments != null && delivery.optJSONObject("arguments") == null) {
+            delivery.put("arguments", toolArguments);
+        }
+        String prompt = firstNonEmpty(arguments.optString("prompt", ""),
+                arguments.optString("task_goal", ""),
+                arguments.optString("goal", ""),
+                delivery.optString("prompt", ""),
+                delivery.optString("task_goal", ""),
+                delivery.optString("goal", ""),
+                delivery.optString("task", ""));
+        if (!prompt.isEmpty() && delivery.optString("prompt", "").trim().isEmpty()) {
+            delivery.put("prompt", prompt);
+        }
+
+        String smsBody = firstNonEmpty(arguments.optString("sms_body", ""),
+                arguments.optString("message_body", ""),
+                arguments.optString("text_body", ""),
+                delivery.optString("sms_body", ""),
+                delivery.optString("message_body", ""),
+                delivery.optString("body", ""));
+        boolean legacySms = isSendSmsDelivery(action)
+                || isSendSmsDelivery(delivery.optString("mode", ""))
+                || !smsBody.isEmpty();
+        if (tool.isEmpty() && legacySms) {
+            tool = "messages_send";
+            JSONObject legacyArguments = delivery.optJSONObject("arguments");
+            if (legacyArguments == null) {
+                legacyArguments = new JSONObject();
+            }
+            if (legacyArguments.optString("to", "").trim().isEmpty()) {
+                legacyArguments.put("to", "{{event.number}}");
+            }
+            if (legacyArguments.optString("body", "").trim().isEmpty()
+                    && !smsBody.isEmpty()) {
+                legacyArguments.put("body", smsBody);
+            }
+            delivery.put("arguments", legacyArguments);
+        }
+        if (!tool.isEmpty()) {
+            delivery.put("tool", tool);
+        }
+    }
+
+    private static boolean hasWatcherReaction(JSONObject delivery) {
+        if (delivery == null) {
+            return false;
+        }
+        String tool = firstNonEmpty(delivery.optString("tool", ""),
+                delivery.optString("action_tool", ""),
+                delivery.optString("model_tool", ""));
+        if (!tool.isEmpty()) {
+            return true;
+        }
+        String prompt = firstNonEmpty(delivery.optString("prompt", ""),
+                delivery.optString("task_goal", ""),
+                delivery.optString("goal", ""),
+                delivery.optString("task", ""));
+        if (!prompt.isEmpty()) {
+            return true;
+        }
+        String mode = delivery.optString("mode", "").trim().toLowerCase(Locale.US);
+        return "tool".equals(mode) || "agent".equals(mode)
+                || "agent_job".equals(mode) || "background_job".equals(mode);
+    }
+
+    private static boolean isPassiveDeliveryAction(String value) {
+        String clean = value == null ? "" : value.trim().toLowerCase(Locale.US);
+        return clean.isEmpty() || "notification".equals(clean) || "notify".equals(clean)
+                || "alert".equals(clean) || "none".equals(clean) || "silent".equals(clean)
+                || "tool".equals(clean) || "agent".equals(clean)
+                || "agent_job".equals(clean) || "background_job".equals(clean);
     }
 
     private static String normalizeWatcherEvaluator(String evaluator) {
@@ -2106,6 +2217,19 @@ public final class FrameworkToolExecutor {
         return 0L;
     }
 
+    private static boolean isAnyNumberToken(String value) {
+        String clean = value == null ? "" : value.trim().toLowerCase(Locale.US);
+        return "*".equals(clean) || "any".equals(clean) || "all".equals(clean)
+                || "anyone".equals(clean) || "everyone".equals(clean)
+                || "everybody".equals(clean);
+    }
+
+    private static boolean isSendSmsDelivery(String value) {
+        String clean = value == null ? "" : value.trim().toLowerCase(Locale.US);
+        return "send_sms".equals(clean) || "sms".equals(clean)
+                || "send_message".equals(clean) || "message".equals(clean);
+    }
+
     private String watcherList(JSONObject arguments) throws JSONException {
         String query = arguments.optString("query", "");
         int limit = Math.max(1, Math.min(arguments.optInt("limit", 8), 20));
@@ -2118,13 +2242,47 @@ public final class FrameworkToolExecutor {
 
     private String watcherStop(JSONObject arguments) throws JSONException {
         long id = arguments.optLong("watcher_id", -1L);
-        if (id <= 0) {
+        String scope = arguments.optString("scope", "").trim().toLowerCase(Locale.US);
+        String query = arguments.optString("query", "").trim();
+        boolean all = arguments.optBoolean("all", false) || "all".equals(scope);
+        List<Long> targetIds = new ArrayList<>();
+        if (id > 0) {
+            targetIds.add(id);
+        } else if (all) {
+            for (WatcherRecord watcher : mWatcherStore.active(50)) {
+                if (watcher != null && watcher.id > 0) {
+                    targetIds.add(watcher.id);
+                }
+            }
+        } else if (!query.isEmpty()) {
+            for (WatcherRecord watcher : mWatcherStore.search(query, 50)) {
+                if (watcher != null && watcher.id > 0) {
+                    targetIds.add(watcher.id);
+                }
+            }
+        } else {
             return error("bad_watcher_stop");
         }
-        OpenPhoneWatcherScheduler.stopWatcher(mContext, id);
+        JSONArray stoppedIds = new JSONArray();
+        int stopped = 0;
+        for (Long watcherId : targetIds) {
+            if (watcherId == null || watcherId <= 0) {
+                continue;
+            }
+            if (mWatcherStore.stop(watcherId)) {
+                stopped++;
+                stoppedIds.put(watcherId);
+            }
+        }
+        if (stopped > 0) {
+            OpenPhoneWatcherScheduler.scheduleNext(mContext);
+        }
         return new JSONObject()
-                .put("status", "watcher.stopped")
-                .put("watcher_id", id)
+                .put("status", stopped > 0 ? "watcher.stopped" : "watcher.not_found")
+                .put("watcher_id", id > 0 ? id : JSONObject.NULL)
+                .put("stopped_count", stopped)
+                .put("stopped_watcher_ids", stoppedIds)
+                .put("scope", all ? "all" : (query.isEmpty() ? "id" : "query"))
                 .toString();
     }
 

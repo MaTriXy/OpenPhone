@@ -26,16 +26,16 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 public final class OpenAiRealtimeAdapter implements ModelAdapter {
-    private static final String REALTIME_MODEL = "gpt-realtime";
+    public static final String DEFAULT_REALTIME_MODEL = "gpt-realtime";
+    public static final String REALTIME_2_MODEL = "gpt-realtime-2";
     private static final int MAX_REALTIME_STEPS = 120;
     private static final int MAX_TEXT_ONLY_TURNS = 3;
     private static final long MAX_REALTIME_DURATION_MS = 55L * 60L * 1000L;
     private static final long EVENT_TIMEOUT_MS = 120000;
     private static final long CONNECT_TIMEOUT_MS = 20000;
-    private static final String DIRECT_REALTIME_URL =
-            "wss://api.openai.com/v1/realtime?model=" + REALTIME_MODEL;
 
     private final ModelEndpointConfig mEndpointConfig;
+    private final String mRealtimeModel;
     private final OpenAiResponsesAgentAdapter mResponsesFallback;
     private volatile boolean mCancelled;
     private volatile RealtimeWebSocket mSocket;
@@ -45,8 +45,13 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
     }
 
     public OpenAiRealtimeAdapter(ModelEndpointConfig endpointConfig) {
+        this(endpointConfig, DEFAULT_REALTIME_MODEL);
+    }
+
+    public OpenAiRealtimeAdapter(ModelEndpointConfig endpointConfig, String realtimeModel) {
         mEndpointConfig = endpointConfig == null
                 ? ModelEndpointConfig.directOpenAi("") : endpointConfig;
+        mRealtimeModel = sanitizeRealtimeModel(realtimeModel);
         mResponsesFallback = new OpenAiResponsesAgentAdapter(mEndpointConfig);
     }
 
@@ -59,13 +64,14 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
     @Override
     public String providerDisplayName() {
         return mEndpointConfig.isBrokerMode()
-                ? mResponsesFallback.providerDisplayName() : "OpenAI Realtime agent";
+                ? mResponsesFallback.providerDisplayName()
+                : (isRealtime2Model() ? "OpenAI Realtime 2 agent" : "OpenAI Realtime agent");
     }
 
     @Override
     public String modelName() {
         return mEndpointConfig.isBrokerMode()
-                ? mResponsesFallback.modelName() : REALTIME_MODEL;
+                ? mResponsesFallback.modelName() : mRealtimeModel;
     }
 
     @Override
@@ -83,7 +89,8 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return "Realtime task mode keeps a WebSocket session open with OpenAI while a task "
                 + "is active. It sends the task goal, task-scoped screen observations, UI "
                 + "metadata, and tool results so the model can continue a long-running "
-                + "phone-agent session.";
+                + "phone-agent session. Current direct model: " + mRealtimeModel
+                + (isRealtime2Model() ? " with low reasoning effort." : ".");
     }
 
     @Override
@@ -136,7 +143,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         long startedAtMillis = System.currentTimeMillis();
         RealtimeWebSocket socket = null;
         try {
-            socket = RealtimeWebSocket.connect(DIRECT_REALTIME_URL, mEndpointConfig.bearerToken());
+            socket = RealtimeWebSocket.connect(directRealtimeUrl(), mEndpointConfig.bearerToken());
             mSocket = socket;
             socket.send(sessionUpdateEvent());
             waitForEventType(socket, "session.updated", CONNECT_TIMEOUT_MS);
@@ -234,16 +241,34 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         }
     }
 
-    private static JSONObject sessionUpdateEvent() throws JSONException {
+    private JSONObject sessionUpdateEvent() throws JSONException {
+        JSONObject session = new JSONObject()
+                .put("type", "realtime")
+                .put("instructions", realtimeInstructions())
+                .put("output_modalities", new JSONArray().put("text"))
+                .put("tool_choice", "auto")
+                .put("tools", realtimeTools());
+        if (isRealtime2Model()) {
+            session.put("reasoning", new JSONObject().put("effort", "low"));
+        }
         return new JSONObject()
                 .put("type", "session.update")
-                .put("session", new JSONObject()
-                        .put("type", "realtime")
-                        .put("model", REALTIME_MODEL)
-                        .put("instructions", realtimeInstructions())
-                        .put("output_modalities", new JSONArray().put("text"))
-                        .put("tool_choice", "auto")
-                        .put("tools", realtimeTools()));
+                .put("session", session);
+    }
+
+    private String directRealtimeUrl() {
+        return "wss://api.openai.com/v1/realtime?model=" + mRealtimeModel;
+    }
+
+    private boolean isRealtime2Model() {
+        return REALTIME_2_MODEL.equals(mRealtimeModel);
+    }
+
+    private static String sanitizeRealtimeModel(String realtimeModel) {
+        if (REALTIME_2_MODEL.equals(realtimeModel)) {
+            return REALTIME_2_MODEL;
+        }
+        return DEFAULT_REALTIME_MODEL;
     }
 
     private static JSONObject responseCreateEvent(boolean requireTool) throws JSONException {
@@ -486,7 +511,11 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "Use memory_save only for explicit durable facts/preferences the "
                 + "user asked you to remember. Use commitment_create for explicit follow-up "
                 + "or reminder requests. Use watcher_create when the user asks to monitor "
-                + "something and report later; for \"tell me if X replies\" or \"remind me "
+                + "something and alert or react later. If the user wants an action when the "
+                + "trigger happens, put it in delivery.tool plus delivery.arguments, or "
+                + "delivery.prompt for a background agent job; delivery arguments can use "
+                + "event templates such as {{event.number}}, {{event.address}}, "
+                + "{{event.title}}, and {{event.text}}. For \"tell me if X replies\" or \"remind me "
                 + "if X does not reply\" use source=message with the contact's number as "
                 + "address (plus deadline_at and notify_on=no_reply for the no-reply case); "
                 + "for \"tell me when X calls\" or \"remind me to call X back\" use "
@@ -548,7 +577,11 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "Use memory_save only when the user explicitly asks you to "
                 + "remember durable information. Use commitment_create for explicit open "
                 + "loops and follow-up requests. Use watcher_create for durable background "
-                + "monitoring requests, including message replies (source=message with "
+                + "monitoring requests that may alert or react later. Put requested trigger "
+                + "reactions in delivery.tool plus delivery.arguments, or delivery.prompt "
+                + "for a background agent job; delivery arguments can use event templates "
+                + "such as {{event.number}}, {{event.address}}, {{event.title}}, and "
+                + "{{event.text}}. This includes message replies (source=message with "
                 + "address; add deadline_at and notify_on=no_reply to remind only when "
                 + "no reply arrives in time) and calls (source=call with the number; "
                 + "notify_on=call alerts on a call, notify_on=no_call plus deadline_at "
@@ -619,16 +652,16 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return object;
     }
 
-    private static String result(String status, String userGoal, JSONArray steps) {
+    private String result(String status, String userGoal, JSONArray steps) {
         return result(status, userGoal, steps, null);
     }
 
-    private static String result(String status, String userGoal, JSONArray steps, String modelText) {
+    private String result(String status, String userGoal, JSONArray steps, String modelText) {
         try {
             JSONObject result = new JSONObject()
                     .put("status", status)
                     .put("provider", "openai-realtime-agent-dev")
-                    .put("model", REALTIME_MODEL)
+                    .put("model", mRealtimeModel)
                     .put("goal", userGoal == null ? "" : userGoal)
                     .put("steps", steps);
             if (modelText != null && !modelText.trim().isEmpty()) {
@@ -640,12 +673,12 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         }
     }
 
-    private static String error(String status, String message, JSONArray steps) {
+    private String error(String status, String message, JSONArray steps) {
         try {
             return new JSONObject()
                     .put("status", status)
                     .put("provider", "openai-realtime-agent-dev")
-                    .put("model", REALTIME_MODEL)
+                    .put("model", mRealtimeModel)
                     .put("message", message == null ? "" : message)
                     .put("steps", steps)
                     .toString(2);

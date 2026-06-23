@@ -246,7 +246,7 @@ private fun AssistantDrawer(
                 onClick = onNewChat,
             )
             NavigationDrawerItem(
-                label = { Text("Developer Settings") },
+                label = { Text("Settings") },
                 selected = false,
                 onClick = onShowAdvanced,
             )

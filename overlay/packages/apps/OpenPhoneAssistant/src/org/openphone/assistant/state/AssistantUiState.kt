@@ -44,12 +44,14 @@ data class AdvancedUiState(
     val model: ModelConfig = ModelConfig(),
     val ota: OtaState = OtaState(),
     val grants: TaskGrants = TaskGrants(),
-    val autonomyMode: String = "reviewed",
+    val autonomyMode: String = "yolo",
     val developer: DeveloperState = DeveloperState(),
 )
 
 data class ModelConfig(
     val useRealtimeVision: Boolean = false,
+    val useRealtime2: Boolean = false,
+    val useLiveRealtimeVoice: Boolean = false,
     val useBroker: Boolean = false,
     val devApiKey: String = "",
     val brokerUrl: String = "",
