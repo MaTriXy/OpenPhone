@@ -94,7 +94,7 @@ flowchart TB
 The high-level architecture is documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The capability model is in
 [docs/CAPABILITIES.md](docs/CAPABILITIES.md), and machine-readable contracts
-live under [docs/contracts](docs/contracts).
+live under [schemas](schemas).
 
 ## Repository Layout
 

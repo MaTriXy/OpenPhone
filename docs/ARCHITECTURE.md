@@ -76,10 +76,10 @@ The current repo implements the first OpenPhone product layer:
   framework `network.use` action policy/audit path instead of direct assistant
   intent launching.
 - Contract validation that action types emitted by the assistant framework tool
-  executor are present in `docs/contracts/action-request.schema.json` and have
+  executor are present in `schemas/action-request.schema.json` and have
   matching framework patch-stack handling.
 - Audit contract validation that framework `recordAudit(...)` event names are
-  represented in `docs/contracts/audit-event.schema.json`.
+  represented in `schemas/audit-event.schema.json`.
 - Audit evidence export validation for assistant-exported framework audit JSON.
 - Trajectory event contract validation for assistant-exported `events.jsonl`
   traces.
@@ -139,9 +139,6 @@ The following components still need real Android framework implementation:
   certbot/nginx helper exists for broker TLS certificate setup.
 - Richer Settings-hosted durable grant editor for app-specific rules.
 - Richer background task visibility in SystemUI.
-
-Historical framework planning notes are retained in
-[archive/FRAMEWORK_PLAN.md](archive/FRAMEWORK_PLAN.md).
 
 ## Design Rule
 

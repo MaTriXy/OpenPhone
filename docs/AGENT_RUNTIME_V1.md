@@ -114,7 +114,7 @@ executor.
 
 V1 stores jobs in assistant private storage. The production target is an
 OS-owned `agent_jobs` table in `/data/system/openphone/assistant_data.db` with
-the same wire contract as `docs/contracts/agent-job.schema.json`.
+the same wire contract as `schemas/agent-job.schema.json`.
 
 The assistant-facing API should stay stable:
 

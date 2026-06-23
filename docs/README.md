@@ -1,8 +1,7 @@
 # OpenPhone Documentation
 
-This is the public documentation map for OpenPhone. Historical implementation
-logs and older plans live in [archive](archive/); start with the documents
-below for current work.
+This is the public documentation map for OpenPhone. Start here for current
+build, architecture, release, device, and policy docs.
 
 ## Start Here
 
@@ -24,9 +23,9 @@ below for current work.
 - [0.0.1 Release Notes](releases/0.0.1.md)
 - [Changelog](releases/CHANGELOG.md)
 
-## Contracts
+## Schemas
 
-Machine-readable contracts live in [contracts](contracts/). These schemas are
+Machine-readable runtime contracts live in [../schemas](../schemas). They are
 used by repository checks and validators for action requests, model tools,
 screen context, audit events, trajectories, OTA feeds, and agent eval reports.
 
@@ -37,9 +36,3 @@ screen context, audit events, trajectories, OTA feeds, and agent eval reports.
 - [Commercial Licensing](legal/COMMERCIAL.md)
 - [Contribution Terms](../.github/CONTRIBUTING.md)
 - [Security Policy](../.github/SECURITY.md)
-
-## Historical Notes
-
-Historical plans, old specs, showcase notes, and implementation ledgers live in
-[archive](archive/). They are retained for context, but they are not the
-current public documentation path.

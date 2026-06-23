@@ -170,7 +170,7 @@ scripts/validate-ota-feed.sh \
 ```
 
 The feed contract is documented in
-`docs/contracts/ota-feed.schema.json`. The assistant now includes the first
+`schemas/ota-feed.schema.json`. The assistant now includes the first
 preview on-device OTA client for this feed: it checks that the feed targets the
 current device, downloads the chosen OTA ZIP to `Downloads/OpenPhone`, and
 verifies size and SHA-256 before making the file visible. Installation is still
