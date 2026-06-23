@@ -1,67 +1,71 @@
-# Self-hosted runners for release + eval
+# Self-Hosted Runners
 
-The `release.yml` and `eval.yml` workflows need self-hosted runners — the
-Android build is too big for GitHub-hosted runners, and the eval suite
-needs a Pixel on USB. This file is the operator runbook for wiring them
-up.
+OpenPhone uses GitHub-hosted runners for lightweight repository checks and
+self-hosted runners for work that needs a full Android tree or a physical
+phone.
 
-## openphone-build (release)
+Do not document private hostnames, SSH key names, public IP addresses, API
+keys, signing key paths, or device secrets in this file. Keep environment-
+specific operator notes outside the public repository.
 
-Runs `scripts/build.sh openphone_tegu`. Needs ~200GB disk and ~16GB RAM.
+## Runner Labels
 
-The EC2 instance at `ec2-18-189-1-174.us-east-2.compute.amazonaws.com`
-already has:
-- The full Android source tree at
-  `/home/ubuntu/OpenPhone/.worktree/android`.
-- `scripts/build.sh` working from the repo root.
-- Java + soong toolchain installed.
+| Label | Used by | Purpose |
+| --- | --- | --- |
+| `openphone-build` | `release.yml` | Builds Pixel/device artifacts on a large Linux Android build host. |
+| `openphone-device` | `eval.yml` | Runs evals against an authorized Android device connected over USB. |
 
-To register it as a GitHub Actions runner:
+## `openphone-build`
+
+The build runner needs:
+
+- Linux x86_64 host.
+- Full Android build dependencies for the selected LineageOS branch.
+- Several hundred GB of free disk space.
+- Java version required by the Android branch.
+- `repo`, `git-lfs`, `python3`, `bash`, and standard Android build tools.
+- Repository checkout with `.worktree/android` or `OPENPHONE_ANDROID_DIR`
+  pointing at the synced Android tree.
+
+Register the runner with labels similar to:
 
 ```bash
-ssh -i claudecode.pem ubuntu@ec2-18-189-1-174.us-east-2.compute.amazonaws.com
-
-mkdir -p ~/actions-runner && cd ~/actions-runner
-curl -o actions-runner-linux-x64.tar.gz -L \
-  https://github.com/actions/runner/releases/latest/download/actions-runner-linux-x64-2.319.1.tar.gz
-tar xzf actions-runner-linux-x64.tar.gz
-
-# Get a fresh token from
-#   https://github.com/<org>/<repo>/settings/actions/runners/new
 ./config.sh \
-    --url https://github.com/<org>/<repo> \
-    --token <token> \
-    --labels self-hosted,openphone-build \
-    --name openphone-build-ec2
-
-# Install + start as a systemd service so it survives reboots:
-sudo ./svc.sh install
-sudo ./svc.sh start
+  --url https://github.com/<org>/<repo> \
+  --token <registration-token> \
+  --labels self-hosted,openphone-build \
+  --name openphone-build-<host>
 ```
 
-After that, `release.yml` workflow_dispatch will route to this runner.
+Install it as a service according to GitHub's self-hosted runner instructions
+for the host OS.
 
-## openphone-device (eval)
+## `openphone-device`
 
-Runs `scripts/run-eval-suite.sh` against a Pixel 9a on USB. The runner
-host needs:
-- `adb` on `PATH` and the Pixel authorized to it.
-- The repo cloned with `.worktree/secrets/openai_api_key` populated
-  (gitignored).
-- The dev OpenAI API key already seeded into the Pixel:
-  `adb shell settings put secure openphone_dev_openai_api_key sk-...`.
-- The latest assistant APK on the device.
+The device runner needs:
 
-Right now this is most easily a Mac mini or Linux box on the same desk
-as the phone. Register similarly to the build runner with the
-`openphone-device` label.
+- `adb` on `PATH`.
+- A physical supported device connected over USB and authorized for ADB.
+- The current OpenPhone development build installed on the device.
+- Any provider keys or broker tokens stored only in ignored local paths or
+  GitHub Actions secrets.
+- Enough local disk to collect trajectory, screenshot, audit, and eval reports.
 
-## Why these are not GitHub-hosted
+Register the runner with labels similar to:
 
-- **Build:** Android source tree is ~200GB checked out + ~80GB of build
-  output. GitHub-hosted runners give ~14GB free disk; not enough.
-- **Eval:** the suite needs a real Pixel on USB; GitHub does not have
-  Android phones in its hosted fleet.
+```bash
+./config.sh \
+  --url https://github.com/<org>/<repo> \
+  --token <registration-token> \
+  --labels self-hosted,openphone-device \
+  --name openphone-device-<host>
+```
 
-If a smaller "lint-only" CI is what you want, that already exists as
-`ci.yml` (runs on `ubuntu-latest`, just executes `scripts/check.sh`).
+## Why GitHub-Hosted Runners Are Not Enough
+
+- Android source checkouts and build output are too large for standard
+  GitHub-hosted runner disk limits.
+- Physical evals require a real phone connected over USB.
+
+The normal CI workflow in `ci.yml` stays on `ubuntu-latest` and only runs
+repository checks such as `scripts/check.sh`.

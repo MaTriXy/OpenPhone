@@ -21,5 +21,4 @@ This commercial licensing requirement applies only to OpenPhone-owned
 materials. Upstream Android, LineageOS, Linux, third-party code, and vendor
 materials remain under their own licenses.
 
-Commercial licensing contact: project owner. Replace this line with the public
-licensing contact before public release.
+Commercial licensing contact: support@secondly.com.

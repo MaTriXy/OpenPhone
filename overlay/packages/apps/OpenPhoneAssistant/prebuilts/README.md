@@ -1,7 +1,8 @@
 OpenPhoneAssistant Compose prebuilts
 ====================================
 
-This directory pins the Maven artifacts required by docs/COMPOSE_PLAN.md.
+This directory pins the Maven artifacts required by the historical Compose
+planning notes in `docs/archive/COMPOSE_PLAN.md`.
 AndroidX and Compose artifacts come from Google's Maven repository. Kotlin and
 coroutines artifacts come from Maven Central.
 

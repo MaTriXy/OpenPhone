@@ -49,10 +49,11 @@ Repository:
 
 - `README.md` explains the project state honestly.
 - `SPEC.md` describes the product thesis and architecture.
-- `docs/PLAN.md` is current.
+- `docs/README.md` is the documentation index.
 - `docs/ROADMAP.md` is short and public-facing.
-- `docs/IMPLEMENTATION_STATUS.md` matches the code.
+- `docs/SHOWCASE.md` describes the current demo surface honestly.
 - `docs/BUILD.md` explains Linux build requirements.
+- `docs/TESTING.md` explains repo, device, and eval validation.
 - `devices/MATRIX.md` and `devices/tegu.md` describe Pixel 9a status.
 - `CHANGELOG.md` has a `0.0.1` section.
 - `LICENSE`, `LICENSE.noncommercial`, `COMMERCIAL.md`, `NOTICE`, and
@@ -141,7 +142,7 @@ then generate the artifact manifest before drafting release notes:
 
 ```bash
 mkdir -p .worktree/releases/v0.0.1-preview
-cp .worktree/artifacts/tegu/openphone_tegu-volume-fix-ota.zip \
+cp .worktree/artifacts/tegu/openphone_tegu-<build>-ota.zip \
   .worktree/releases/v0.0.1-preview/
 scripts/generate-release-manifest.sh 0.0.1-preview .worktree/releases/v0.0.1-preview
 scripts/validate-release-artifacts.sh .worktree/releases/v0.0.1-preview
@@ -161,9 +162,9 @@ scripts/generate-ota-feed.sh \
   --version 0.0.1-preview \
   --channel preview \
   --device tegu \
-  --artifact .worktree/releases/v0.0.1-preview/openphone_tegu-volume-fix-ota.zip \
+  --artifact .worktree/releases/v0.0.1-preview/openphone_tegu-<build>-ota.zip \
   --base-url https://downloads.example/openphone/v0.0.1-preview \
-  --release-notes-url https://github.com/openphone-os/OpenPhone/releases/tag/v0.0.1-preview \
+  --release-notes-url https://github.com/secondly-com/OpenPhone/releases/tag/v0.0.1-preview \
   --output .worktree/releases/v0.0.1-preview/ota-feed-tegu-preview.json \
   --requires-wipe
 

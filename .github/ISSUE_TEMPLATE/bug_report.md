@@ -9,6 +9,18 @@ assignees: ""
 ## Summary
 
 
+## Area
+
+- [ ] Build or sync
+- [ ] Flash, OTA, or boot
+- [ ] Device hardware
+- [ ] Assistant UI or dynamic island
+- [ ] Regular agent task
+- [ ] Realtime voice
+- [ ] Watcher or background run
+- [ ] Policy, approval, or audit
+- [ ] Docs or release process
+
 ## Environment
 
 - Device:
@@ -16,6 +28,7 @@ assignees: ""
 - OpenPhone version or commit:
 - Build artifact:
 - Host OS:
+- Android/Lineage branch:
 
 ## Steps To Reproduce
 
@@ -29,7 +42,10 @@ assignees: ""
 ## Actual Behavior
 
 
-## Logs Or Evidence
+## Evidence
 
-Attach relevant logs, screenshots, command output, or audit entries. Do not
-include API keys, private keys, personal data, or proprietary vendor files.
+Attach logs, screenshots, command output, trajectory snippets, audit exports, or
+release artifact names when useful.
+
+Do not include API keys, private keys, signing keys, phone numbers, personal
+messages, account data, proprietary vendor files, or Google package files.

@@ -15,19 +15,22 @@ required=(
   SECURITY.md
   THIRD_PARTY_NOTICES.md
   CHANGELOG.md
+  docs/README.md
+  docs/AGENT_RUNTIME_V1.md
   docs/ARCHITECTURE.md
   docs/BUILD.md
-  docs/BRINGUP_LOG.md
   docs/CAPABILITIES.md
   docs/DEVICE_SUPPORT.md
-  docs/FRAMEWORK_PLAN.md
   docs/GMS.md
-  docs/IMPLEMENTATION_STATUS.md
   docs/LICENSING.md
-  docs/PLAN.md
   docs/RELEASE_PROCESS.md
   docs/ROADMAP.md
+  docs/SHOWCASE.md
+  docs/TESTING.md
+  docs/assets/github_hero.png
   docs/releases/0.0.1.md
+  docs/archive/README.md
+  examples/README.md
   docs/contracts/action-request.schema.json
   docs/contracts/action-registry.schema.json
   docs/contracts/agent-eval-report.schema.json
@@ -40,6 +43,9 @@ required=(
   docs/contracts/screen-context.schema.json
   docs/contracts/trajectory-event.schema.json
   .github/workflows/ci.yml
+  .github/workflows/eval.yml
+  .github/workflows/release.yml
+  .github/RUNNERS.md
   .github/ISSUE_TEMPLATE/bug_report.md
   .github/ISSUE_TEMPLATE/feature_request.md
   .github/pull_request_template.md

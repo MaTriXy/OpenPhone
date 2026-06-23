@@ -140,8 +140,9 @@ The following components still need real Android framework implementation:
 - Richer Settings-hosted durable grant editor for app-specific rules.
 - Richer background task visibility in SystemUI.
 
-The detailed framework target is tracked in
-[FRAMEWORK_PLAN.md](FRAMEWORK_PLAN.md).
+Current public priorities are tracked in [ROADMAP.md](ROADMAP.md). Historical
+framework planning notes are retained in
+[archive/FRAMEWORK_PLAN.md](archive/FRAMEWORK_PLAN.md).
 
 ## Design Rule
 

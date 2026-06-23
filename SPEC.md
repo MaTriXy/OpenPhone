@@ -59,7 +59,7 @@ OpenPhone should have one canonical public repository that contains the OpenPhon
 The canonical repository should be:
 
 ```text
-OpenPhoneOS/OpenPhone
+secondly-com/OpenPhone
 ```
 
 This repository should contain:
@@ -109,7 +109,7 @@ OpenPhone/
 The intended workflow:
 
 ```bash
-git clone https://github.com/OpenPhoneOS/OpenPhone
+git clone https://github.com/secondly-com/OpenPhone
 cd OpenPhone
 
 ./scripts/sync.sh
@@ -138,15 +138,15 @@ Patch files are appropriate for small or early changes. A component should be pr
 Examples of future forked repositories:
 
 ```text
-OpenPhoneOS/frameworks_base
-OpenPhoneOS/frameworks_native
-OpenPhoneOS/packages_apps_Settings
-OpenPhoneOS/packages_apps_SystemUI
-OpenPhoneOS/vendor_openphone
-OpenPhoneOS/packages_apps_OpenPhoneAssistant
+secondly-com/frameworks_base
+secondly-com/frameworks_native
+secondly-com/packages_apps_Settings
+secondly-com/packages_apps_SystemUI
+secondly-com/vendor_openphone
+secondly-com/packages_apps_OpenPhoneAssistant
 ```
 
-Even after forks exist, `OpenPhoneOS/OpenPhone` remains the canonical entry point.
+Even after forks exist, `secondly-com/OpenPhone` remains the canonical entry point.
 
 ### 5.3 Pinning Upstream
 
@@ -1197,7 +1197,7 @@ constraints.
 Expected flow:
 
 ```bash
-git clone https://github.com/OpenPhoneOS/OpenPhone
+git clone https://github.com/secondly-com/OpenPhone
 cd OpenPhone
 ./scripts/sync.sh
 ./scripts/apply-patches.sh

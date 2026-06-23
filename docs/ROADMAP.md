@@ -1,78 +1,80 @@
 # Roadmap
 
-The canonical active engineering plan lives in [PLAN.md](PLAN.md). This file is
-the short public roadmap.
+OpenPhone is in developer preview. The roadmap below is intentionally public
+and product-facing; historical plans and implementation logs live in
+[archive](archive/).
 
-## 0.0.1 Developer Preview
-
-Status: in progress.
-
-- Public repository cleanup.
-- License, notice, contribution, and security docs.
-- Changelog and release process.
-- GitHub CI for repository checks.
-- Pixel 9a development target documentation.
-- Current privileged assistant, framework-service, Settings, SystemUI tile, and
-  model-broker source.
-
-## Agent v1
+## 0.0.1 Public Developer Preview
 
 Status: in progress.
 
-- CUA-informed observe/reason/act loop implemented on the phone, not through
-  ADB.
-- Structured model tool schema.
-- Durable Agent Runtime V1 background jobs for scheduled or deferred agent
-  turns.
-- Screenshot-based one-step action selection.
-- Multi-step task loop with max step/time limits.
-- Trajectory logging for screenshots, model calls, actions, policy decisions,
-  and failures.
-- Repeatable eval tasks.
-- User-facing chat surface for text/voice task entry.
+- Publish a clean source-available repository with clear build, testing,
+  release, contribution, security, and commercial-use docs.
+- Keep Pixel 9a (`tegu`) as the first verified physical device target.
+- Ship the current privileged assistant, framework services, model/tool
+  registry, policy config, dynamic island, watcher runtime, and release tooling
+  as developer-preview source.
+- Publish release notes, checksums, known issues, and validation evidence for
+  any device artifact.
 
-Remaining:
+## Agent And Voice
 
-- Move `agent_jobs` storage behind the OS-owned `openphone_assistant_data`
-  service.
-- Add post-turn review workers that propose memories, commitments, and
-  watchers from ordinary conversations.
-- Add resumable reviewed approvals for background jobs that need
-  state-changing tools.
+Status: active.
 
-## OS Integration v1
+- Make the regular agent better at long-running multi-step phone tasks.
+- Keep OpenAI Realtime voice available as an optional demo mode alongside the
+  existing traceable regular agent path.
+- Improve interruption, turn-taking, audio lifecycle, and visible mode
+  distinction between realtime and regular sessions.
+- Expand repeatable evals for screen understanding, app control, watcher
+  creation, and failure recovery.
+
+## Proactive Runtime
+
+Status: active.
+
+- Make watchers and commitments easier to inspect, disable, and debug from the
+  dynamic island and assistant surfaces.
+- Keep watcher triggers generic: they should observe phone events, queue
+  reviewed agent work, and use normal model tools rather than one-off code
+  paths.
+- Add clearer background-run state, retry state, and failure evidence for tasks
+  that continue after the current chat.
+- Improve policy handling for state-changing background actions that require
+  user review.
+
+## OS Integration
 
 Status: partially implemented.
 
-- Privileged assistant app.
-- Hidden framework manager API.
-- `system_server` OpenPhone agent service.
-- Screen context and screenshot payloads.
-- OS-mediated action execution.
-- Policy, confirmation, pointer event, and audit plumbing.
-- Assistant-owned cursor/status surface.
-- Assistant-owned dynamic island state model for compact, reply, transcript,
-  and approval states.
-- Settings-owned OpenPhone dashboard, task-grant defaults, and audit pages.
-- SystemUI Quick Settings tile.
+- Move more screen context and UI-tree ownership into framework/system services
+  instead of assistant-side development plumbing.
+- Improve OS-mediated action execution, element targeting, and accessibility
+  fallback behavior.
+- Harden SELinux, persistence, audit evidence export, and framework service
+  contracts.
+- Build a richer SystemUI-owned active-agent surface after the assistant-owned
+  dynamic island proves the interaction model.
 
-Remaining:
-
-- Production framework-owned UI hierarchy/OCR extraction. Current semantic
-  element targeting uses the assistant accessibility service.
-- Richer SystemUI-owned active agent surface.
-- Full Settings-owned per-app/per-capability grant editor.
-- Richer confirmation UX.
-
-## Device and Release Hardening
+## Devices And Releases
 
 Status: early.
 
-- Harden the automated Pixel 9a DTB preparation and generated boot-chain
-  verification.
-- Build reproducible Pixel 9a release artifacts on Linux.
-- Add release checksums and notes.
-- Add self-hosted Android build CI later.
-- Validate Wi-Fi, cellular, camera, microphone, GPS, fingerprint, encryption,
-  and reboot stability.
-- Decide and document the production app-store/default-app strategy.
+- Keep Pixel 9a boot-chain and hardware validation current.
+- Document clean flash, OTA, wipe, GMS sideload, and recovery flows without
+  redistributing restricted Google or vendor materials.
+- Improve self-hosted release and physical-device eval automation.
+- Add new device targets only when exact model, codename, kernel, device tree,
+  vendor blob, flash, and validation notes are ready.
+
+## Community Work
+
+Good external contribution areas:
+
+- Reproducible agent evals and failing task traces.
+- Device support research and exact bringup checklists.
+- UI polish for the dynamic island, assistant chat, watcher state, and
+  approval flows.
+- Documentation that makes the Android ROM workflow easier to reproduce.
+- Contract and validator improvements for actions, tools, audit, trajectories,
+  and release artifacts.

@@ -1,116 +1,130 @@
 # OpenPhone
 
-## License And Contributions
-
-This repository is proprietary, source-available software owned by Dafdef, inc.
-and Adam Cohen Hillel. It is not open source. Repository access is for review,
-local evaluation, and contributions only. Commercial use, redistribution,
-hosting, sublicensing, or competing use requires written permission from
-Dafdef, inc. See [LICENSE](./LICENSE).
-
-Contributions are accepted only under the contributor terms in
-[CONTRIBUTING.md](./CONTRIBUTING.md), which grant Dafdef, inc. and Adam Cohen
-Hillel broad rights to use, modify, relicense, and commercialize submitted
-contributions and make clear that contributions do not create any right to
-money, equity, shares, revenue, employment, or ownership.
-
-
 ![OpenPhone GitHub hero](docs/assets/github_hero.png)
 
-OpenPhone is an Android-based operating system project where an AI agent is a
-first-class system capability instead of a normal app layered on top of Android.
+[![CI](https://github.com/secondly-com/OpenPhone/actions/workflows/ci.yml/badge.svg)](https://github.com/secondly-com/OpenPhone/actions/workflows/ci.yml)
+[![Release](https://github.com/secondly-com/OpenPhone/actions/workflows/release.yml/badge.svg)](https://github.com/secondly-com/OpenPhone/actions/workflows/release.yml)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)
+![Status](https://img.shields.io/badge/status-developer%20preview-orange)
+
+OpenPhone is an Android-based phone OS where the AI agent is a first-class
+system capability, not a normal app layered on top of Android.
+
+The goal is a phone that can understand the current screen, operate apps through
+OS-mediated tools, keep background commitments, ask for review when risk
+requires it, and leave an auditable trail of what happened.
 
 This repository is the canonical OpenPhone entry point. It contains the
-OpenPhone-owned source, manifests, patch stack, scripts, documentation, and
-product overlay needed to build an OpenPhone-flavored Android/LineageOS tree.
-It intentionally does not vendor the full Android source tree.
+OpenPhone-owned Android overlay, privileged assistant app, framework patches,
+model/tool policy configuration, build scripts, device notes, contracts, and
+release tooling. It intentionally does not vendor the full Android source tree.
 
-## Current State
+## What Exists Today
 
-This repo currently implements the OpenPhone OS bringup described in
-[SPEC.md](SPEC.md):
+OpenPhone is an early developer preview. It is real ROM work, but it is not a
+consumer-ready phone OS.
 
-- LineageOS upstream sync workflow.
-- OpenPhone local manifest hook.
-- Patch-stack application workflow.
-- Generic OpenPhone product overlay.
-- Pixel 9a `openphone_tegu` product overlay.
-- Privileged persistent `OpenPhoneAssistant` system app with a consumer-facing
-  chat surface, text/voice task entry, task stop control, model settings,
-  evidence export, OTA-preview controls, and developer tools behind an
-  advanced panel.
-- Hidden framework API and `system_server` Binder service for OpenPhone agent
-  capabilities.
-- Policy seed, screen context plumbing, mediated action execution, confirmation
-  flow, and persistent audit log patches.
-- Durable assistant data for memories, commitments, watchers, and the first
-  assistant-side Agent Runtime V1 background job layer.
-- Verified full-product boot on a physical Pixel 9a.
-- Fast assistant iteration path that rebuilds only `OpenPhoneAssistant`, pushes
-  the privileged APK into `/system_ext`, reboots, and validates the UI/agent on
-  the physical Pixel 9a without a full OTA loop.
+- LineageOS 23.2 / Android 16 based build flow.
+- Google Pixel 9a (`tegu`) bringup as the first physical device target.
+- Privileged `OpenPhoneAssistant` app installed under `/system_ext`.
+- Dynamic island style agent surface for voice, replies, approvals, active
+  state, recent chat, watchers, and background runs.
+- Text/voice agent entry, OpenAI Responses flow, and optional OpenAI Realtime
+  voice session path for demos.
+- OS-owned Binder services for screen context, action confirmation, audit,
+  durable memory, commitments, watchers, and background agent state.
+- Model-visible tool registries and declarative capability/policy config.
+- Mediated app launch, URL launch, pointer/tap/scroll/text input, clipboard,
+  share, notification, messaging, and watcher reaction paths.
+- Hash-chained framework audit log and assistant trajectory export validators.
+- GitHub CI for repository checks, release artifact helpers, and physical
+  device eval workflow scaffolding.
 
-The active plan is tracked in [docs/PLAN.md](docs/PLAN.md). The agent runtime
-direction is captured in [docs/AGENT_RUNTIME_V1.md](docs/AGENT_RUNTIME_V1.md).
-The current hardware baseline is tracked in [devices/tegu.md](devices/tegu.md),
-and the implementation evidence ledger is in
-[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). The next deep
-OS integration work is stronger background-agent reliability, richer screen
-understanding, production model transport, SystemUI-owned active-agent
-presence, OTA hardening, production signing, and validated device ports beyond
-Pixel 9a.
+See [docs/SHOWCASE.md](docs/SHOWCASE.md) for the current demo surface and
+[docs/ROADMAP.md](docs/ROADMAP.md) for what is still unfinished.
+
+## Why This Exists
+
+Mobile assistants built as normal apps hit the same ceiling: limited OS
+authority, fragile accessibility automation, weak background continuity, and no
+clear place for consent, policy, or audit.
+
+OpenPhone explores a different architecture:
+
+- The assistant is a privileged OS component.
+- The model sees structured screen and task context rather than raw app access.
+- Actions go through policy and framework mediation.
+- Sensitive operations require explicit review.
+- Background work is represented as durable jobs, watchers, and commitments.
+- Device support is handled like a ROM project, with exact hardware targets and
+  validation evidence.
+
+## How It Works
+
+```text
+User
+  volume chord, touch, text, voice, realtime voice
+
+OpenPhone Assistant
+  dynamic island UI, chat, voice capture, model adapter, tool loop
+
+OpenPhone OS Services
+  openphone_agent
+  openphone_context
+  openphone_assistant_data
+
+Android Framework
+  ActivityTaskManager, WindowManager, InputManager, PackageManager,
+  NotificationManager, Settings, SELinux, system_server
+
+LineageOS / Android / Device
+  Pixel 9a target, kernel/boot chain, vendor blobs supplied by the builder
+```
+
+The high-level architecture is documented in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The capability model is in
+[docs/CAPABILITIES.md](docs/CAPABILITIES.md), and machine-readable contracts
+live under [docs/contracts](docs/contracts).
 
 ## Repository Layout
 
 ```text
-docs/       Architecture, build, licensing, and device docs.
-devices/    Device support matrix and per-device notes.
-manifests/  Local repo manifests for OpenPhone overrides.
-overlay/    Files copied into the Android source tree.
-patches/    Patch stacks applied on top of upstream LineageOS repos.
-scripts/    Sync, patch, build, flash, and validation helpers.
-SPEC.md     Product and architecture specification.
-CHANGELOG.md Public release history.
+.github/       CI, release, eval, issue, and PR templates.
+devices/       Device matrix and per-device bringup notes.
+docs/          Public documentation, contracts, release notes, and archive.
+examples/      Demo tasks, watcher examples, and eval starting points.
+manifests/     Android repo local manifests.
+overlay/       OpenPhone-owned files copied into the Android tree.
+patches/       Patch stacks applied on top of upstream LineageOS repos.
+scripts/       Sync, patch, build, flash, validation, and release helpers.
+services/      Reference services, including the development model broker.
+SPEC.md        Product and architecture specification.
+CHANGELOG.md   Release history.
 ```
+
+Start with [docs/README.md](docs/README.md) if you are looking for a specific
+document.
 
 ## Quick Start
-
-Prerequisites:
-
-- Linux x86_64 build host for full flashable device images.
-- macOS is useful for sync, patching, extraction, and focused validation builds,
-  but this Android branch only wires host modules into the default Darwin
-  `droid` target.
-- `repo` installed and available in `PATH`.
-- `git-lfs` installed and initialized.
-- GNU coreutils on macOS.
-- Case-sensitive filesystem for the Android checkout.
-- Enough disk space for a full Android source checkout.
-
-Install `repo` into `~/.local/bin` if needed:
-
-```bash
-./scripts/install-repo.sh
-```
-
-On macOS, create a case-sensitive Android build volume:
-
-```bash
-./scripts/create-macos-build-volume.sh
-export OPENPHONE_ANDROID_DIR="$PWD/.worktree/OpenPhoneAndroid/android"
-```
-
-Bootstrap the Android tree:
-
-```bash
-./scripts/sync.sh
-./scripts/apply-patches.sh
-```
 
 Validate the repository:
 
 ```bash
 ./scripts/check.sh
+git diff --check
+```
+
+Install `repo` if needed:
+
+```bash
+./scripts/install-repo.sh
+```
+
+Sync and patch the Android tree:
+
+```bash
+./scripts/sync.sh
+./scripts/apply-patches.sh
 ```
 
 Build the generic OpenPhone ARM64 product for validation:
@@ -119,48 +133,73 @@ Build the generic OpenPhone ARM64 product for validation:
 ./scripts/build.sh openphone_arm64
 ```
 
-By default this builds the Android `droid` goal. Override it with:
+Build the Pixel 9a target on a Linux Android build host:
 
 ```bash
-OPENPHONE_BUILD_GOAL=OpenPhoneAssistant ./scripts/build.sh openphone_arm64
+OPENPHONE_BUILD_GOAL="droid target-files-package otapackage" \
+  ./scripts/build.sh openphone_tegu
 ```
 
-For a real phone port, set a device-specific lunch target:
+For assistant-only iteration on an already flashed development device:
 
 ```bash
-OPENPHONE_BUILD_GOAL="droid target-files-package otapackage" ./scripts/build.sh openphone_tegu
+OPENPHONE_BUILD_GOAL=OpenPhoneAssistant ./scripts/build.sh openphone_tegu
+scripts/push-assistant-apk.sh /path/to/OpenPhoneAssistant.apk
 ```
 
-Optional Google Play / Google Mobile Services installation is documented in
-[docs/GMS.md](docs/GMS.md). OpenPhone does not redistribute Google packages, but
-for local Pixel 9a testing the helper can download and verify the public
-MindTheGapps Android 16 arm64 release, then sideload it from recovery:
+Full build instructions are in [docs/BUILD.md](docs/BUILD.md). Testing and
+physical eval guidance is in [docs/TESTING.md](docs/TESTING.md).
 
-```bash
-scripts/download-mindthegapps.sh
-scripts/sideload-user-gms.sh \
-  --package .worktree/downloads/gms/MindTheGapps-16.0.0-arm64-*.zip
-```
+## Device Support
 
-The default Android checkout lives at:
+The first physical target is Google Pixel 9a (`tegu`). Generic ARM64 builds are
+useful for product graph validation, but they are not a supported phone target.
 
-```text
-.worktree/android
-```
+OpenPhone does not redistribute Google apps, Google Mobile Services, vendor
+blobs, signing keys, private firmware, or restricted device material. Local
+developer GMS sideload notes are in [docs/GMS.md](docs/GMS.md).
 
-Override it with:
+See [devices/MATRIX.md](devices/MATRIX.md) and
+[devices/tegu.md](devices/tegu.md).
 
-```bash
-OPENPHONE_ANDROID_DIR=/path/to/android/tree ./scripts/sync.sh
-```
+## Releases And Validation
 
-## Licensing
+Public releases are developer previews until `1.0.0`.
+
+- Release notes: [docs/releases/0.0.1.md](docs/releases/0.0.1.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Release process: [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md)
+- CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+- Device eval workflow: [`.github/workflows/eval.yml`](.github/workflows/eval.yml)
+
+Every release should publish checksums, known issues, supported device notes,
+and validation evidence for any device artifact.
+
+## Community
+
+Contributions are welcome from people who accept the contribution terms in
+[CONTRIBUTING.md](CONTRIBUTING.md). Good first areas are:
+
+- Agent eval tasks that expose real phone-control failures.
+- Pixel 9a validation reports and reproducible bug reports.
+- Device-port research for exact Android models and codenames.
+- Dynamic island and assistant UI polish.
+- Capability registry, policy, and audit contract improvements.
+- Build/release documentation that makes the ROM workflow easier to reproduce.
+
+Use GitHub issues for reproducible bugs and scoped feature proposals. Do not
+post secrets, private keys, personal device data, proprietary vendor files, or
+Google package files.
+
+## Commercial Use
 
 OpenPhone-owned materials are source-available for non-commercial use under the
-PolyForm Noncommercial License 1.0.0, with commercial licensing available
-separately. Upstream Android, LineageOS, Linux kernel, device trees, vendor
-extraction scripts, and third-party code keep their original licenses.
+PolyForm Noncommercial License 1.0.0. Commercial use requires a separate written
+license from Dafdef, inc.
 
-See [docs/LICENSING.md](docs/LICENSING.md), [LICENSE](LICENSE),
-[LICENSE.noncommercial](LICENSE.noncommercial), [COMMERCIAL.md](COMMERCIAL.md),
-and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Contributions are accepted only under terms that allow Dafdef, inc. and Adam
+Cohen Hillel to own, modify, sublicense, redistribute, and commercialize the
+submitted work. See [CONTRIBUTING.md](CONTRIBUTING.md),
+[COMMERCIAL.md](COMMERCIAL.md), [LICENSE](LICENSE),
+[LICENSE.noncommercial](LICENSE.noncommercial), and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
