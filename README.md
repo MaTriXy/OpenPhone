@@ -7,8 +7,8 @@
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)
 ![Status](https://img.shields.io/badge/status-developer%20preview-orange)
 
-OpenPhone is a source-available Android OS project for turning the phone into
-an agentic device: an AI agent that can see the screen, operate apps, remember
+OpenPhone is an AI-native Android OS that turns the phone into an agentic
+device: a system-level AI agent that can see the screen, operate apps, remember
 commitments, monitor phone events, and continue work in the background with
 user review and auditability built into the OS.
 
