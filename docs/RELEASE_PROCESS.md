@@ -48,10 +48,7 @@ A device preview release may additionally include:
 Repository:
 
 - `README.md` explains the project state honestly.
-- `docs/SPEC.md` describes the product thesis and architecture.
 - `docs/README.md` is the documentation index.
-- `docs/ROADMAP.md` is short and public-facing.
-- `docs/SHOWCASE.md` describes the current demo surface honestly.
 - `docs/BUILD.md` explains Linux build requirements.
 - `docs/TESTING.md` explains repo, device, and eval validation.
 - `devices/MATRIX.md` and `devices/tegu.md` describe Pixel 9a status.

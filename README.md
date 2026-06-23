@@ -20,30 +20,29 @@ release tooling. It intentionally does not vendor the full Android source tree.
 ## AI-Native Phone Runtime
 
 OpenPhone is built around a system-level agent, not a chatbot app. The agent is
-installed as a privileged OS component, the dynamic island is its
-always-available activity surface, and actions are mediated through OpenPhone
-framework services instead of brittle app-layer automation.
+installed as a privileged OS component with an always-available system surface
+for conversation, realtime voice, approvals, active runs, and proactive state.
+Actions are mediated through OpenPhone framework services instead of brittle
+app-layer automation.
 
 The agent can read structured phone context and use model-visible tools to work
-across apps: inspect the visible UI, launch apps, tap, scroll, type, open links,
-use clipboard/share flows, react to notifications, and work with messaging
-paths under policy. Sensitive actions are reviewable, and behavior can be
-inspected through audit logs, trajectories, screenshots, policy decisions, and
-release validators.
+across apps. Context includes the foreground app, visible UI hierarchy, screen
+text and controls, notifications, calls, messages, calendar state, location,
+battery, connectivity, active watchers, background runs, and commitments the
+user made in conversation. Sensitive actions are reviewable, and behavior can
+be inspected through audit logs, trajectories, screenshots, policy decisions,
+and release validators.
 
 OpenPhone is also built for proactive work. Heartbeats quietly check whether
 anything needs attention. Scheduled jobs run exact workflows. Watchers monitor
 phone context such as missed calls, messages, notifications, foreground app
 state, visible screen state, calendar changes, location, battery, connectivity,
 and commitments the user made in conversation. Background runs keep working
-after the current chat turn, while the dynamic island shows what is running,
-why it started, what it last said, and what needs review.
+after the current chat turn, while the system surface shows what is running, why
+it started, what it last said, and what needs review.
 
 The current developer preview is based on LineageOS 23.2 / Android 16 and
 targets Google Pixel 9a (`tegu`) first.
-
-See [docs/SHOWCASE.md](docs/SHOWCASE.md) for the current demo surface and
-[docs/ROADMAP.md](docs/ROADMAP.md) for what is still unfinished.
 
 ## Use Cases
 
@@ -67,24 +66,29 @@ See [docs/SHOWCASE.md](docs/SHOWCASE.md) for the current demo surface and
 
 ## How It Works
 
-```text
-User
-  volume chord, touch, text, voice, realtime voice
+```mermaid
+flowchart TB
+  User["User<br/>voice, touch, text, volume chord"]
+  Surface["OpenPhone system surface<br/>chat, realtime voice, approvals, runs"]
+  Assistant["Privileged OpenPhoneAssistant<br/>orchestrator, model adapters, tool loop"]
+  Runtime["Proactive runtime<br/>heartbeats, scheduled jobs, watchers, background runs"]
+  Context["Phone context<br/>visible UI, foreground app, notifications, calls, messages,<br/>calendar, location, battery, commitments"]
+  Services["OpenPhone OS services<br/>openphone_agent, openphone_context, openphone_assistant_data"]
+  Policy["Policy, approval, and evidence<br/>capabilities, confirmations, audit logs, trajectories"]
+  Android["Android framework<br/>ActivityTaskManager, WindowManager, InputManager, NotificationManager"]
+  Apps["Apps and device<br/>Settings, Messages, Spotify, Uber, Pixel 9a"]
 
-OpenPhone Assistant
-  dynamic island UI, chat, voice capture, model adapter, tool loop
-
-OpenPhone OS Services
-  openphone_agent
-  openphone_context
-  openphone_assistant_data
-
-Android Framework
-  ActivityTaskManager, WindowManager, InputManager, PackageManager,
-  NotificationManager, Settings, SELinux, system_server
-
-LineageOS / Android / Device
-  Pixel 9a target, kernel/boot chain, vendor blobs supplied by the builder
+  User --> Surface
+  Surface --> Assistant
+  Assistant --> Runtime
+  Assistant --> Services
+  Runtime --> Services
+  Services --> Context
+  Services --> Policy
+  Services --> Android
+  Android --> Apps
+  Apps --> Context
+  Policy --> Surface
 ```
 
 The high-level architecture is documented in

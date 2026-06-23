@@ -10,7 +10,6 @@ required=(
   .github/CONTRIBUTING.md
   .github/SECURITY.md
   docs/README.md
-  docs/SPEC.md
   docs/AGENT_RUNTIME_V1.md
   docs/ARCHITECTURE.md
   docs/BUILD.md
@@ -24,8 +23,6 @@ required=(
   docs/legal/NOTICE
   docs/legal/THIRD_PARTY_NOTICES.md
   docs/RELEASE_PROCESS.md
-  docs/ROADMAP.md
-  docs/SHOWCASE.md
   docs/TESTING.md
   docs/releases/README.md
   docs/releases/CHANGELOG.md

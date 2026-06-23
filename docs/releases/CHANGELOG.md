@@ -190,9 +190,8 @@ flow, and device support.
   Pixel 9a OTA builds pass release hygiene gates.
 - OpenPhone Assistant can export the latest trajectory as a zip file under
   `Downloads/OpenPhone`, giving physical evals a non-root evidence path.
-- Public documentation now uses `docs/README.md` as the index and
-  `docs/ROADMAP.md` as the short public roadmap, with historical plans moved
-  under `docs/archive/`.
+- Public documentation now uses `docs/README.md` as the index, with historical
+  plans moved under `docs/archive/`.
 - Stopping an active agent run now cancels the model adapter, interrupts the
   run thread, prevents stale generations from updating the UI, and treats
   disconnected OpenAI requests as cancellation rather than network failure.
