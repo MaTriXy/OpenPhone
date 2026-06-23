@@ -7,12 +7,10 @@
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)
 ![Status](https://img.shields.io/badge/status-developer%20preview-orange)
 
-OpenPhone is an Android-based phone OS where the AI agent is a first-class
-system capability, not a normal app layered on top of Android.
-
-The goal is a phone that can understand the current screen, operate apps through
-OS-mediated tools, keep background commitments, ask for review when risk
-requires it, and leave an auditable trail of what happened.
+OpenPhone is a source-available Android OS project for turning the phone into
+an agentic device: an AI agent that can see the screen, operate apps, remember
+commitments, monitor phone events, and continue work in the background with
+user review and auditability built into the OS.
 
 This repository is the canonical OpenPhone entry point. It contains the
 OpenPhone-owned Android overlay, privileged assistant app, framework patches,
@@ -21,19 +19,17 @@ release tooling. It intentionally does not vendor the full Android source tree.
 
 ## AI-Native Phone Runtime
 
-OpenPhone already boots on a real Pixel 9a as a LineageOS 23.2 / Android 16
-based ROM. It is a developer preview, not a consumer-ready daily driver, but
-the core product shape is in place: the agent is a privileged system component,
-the dynamic island is its always-available activity surface, and actions are
-mediated through OpenPhone framework services instead of an app trying to
-automate Android from the outside.
+OpenPhone is built around a system-level agent, not a chatbot app. The agent is
+installed as a privileged OS component, the dynamic island is its
+always-available activity surface, and actions are mediated through OpenPhone
+framework services instead of brittle app-layer automation.
 
-The agent can read structured screen context, use model-visible phone tools,
-and operate across apps: launch, inspect, tap, scroll, type, open links, use
-clipboard/share flows, react to notifications, and work with messaging paths
-under policy. Sensitive actions are reviewable, and behavior can be inspected
-through audit logs, trajectories, screenshots, policy decisions, and release
-validators.
+The agent can read structured phone context and use model-visible tools to work
+across apps: inspect the visible UI, launch apps, tap, scroll, type, open links,
+use clipboard/share flows, react to notifications, and work with messaging
+paths under policy. Sensitive actions are reviewable, and behavior can be
+inspected through audit logs, trajectories, screenshots, policy decisions, and
+release validators.
 
 OpenPhone is also built for proactive work. Heartbeats quietly check whether
 anything needs attention. Scheduled jobs run exact workflows. Watchers monitor
@@ -42,6 +38,9 @@ state, visible screen state, calendar changes, location, battery, connectivity,
 and commitments the user made in conversation. Background runs keep working
 after the current chat turn, while the dynamic island shows what is running,
 why it started, what it last said, and what needs review.
+
+The current developer preview is based on LineageOS 23.2 / Android 16 and
+targets Google Pixel 9a (`tegu`) first.
 
 See [docs/SHOWCASE.md](docs/SHOWCASE.md) for the current demo surface and
 [docs/ROADMAP.md](docs/ROADMAP.md) for what is still unfinished.
