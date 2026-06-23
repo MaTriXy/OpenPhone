@@ -6,16 +6,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 required=(
   README.md
-  SPEC.md
-  COMMERCIAL.md
-  CONTRIBUTING.md
   LICENSE
-  LICENSE.noncommercial
-  NOTICE
-  SECURITY.md
-  THIRD_PARTY_NOTICES.md
-  CHANGELOG.md
+  .github/CONTRIBUTING.md
+  .github/SECURITY.md
   docs/README.md
+  docs/SPEC.md
   docs/AGENT_RUNTIME_V1.md
   docs/ARCHITECTURE.md
   docs/BUILD.md
@@ -23,10 +18,17 @@ required=(
   docs/DEVICE_SUPPORT.md
   docs/GMS.md
   docs/LICENSING.md
+  docs/legal/README.md
+  docs/legal/COMMERCIAL.md
+  docs/legal/LICENSE.noncommercial
+  docs/legal/NOTICE
+  docs/legal/THIRD_PARTY_NOTICES.md
   docs/RELEASE_PROCESS.md
   docs/ROADMAP.md
   docs/SHOWCASE.md
   docs/TESTING.md
+  docs/releases/README.md
+  docs/releases/CHANGELOG.md
   docs/assets/github_hero.png
   docs/releases/0.0.1.md
   docs/archive/README.md

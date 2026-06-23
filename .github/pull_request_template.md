@@ -21,7 +21,7 @@ What changed, and why?
 
 # Contributor Agreement
 
-- [ ] I have read and agree to [CONTRIBUTING.md](../CONTRIBUTING.md), including
+- [ ] I have read and agree to [CONTRIBUTING.md](CONTRIBUTING.md), including
       the contributor assignment/license/no-compensation terms.
 - [ ] I have the right to submit this contribution under those terms.
 - [ ] This contribution does not include material I am not allowed to submit.

@@ -89,17 +89,15 @@ live under [docs/contracts](docs/contracts).
 ## Repository Layout
 
 ```text
-.github/       CI, release, eval, issue, and PR templates.
+.github/       CI, release, eval, contribution, security, issue, and PR files.
 devices/       Device matrix and per-device bringup notes.
-docs/          Public documentation, contracts, release notes, and archive.
+docs/          Product docs, spec, legal docs, contracts, releases, and archive.
 examples/      Demo tasks, watcher examples, and eval starting points.
 manifests/     Android repo local manifests.
 overlay/       OpenPhone-owned files copied into the Android tree.
 patches/       Patch stacks applied on top of upstream LineageOS repos.
 scripts/       Sync, patch, build, flash, validation, and release helpers.
 services/      Reference services, including the development model broker.
-SPEC.md        Product and architecture specification.
-CHANGELOG.md   Release history.
 ```
 
 Start with [docs/README.md](docs/README.md) if you are looking for a specific
@@ -166,10 +164,12 @@ See [devices/MATRIX.md](devices/MATRIX.md) and
 
 Public releases are developer previews until `1.0.0`.
 
+- Release dashboard: [docs/releases/README.md](docs/releases/README.md)
 - Release notes: [docs/releases/0.0.1.md](docs/releases/0.0.1.md)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Changelog: [docs/releases/CHANGELOG.md](docs/releases/CHANGELOG.md)
 - Release process: [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md)
 - CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+- GitHub release workflow: [`.github/workflows/release.yml`](.github/workflows/release.yml)
 - Device eval workflow: [`.github/workflows/eval.yml`](.github/workflows/eval.yml)
 
 Every release should publish checksums, known issues, supported device notes,
@@ -178,7 +178,7 @@ and validation evidence for any device artifact.
 ## Community
 
 Contributions are welcome from people who accept the contribution terms in
-[CONTRIBUTING.md](CONTRIBUTING.md). Good first areas are:
+[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). Good first areas are:
 
 - Agent eval tasks that expose real phone-control failures.
 - Pixel 9a validation reports and reproducible bug reports.
@@ -199,7 +199,7 @@ license from Dafdef, inc.
 
 Contributions are accepted only under terms that allow Dafdef, inc. and Adam
 Cohen Hillel to own, modify, sublicense, redistribute, and commercialize the
-submitted work. See [CONTRIBUTING.md](CONTRIBUTING.md),
-[COMMERCIAL.md](COMMERCIAL.md), [LICENSE](LICENSE),
-[LICENSE.noncommercial](LICENSE.noncommercial), and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+submitted work. See [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md),
+[docs/legal/COMMERCIAL.md](docs/legal/COMMERCIAL.md), [LICENSE](LICENSE),
+[docs/legal/LICENSE.noncommercial](docs/legal/LICENSE.noncommercial), and
+[docs/legal/THIRD_PARTY_NOTICES.md](docs/legal/THIRD_PARTY_NOTICES.md).

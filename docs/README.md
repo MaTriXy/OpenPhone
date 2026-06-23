@@ -8,6 +8,8 @@ below for current work.
 
 - [Architecture](ARCHITECTURE.md) - system layers, OS services, agent runtime,
   and current implementation boundaries.
+- [Specification](SPEC.md) - product thesis, non-goals, repository strategy,
+  licensing model, and OS integration direction.
 - [Build](BUILD.md) - Android repo sync, patch application, generic build, and
   Pixel 9a build commands.
 - [Testing](TESTING.md) - repository checks, physical device smoke tests,
@@ -25,6 +27,7 @@ below for current work.
 - [Google Mobile Services Notes](GMS.md)
 - [Release Process](RELEASE_PROCESS.md)
 - [0.0.1 Release Notes](releases/0.0.1.md)
+- [Changelog](releases/CHANGELOG.md)
 
 ## Contracts
 
@@ -35,9 +38,10 @@ screen context, audit events, trajectories, OTA feeds, and agent eval reports.
 ## Licensing
 
 - [Licensing Notes](LICENSING.md)
-- [Commercial Licensing](../COMMERCIAL.md)
-- [Contribution Terms](../CONTRIBUTING.md)
-- [Security Policy](../SECURITY.md)
+- [Legal Index](legal/README.md)
+- [Commercial Licensing](legal/COMMERCIAL.md)
+- [Contribution Terms](../.github/CONTRIBUTING.md)
+- [Security Policy](../.github/SECURITY.md)
 
 ## Historical Notes
 

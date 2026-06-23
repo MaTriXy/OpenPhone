@@ -1,26 +1,12 @@
 name: Eval
 
-# Runs the trajectory smoke suite against the Pixel 9a connected to a
-# self-hosted runner. Triggered manually because (a) the device runs the
-# real assistant against OpenAI and we don't want spurious billable runs
-# on every commit, and (b) the device must be unlocked, on Wi-Fi, and on
-# the latest assistant APK before we can trust the results.
-#
-# Prereqs:
-# - A self-hosted runner labeled `openphone-device` with a Pixel 9a on USB,
-#   adb authorized, the dev OpenAI API key seeded into Settings.Secure
-#   (`openphone_dev_openai_api_key`), and `.worktree/secrets/openai_api_key`
-#   readable by the runner user.
-# - `scripts/run-assistant-task.sh` and `scripts/pull-latest-trajectory.sh`
-#   already work from the runner's checkout.
-
 on:
   workflow_dispatch:
     inputs:
       goals:
-        description: 'Comma-separated task goals (default = the canonical smoke set).'
+        description: "Comma-separated task goals. Empty uses the canonical smoke set."
         required: false
-        default: ''
+        default: ""
 
 permissions:
   contents: read
@@ -29,10 +15,15 @@ jobs:
   trajectory-smokes:
     name: Trajectory smokes
     runs-on: [self-hosted, openphone-device]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Validate repository
+        run: |
+          set -euxo pipefail
+          ./scripts/check.sh
 
       - name: Run trajectory smoke suite
         env:
@@ -41,7 +32,7 @@ jobs:
           set -euxo pipefail
           ./scripts/run-eval-suite.sh
 
-      - name: Upload trajectories as artifact
+      - name: Upload trajectories
         if: always()
         uses: actions/upload-artifact@v4
         with:
