@@ -64,6 +64,22 @@ targets Google Pixel 9a (`tegu`) first.
 - "Keep working on this after I leave" - continue a multi-step task as a
   visible background run with approval where needed.
 
+## Repository Layout
+
+```text
+.github/       CI, release, eval, contribution, security, issue, and PR files.
+docs/          Product docs, device notes, legal docs, releases, and testing.
+manifests/     Android repo local manifests.
+overlay/       OpenPhone-owned files copied into the Android tree.
+patches/       Patch stacks applied on top of upstream LineageOS repos.
+schemas/       Machine-readable runtime contracts and release/eval schemas.
+scripts/       Sync, patch, build, flash, validation, and release helpers.
+services/      Reference services, including the development model broker.
+```
+
+Start with [docs/README.md](docs/README.md) if you are looking for a specific
+document.
+
 ## How It Works
 
 ```mermaid
@@ -95,21 +111,6 @@ The high-level architecture is documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The capability model is in
 [docs/CAPABILITIES.md](docs/CAPABILITIES.md), and machine-readable contracts
 live under [schemas](schemas).
-
-## Repository Layout
-
-```text
-.github/       CI, release, eval, contribution, security, issue, and PR files.
-docs/          Product docs, device notes, legal docs, releases, and testing.
-manifests/     Android repo local manifests.
-overlay/       OpenPhone-owned files copied into the Android tree.
-patches/       Patch stacks applied on top of upstream LineageOS repos.
-scripts/       Sync, patch, build, flash, validation, and release helpers.
-services/      Reference services, including the development model broker.
-```
-
-Start with [docs/README.md](docs/README.md) if you are looking for a specific
-document.
 
 ## Quick Start
 
@@ -158,8 +159,16 @@ physical eval guidance is in [docs/TESTING.md](docs/TESTING.md).
 
 ## Device Support
 
-The first physical target is Google Pixel 9a (`tegu`). Generic ARM64 builds are
-useful for product graph validation, but they are not a supported phone target.
+OpenPhone builds on LineageOS device infrastructure, so the broader universe of
+potential ports starts with the official LineageOS supported-device list:
+[wiki.lineageos.org/devices](https://wiki.lineageos.org/devices/). OpenPhone
+support is narrower: a device is only supported after it has an OpenPhone
+product target, flash/recovery notes, hardware validation, agent validation, and
+release coverage.
+
+The first OpenPhone physical target is Google Pixel 9a (`tegu`). Generic ARM64
+builds are useful for product graph validation, but they are not a supported
+phone target.
 
 OpenPhone does not redistribute Google apps, Google Mobile Services, vendor
 blobs, signing keys, private firmware, or restricted device material. Local
