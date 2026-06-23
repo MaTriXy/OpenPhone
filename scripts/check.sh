@@ -28,7 +28,6 @@ required=(
   docs/releases/CHANGELOG.md
   docs/assets/github_hero.png
   docs/releases/0.0.1.md
-  examples/README.md
   schemas/README.md
   schemas/action-request.schema.json
   schemas/action-registry.schema.json
@@ -51,8 +50,9 @@ required=(
   .github/ISSUE_TEMPLATE/bug_report.md
   .github/ISSUE_TEMPLATE/feature_request.md
   .github/pull_request_template.md
-  devices/MATRIX.md
-  devices/tegu.md
+  docs/devices/MATRIX.md
+  docs/devices/README.md
+  docs/devices/tegu.md
   manifests/openphone.xml
   scripts/prepare-tegu-dtb.sh
   scripts/generate-release-manifest.sh

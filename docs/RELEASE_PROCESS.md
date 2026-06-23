@@ -51,7 +51,8 @@ Repository:
 - `docs/README.md` is the documentation index.
 - `docs/BUILD.md` explains Linux build requirements.
 - `docs/TESTING.md` explains repo, device, and eval validation.
-- `devices/MATRIX.md` and `devices/tegu.md` describe Pixel 9a status.
+- `docs/devices/MATRIX.md` and `docs/devices/tegu.md` describe Pixel 9a
+  status.
 - `docs/releases/CHANGELOG.md` has a `0.0.1` section.
 - `LICENSE` and the files under `docs/legal/` are present.
 
@@ -214,5 +215,5 @@ Developer preview for OpenPhone.
 
 ### Flashing Notes
 
-See `docs/BUILD.md`, `docs/TEGU_BOOTCHAIN.md`, and `devices/tegu.md`.
+See `docs/BUILD.md`, `docs/TEGU_BOOTCHAIN.md`, and `docs/devices/tegu.md`.
 ```

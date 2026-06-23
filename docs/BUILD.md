@@ -232,7 +232,7 @@ in-memory development field; use the broker path for publishable evidence.
 ```
 
 The flash script currently refuses to guess destructive steps. Device-specific
-flash procedures belong in `devices/<codename>.md`.
+flash procedures belong in `docs/devices/<codename>.md`.
 
 ## Optional User-Supplied Google Services
 

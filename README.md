@@ -100,9 +100,7 @@ live under [schemas](schemas).
 
 ```text
 .github/       CI, release, eval, contribution, security, issue, and PR files.
-devices/       Device matrix and per-device bringup notes.
-docs/          Product docs, spec, legal docs, contracts, releases, and archive.
-examples/      Demo tasks, watcher examples, and eval starting points.
+docs/          Product docs, device notes, legal docs, releases, and testing.
 manifests/     Android repo local manifests.
 overlay/       OpenPhone-owned files copied into the Android tree.
 patches/       Patch stacks applied on top of upstream LineageOS repos.
@@ -167,8 +165,8 @@ OpenPhone does not redistribute Google apps, Google Mobile Services, vendor
 blobs, signing keys, private firmware, or restricted device material. Local
 developer GMS sideload notes are in [docs/GMS.md](docs/GMS.md).
 
-See [devices/MATRIX.md](devices/MATRIX.md) and
-[devices/tegu.md](devices/tegu.md).
+See [docs/devices/MATRIX.md](docs/devices/MATRIX.md) and
+[docs/devices/tegu.md](docs/devices/tegu.md).
 
 ## Community
 

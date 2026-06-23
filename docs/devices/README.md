@@ -9,7 +9,7 @@ bootstrap target is the generic `openphone_arm64` product under
 Add a device file when bringup starts:
 
 ```text
-devices/<codename>.md
+docs/devices/<codename>.md
 ```
 
 Each file must include:

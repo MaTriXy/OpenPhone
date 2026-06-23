@@ -17,6 +17,8 @@ build, architecture, release, device, and policy docs.
 ## Device And Release Docs
 
 - [Device Support](DEVICE_SUPPORT.md)
+- [Device Matrix](devices/MATRIX.md)
+- [Pixel 9a Notes](devices/tegu.md)
 - [Pixel 9a Boot Chain](TEGU_BOOTCHAIN.md)
 - [Google Mobile Services Notes](GMS.md)
 - [Release Process](RELEASE_PROCESS.md)

@@ -30,8 +30,8 @@ those against the synced Lineage tree is part of Phase 1.
 
 ## Device Check
 
-No physical device is supported until its `devices/<codename>.md` checklist is
-complete.
+No physical device is supported until its `docs/devices/<codename>.md`
+checklist is complete.
 
 ## Pixel 9a Hardware Smoke Test
 

@@ -12,9 +12,8 @@ cat >&2 <<'MSG'
 OpenPhone does not guess device-specific flashing commands.
 
 Flashing can wipe data, brick a device, or require exact firmware versions.
-Add a device-specific guide under devices/<codename>.md, then implement a
+Add a device-specific guide under docs/devices/<codename>.md, then implement a
 codename-aware flash path here.
 MSG
 
 exit 2
-
