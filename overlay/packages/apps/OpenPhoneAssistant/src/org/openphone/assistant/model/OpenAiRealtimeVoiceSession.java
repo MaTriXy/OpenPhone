@@ -252,9 +252,9 @@ public final class OpenAiRealtimeVoiceSession {
                 + "reasonable choice and continue. Never claim you cannot use the phone "
                 + "when a relevant tool exists. Do not ask for approval for ordinary app "
                 + "navigation, typing fields, searching, choosing visible options, or "
-                + "preparing a workflow. If an OS/tool result requires approval, show it "
-                + "with ask_user_confirmation and include action_json with the exact next "
-                + "tool and arguments. Keep voice replies short while working, then "
+                + "preparing a workflow. "
+                + approvalResultInstruction(fullYolo)
+                + "Keep voice replies short while working, then "
                 + "summarize the outcome.";
     }
 
@@ -266,6 +266,17 @@ public final class OpenAiRealtimeVoiceSession {
                 + "including payment, purchase, booking, sending, calling, posting, "
                 + "installation, and account surfaces. Do not call ask_user_confirmation "
                 + "unless a tool result explicitly requires it. ";
+    }
+
+    private static String approvalResultInstruction(boolean fullYolo) {
+        if (fullYolo) {
+            return "If an OS/tool result asks for approval, do not call "
+                    + "ask_user_confirmation; continue through visible UI when possible, "
+                    + "otherwise report the block briefly. ";
+        }
+        return "If an OS/tool result requires approval, show it with "
+                + "ask_user_confirmation and include action_json with the exact next "
+                + "tool and arguments. ";
     }
 
     private void startAudioInput(final RealtimeWebSocket socket, final Callback callback)

@@ -178,7 +178,8 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                         if (textOnlyTurns >= MAX_TEXT_ONLY_TURNS) {
                             return result("agent.blocked", userGoal, steps, turn.finalText.trim());
                         }
-                        sendUserMessage(socket, textOnlyCorrectionPrompt(turn.finalText));
+                        sendUserMessage(socket, textOnlyCorrectionPrompt(turn.finalText,
+                                mFullYolo));
                     }
                     socket.send(responseCreateEvent(true));
                     continue;
@@ -484,6 +485,16 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "unless a tool result explicitly requires it. ";
     }
 
+    private static String approvalResultInstruction(boolean fullYolo) {
+        if (fullYolo) {
+            return "If a tool result asks for approval, do not call ask_user_confirmation; "
+                    + "choose a concrete next tool if possible, otherwise call fail_task "
+                    + "with the tool's reason. ";
+        }
+        return "If a tool result requires approval, surface that approval and continue "
+                + "after the result. ";
+    }
+
     private static String initialTaskPrompt(String userGoal, boolean fullYolo) {
         return "Start this Android phone task and keep working until it is visibly complete "
                 + "or blocked. Device time: " + deviceTimeContext()
@@ -522,8 +533,8 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "options. For random, any, something, surprise me, best, or unspecified "
                 + "preference requests, choose a reasonable/default/top visible option "
                 + "yourself and continue. Ask only when missing information blocks every "
-                + "concrete next step. If a tool result requires approval, surface that "
-                + "approval and continue after the result. "
+                + "concrete next step. "
+                + approvalResultInstruction(fullYolo)
                 + "Use browser_fetch_page when the user asks to summarize or answer "
                 + "questions about a specific URL; its result includes headings and "
                 + "links, so follow a returned link with another browser_fetch_page "
@@ -547,15 +558,19 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "when the visible screen satisfies the goal.";
     }
 
-    private static String textOnlyCorrectionPrompt(String modelText) {
+    private static String textOnlyCorrectionPrompt(String modelText, boolean fullYolo) {
         return "You replied with text instead of taking a phone-agent step: "
                 + (modelText == null ? "" : modelText.trim())
                 + "\n\nDo not ask for review, ask a preference question, or narrate. Choose "
                 + "exactly one tool call now. "
                 + "If you have not observed the phone yet, call get_screen. If the task is "
-                + "already visibly complete, call finish_task. If a tool result requires "
-                + "approval, call ask_user_confirmation with action_json; if no concrete "
-                + "step exists, call fail_task. For random, any, or unspecified "
+                + "already visibly complete, call finish_task. "
+                + (fullYolo
+                        ? "Do not call ask_user_confirmation in full YOLO; if no concrete "
+                                + "step exists, call fail_task. "
+                        : "If a tool result requires approval, call ask_user_confirmation "
+                                + "with action_json; if no concrete step exists, call fail_task. ")
+                + "For random, any, or unspecified "
                 + "preference requests, choose a reasonable option yourself.";
     }
 
@@ -597,8 +612,8 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "options. For random, any, something, surprise me, best, or unspecified "
                 + "preference requests, choose a reasonable/default/top visible option "
                 + "yourself and continue. Ask only when missing information blocks every "
-                + "concrete next step. If a tool result requires approval, surface that "
-                + "approval and continue after the result. "
+                + "concrete next step. "
+                + approvalResultInstruction(fullYolo)
                 + "Use memory_save only when the user explicitly asks you to "
                 + "remember durable information. Use commitment_create for explicit open "
                 + "loops and follow-up requests. Use watcher_create for durable background "
@@ -613,9 +628,9 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "reminds only if no call happened in time). Use get_screen often. Prefer tap_element over raw tap when an "
                 + "element id is available. Do not repeat a failed action. If a page is loading, wait then "
                 + "observe. For open-app or open-site goals, finish once the app/site is "
-                + "visible; for anything more specific, keep operating the app. If a tool "
-                + "result asks for approval, call ask_user_confirmation with action_json; "
-                + "otherwise keep using tools. Do not answer with plain text instead of "
+                + "visible; for anything more specific, keep operating the app. "
+                + approvalResultInstruction(fullYolo)
+                + "Otherwise keep using tools. Do not answer with plain text instead of "
                 + "using tools unless no tool can make progress. "
                 + "Never say Done unless finish_task has been called.";
     }

@@ -646,6 +646,23 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "the next concrete tool result requires approval or no tool can progress.\n";
     }
 
+    private String approvalResultRule() {
+        if (mFullYolo) {
+            return "Do not call ask_user_confirmation in full YOLO. If a tool result asks "
+                    + "for approval, choose a concrete next tool if possible; otherwise fail "
+                    + "with the tool's reason.";
+        }
+        return "If a tool result requires approval, surface that approval and then continue "
+                + "after the result.";
+    }
+
+    private String workflowEndStateRule() {
+        if (mFullYolo) {
+            return "ready, or no tool can progress.\n";
+        }
+        return "ready, or the tool/result layer reports that approval is required.\n";
+    }
+
     private String installPaymentRule() {
         if (mFullYolo) {
             return "Full YOLO is enabled. Do not stop to request approval before Android "
@@ -787,8 +804,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "said random, any, something, surprise me, best, or did not specify a "
                 + "preference, choose a reasonable/default/top visible option yourself and "
                 + "continue. Only ask when missing information blocks every concrete next "
-                + "step. If a tool result requires approval, surface that approval and then "
-                + "continue after the result.\n"
+                + "step. " + approvalResultRule() + "\n"
                 + "- If the foreground screen is OpenPhone Assistant, the task is already "
                 + "running; do not tap Speak, Run, or Developer. Start by opening the "
                 + "target app, URL, or system surface needed for the user goal.\n\n"
@@ -799,7 +815,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "- For in-app workflows, keep going through navigation, search, selection, "
                 + "and execution until there is visible end-state evidence: requested content "
                 + "is playing/open, a setting changed, an item is selected/created, a draft is "
-                + "ready, or the tool/result layer reports that approval is required.\n"
+                + workflowEndStateRule()
                 + "- Prefer useful progress over asking. Explore reversible UI, use visible "
                 + "top/default/random choices when appropriate, and recover from no-ops before "
                 + "declaring the task blocked.\n\n"

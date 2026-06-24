@@ -1258,6 +1258,11 @@ public class AssistantActivityBackend extends ComponentActivity {
                             }
                             try {
                                 JSONObject toolArguments = new JSONObject(argumentsJson);
+                                String yoloBypass = yoloConfirmationBypass(liveTaskId,
+                                        toolExecutor, toolName, toolArguments);
+                                if (yoloBypass != null) {
+                                    return yoloBypass;
+                                }
                                 String dryRunPreview = dryRunPreview(toolName, toolArguments);
                                 if (dryRunPreview != null) {
                                     return dryRunPreview;
@@ -2650,6 +2655,12 @@ public class AssistantActivityBackend extends ComponentActivity {
                         try {
                             trajectory.recordToolCall(toolName, argumentsJson);
                             JSONObject toolArguments = new JSONObject(argumentsJson);
+                            String yoloBypass = yoloConfirmationBypass(taskId, toolExecutor,
+                                    toolName, toolArguments);
+                            if (yoloBypass != null) {
+                                trajectory.recordToolResult(toolName, yoloBypass);
+                                return yoloBypass;
+                            }
                             String dryRunPreview = dryRunPreview(toolName, toolArguments);
                             if (dryRunPreview != null) {
                                 trajectory.recordToolResult(toolName, dryRunPreview);
@@ -3078,6 +3089,63 @@ public class AssistantActivityBackend extends ComponentActivity {
             return "{\"status\":\"confirmation_required\","
                     + "\"reason\":\"task_grant_required\"}";
         }
+    }
+
+    private String yoloConfirmationBypass(String taskId, FrameworkToolExecutor toolExecutor,
+            String toolName, JSONObject arguments) {
+        if (!"yolo".equals(mAutonomyMode) || !"ask_user_confirmation".equals(toolName)) {
+            return null;
+        }
+        JSONObject action = confirmationActionFromArguments(arguments);
+        String nestedTool = action.optString("tool", action.optString("type", "")).trim();
+        if (nestedTool.isEmpty() || "ask_user_confirmation".equals(nestedTool)) {
+            try {
+                return new JSONObject()
+                        .put("status", "confirmation_skipped")
+                        .put("reason", "full_yolo")
+                        .put("summary", "Full YOLO is enabled; continue with the next "
+                                + "concrete tool call without asking for approval.")
+                        .toString();
+            } catch (JSONException e) {
+                return "{\"status\":\"confirmation_skipped\",\"reason\":\"full_yolo\"}";
+            }
+        }
+        JSONObject nestedArguments = action.optJSONObject("arguments");
+        if (nestedArguments == null) {
+            nestedArguments = new JSONObject();
+        }
+        String dryRunPreview = dryRunPreview(nestedTool, nestedArguments);
+        if (dryRunPreview != null) {
+            return dryRunPreview;
+        }
+        String grantDenied = preflightDenial(nestedTool, nestedArguments);
+        if (grantDenied != null) {
+            return grantDenied;
+        }
+        try {
+            movePointerFromTool(nestedTool, nestedArguments);
+            if (toolExecutor == null || taskId == null || taskId.isEmpty()) {
+                return "{\"status\":\"error\",\"reason\":\"missing_task_for_yolo_bypass\"}";
+            }
+            return toolExecutor.execute(taskId, nestedTool, nestedArguments);
+        } catch (RuntimeException e) {
+            return "{\"status\":\"error\",\"reason\":\"yolo_confirmation_bypass_failed\"}";
+        }
+    }
+
+    private static JSONObject confirmationActionFromArguments(JSONObject arguments) {
+        if (arguments == null) {
+            return new JSONObject();
+        }
+        JSONObject action = arguments.optJSONObject("action_json");
+        if (action != null) {
+            return action;
+        }
+        action = arguments.optJSONObject("action");
+        if (action != null) {
+            return action;
+        }
+        return parseObjectOrEmpty(arguments.optString("input", ""));
     }
 
     private String actionPolicyDenial(String toolName, JSONObject arguments) {
