@@ -16,6 +16,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.RoundedCorner;
@@ -43,6 +44,8 @@ import java.util.Set;
 import java.util.WeakHashMap;
 
 public final class PointerOverlayController {
+    private static final String TAG = "OpenPhonePointer";
+
     interface ScreenAnswerProvider {
         void answerScreen(String prompt, ScreenAnswerCallback callback);
     }
@@ -578,6 +581,7 @@ public final class PointerOverlayController {
         row.setGravity(Gravity.CENTER);
         row.setClickable(true);
         row.setOnClickListener(this::handleIslandTap);
+        row.setOnLongClickListener(this::handleIslandLongPress);
         row.setOnTouchListener(this::handleIslandTouch);
         row.setBackground(chipBackground(mYoloActive, false));
         row.setPadding(10, 0, 10, 0);
@@ -587,6 +591,7 @@ public final class PointerOverlayController {
         mIslandDragHandle = new View(mContext);
         mIslandDragHandle.setBackgroundColor(Color.TRANSPARENT);
         mIslandDragHandle.setClickable(true);
+        mIslandDragHandle.setOnLongClickListener(this::handleIslandLongPress);
         mIslandDragHandle.setOnTouchListener(this::handleIslandTouch);
         FrameLayout.LayoutParams dragHandleParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, ISLAND_DRAG_HANDLE_HEIGHT);
@@ -645,6 +650,7 @@ public final class PointerOverlayController {
                 ScrollView.LayoutParams.WRAP_CONTENT));
         mIslandBodyFrame.setClickable(true);
         mIslandBodyFrame.setOnClickListener(this::handleIslandTap);
+        mIslandBodyFrame.setOnLongClickListener(this::handleIslandLongPress);
 
         mIslandBodyText = new TextView(mContext);
         mIslandBodyText.setTextColor(0xfff4f7f8);
@@ -656,6 +662,7 @@ public final class PointerOverlayController {
         mIslandBodyText.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         mIslandBodyText.setClickable(true);
         mIslandBodyText.setOnClickListener(this::handleIslandTap);
+        mIslandBodyText.setOnLongClickListener(this::handleIslandLongPress);
         mIslandBodyFrame.addView(mIslandBodyText, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT));
@@ -738,13 +745,16 @@ public final class PointerOverlayController {
 
     /**
      * Tap routing for the island. Tap performs the local island action first:
-     * stop while running/listening, expand/collapse inspectable terminal
-     * states, or start voice from idle.
+     * expand active/status states, expand/collapse inspectable terminal states,
+     * or start voice from idle. Long-press stops an active run.
      */
     private void handleIslandTap(View view) {
-        if ("listening".equals(mMode) || "action_running".equals(mMode)
-                || "thinking".equals(mMode) || "realtime".equals(mMode)) {
-            launchStopAgent();
+        if (isActiveMode()) {
+            Log.i(TAG, "island tap opens status mode=" + mMode);
+            mInspectExpanded = !mInspectExpanded;
+            mLargeExpanded = false;
+            mStatusTab = STATUS_TAB_CHAT;
+            updateIslandViews();
             return;
         }
         if ("error".equals(mMode) || "answer_ready".equals(mMode)) {
@@ -772,6 +782,20 @@ public final class PointerOverlayController {
             }
             updateIslandViews();
         }
+    }
+
+    private boolean handleIslandLongPress(View view) {
+        if (!isActiveMode()) {
+            return false;
+        }
+        Log.i(TAG, "island long press stops active task mode=" + mMode);
+        launchStopAgent();
+        return true;
+    }
+
+    private boolean isActiveMode() {
+        return "listening".equals(mMode) || "action_running".equals(mMode)
+                || "thinking".equals(mMode) || "realtime".equals(mMode);
     }
 
     private boolean handleIslandTouch(View view, MotionEvent event) {
@@ -978,6 +1002,9 @@ public final class PointerOverlayController {
             return IslandPresentation.compact("", "✓", 0xff20e36a);
         }
         if ("listening".equals(mMode)) {
+            if (mInspectExpanded) {
+                return IslandPresentation.expanded("Listening", detailOr("Listening"), false, 4);
+            }
             return IslandPresentation.compact("●", "■", 0xffff6b6b);
         }
         if ("transcript".equals(mMode)) {
@@ -993,12 +1020,23 @@ public final class PointerOverlayController {
                     mReplyText == null ? "" : mReplyText, false, REPLY_MAX_LINES);
         }
         if ("thinking".equals(mMode)) {
+            if (mInspectExpanded) {
+                return IslandPresentation.expanded("Thinking", detailOr("Thinking"), false, 4);
+            }
             return IslandPresentation.compact("", thinkingDots(), 0xff9ab8ff);
         }
         if ("realtime".equals(mMode)) {
+            if (mInspectExpanded) {
+                return IslandPresentation.expanded("Realtime", detailOr("Live Realtime 2"),
+                        false, 4);
+            }
             return IslandPresentation.compact("⚡", thinkingDots(), 0xffffcc6c);
         }
         if ("action_running".equals(mMode)) {
+            if (mInspectExpanded) {
+                return IslandPresentation.expanded(yoloPrefix() + "Running",
+                        detailOr("Task running"), false, 4);
+            }
             return IslandPresentation.compact(yoloPrefix() + "●", "■", 0xffff6b6b);
         }
         if ("needs_review".equals(mMode)) {
