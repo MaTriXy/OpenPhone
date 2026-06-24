@@ -3,8 +3,7 @@
 OpenPhone-owned materials are available for non-commercial use under the
 PolyForm Noncommercial License 1.0.0.
 
-Commercial use requires a separate written commercial license from the
-OpenPhone project owner.
+Commercial use requires a separate written commercial license from Dafdef, inc.
 
 Commercial use includes, without limitation:
 
@@ -21,5 +20,4 @@ This commercial licensing requirement applies only to OpenPhone-owned
 materials. Upstream Android, LineageOS, Linux, third-party code, and vendor
 materials remain under their own licenses.
 
-Commercial licensing contact: project owner. Replace this line with the public
-licensing contact before public release.
+Commercial licensing contact: support@secondly.com.

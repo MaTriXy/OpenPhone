@@ -2696,7 +2696,7 @@
     },
     {
       "name": "assistant.ask_user_confirmation",
-      "description": "Ask the user to approve a pending risky action. Do not use this to ask preference, content-selection, navigation, or ordinary clarification questions. For random, any, surprise-me, top-result, or unspecified preference tasks, choose a reasonable option yourself and continue. Use only for irreversible/sensitive actions or policy/safety confirmation boundaries.",
+      "description": "Show the approval UI only when a tool result or the final commit step needs user approval. Do not use this to ask preference, content-selection, navigation, ordinary app setup, typing form fields, search, or clarification questions. For random, any, surprise-me, top-result, or unspecified preference tasks, choose a reasonable option yourself and continue. Do not call this preemptively. Use it only when the next action would actually commit something like booking, buying, paying, sending, calling, deleting, posting, or sharing private data. Always include action_json with the exact next tool and arguments that approval would execute.",
       "model_tool": "ask_user_confirmation",
       "kind": "control",
       "input_schema_json": {
@@ -2708,20 +2708,21 @@
           },
           "risk": {
             "type": "string",
-            "description": "Risk category."
+            "description": "Short UI category for the approval."
           },
           "reason": {
             "type": "string",
-            "description": "Why approval is needed."
+            "description": "Brief reason the approval UI is needed now."
           },
           "action_json": {
             "type": "object",
-            "description": "Action that would be taken."
+            "description": "Exact next tool call to execute after approval, formatted as {\"tool\":\"tool_name\",\"arguments\":{...}}."
           }
         },
         "required": [
           "summary",
-          "reason"
+          "reason",
+          "action_json"
         ]
       },
       "output_schema_json": {
@@ -2785,7 +2786,7 @@
     },
     {
       "name": "assistant.fail_task",
-      "description": "Stop the active task because it cannot complete safely or correctly.",
+      "description": "Stop the active task only when no available phone tool can make progress, the user cancels, or the requested result is impossible.",
       "model_tool": "fail_task",
       "kind": "control",
       "input_schema_json": {

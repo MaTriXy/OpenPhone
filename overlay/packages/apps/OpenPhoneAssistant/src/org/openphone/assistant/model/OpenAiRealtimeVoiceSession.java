@@ -46,6 +46,7 @@ public final class OpenAiRealtimeVoiceSession {
         void onUserTranscript(String transcript);
         void onAssistantTranscript(String transcript);
         void onToolCall(String toolName);
+        void onToolResult(String toolName, String resultJson);
         void onError(String message);
         void onStopped();
     }
@@ -58,17 +59,20 @@ public final class OpenAiRealtimeVoiceSession {
     private static final long SELF_ECHO_GUARD_MS = 900;
     private static final long PLAYBACK_DRAIN_GRACE_MS = 350;
     private static final long MAX_PLAYBACK_DRAIN_MS = 6000;
-    private static final long PLAYBACK_START_BARGE_GUARD_MS = 350;
-    private static final long BARGE_IN_SUSTAIN_MS = 140;
     private static final long BARGE_IN_COOLDOWN_MS = 900;
-    private static final double BARGE_IN_MIN_RMS = 1800.0;
-    private static final double BARGE_IN_ECHO_RATIO = 1.8;
-    private static final double PLAYBACK_ECHO_FLOOR_CAP_RMS = 2600.0;
+    private static final long LOCAL_BARGE_IN_GUARD_MS = 240;
+    private static final long INTERRUPTED_FUNCTION_CALL_GRACE_MS = 2500;
+    private static final long INTERRUPTED_AUDIO_DROP_GRACE_MS = 2500;
+    private static final double LOCAL_BARGE_IN_RMS = 1700.0;
+    private static final double SERVER_BARGE_IN_RMS = 900.0;
     private static final String REALTIME_URL =
             "wss://api.openai.com/v1/realtime?model=" + MODEL;
 
     private final ModelEndpointConfig mEndpointConfig;
     private final Set<String> mCompletedCallIds = new HashSet<>();
+    private final Set<String> mTruncatedAssistantItemIds = new HashSet<>();
+    private final Set<String> mMutedResponseIds = new HashSet<>();
+    private final Set<String> mMutedAssistantItemIds = new HashSet<>();
     private volatile boolean mCancelled;
     private volatile RealtimeWebSocket mSocket;
     private volatile AudioRecord mRecorder;
@@ -83,17 +87,25 @@ public final class OpenAiRealtimeVoiceSession {
     private boolean mPendingToolResponseCreate;
     private volatile long mPlaybackFramesWritten;
     private long mLastAudioWriteUptimeMillis;
-    private volatile double mPlaybackMicFloorRms = BARGE_IN_MIN_RMS;
-    private volatile long mBargeInCandidateSinceUptimeMillis;
     private volatile long mLastBargeInUptimeMillis;
+    private volatile long mDropAssistantAudioUntilUptimeMillis;
+    private volatile long mIgnorePartialFunctionCallsUntilUptimeMillis;
     private volatile String mCurrentResponseId;
     private volatile String mCurrentAssistantItemId;
     private volatile int mCurrentAssistantContentIndex;
     private volatile long mCurrentAssistantItemStartFrame;
+    private final String mContinuityContextJson;
 
     public OpenAiRealtimeVoiceSession(ModelEndpointConfig endpointConfig) {
+        this(endpointConfig, "");
+    }
+
+    public OpenAiRealtimeVoiceSession(ModelEndpointConfig endpointConfig,
+            String continuityContextJson) {
         mEndpointConfig = endpointConfig == null
                 ? ModelEndpointConfig.directOpenAi("") : endpointConfig;
+        mContinuityContextJson = continuityContextJson == null
+                ? "" : continuityContextJson.trim();
     }
 
     public void cancel() {
@@ -181,7 +193,7 @@ public final class OpenAiRealtimeVoiceSession {
                 .put("type", "semantic_vad")
                 .put("eagerness", "low")
                 .put("create_response", true)
-                .put("interrupt_response", false);
+                .put("interrupt_response", true);
         JSONObject input = new JSONObject()
                 .put("format", new JSONObject()
                         .put("type", "audio/pcm")
@@ -197,7 +209,7 @@ public final class OpenAiRealtimeVoiceSession {
         JSONObject session = new JSONObject()
                 .put("type", "realtime")
                 .put("model", MODEL)
-                .put("instructions", liveVoiceInstructions())
+                .put("instructions", liveVoiceInstructions(mContinuityContextJson))
                 .put("output_modalities", new JSONArray().put("audio"))
                 .put("audio", new JSONObject()
                         .put("input", input)
@@ -210,18 +222,32 @@ public final class OpenAiRealtimeVoiceSession {
                 .put("session", session);
     }
 
-    private static String liveVoiceInstructions() {
-        return "You are OpenPhone, a live OS voice agent running on the user's phone. "
+    private static String liveVoiceInstructions(String continuityContextJson) {
+        String continuity = continuityContextJson == null
+                || continuityContextJson.trim().isEmpty()
+                || "{}".equals(continuityContextJson.trim())
+                        ? ""
+                        : "Recent continuity context from prior OpenPhone sessions. Use this "
+                                + "when the user refers to previous conversation, previous work, "
+                                + "or asks what you were doing; otherwise do not overfit to it:\n"
+                                + continuityContextJson.trim() + "\n\n";
+        return "You are OpenPhone, a capable live OS voice agent running on the user's phone. "
                 + "The user is speaking to you through a low-latency voice session. "
-                + "Speak briefly and naturally, but take action end to end. Use the phone "
-                + "tools whenever they help. If the user asks about the visible screen, call "
-                + "get_screen before answering. If the user asks you to control an app, "
-                + "inspect the screen and continue with tools until the task is finished, "
-                + "blocked by policy, or truly impossible. Do not ask clarification questions "
-                + "unless the missing detail is required to avoid doing the wrong real-world "
-                + "action. Never claim you cannot use the phone when a relevant tool exists. "
-                + "For risky actions, use the provided confirmation and policy flow. Keep "
-                + "voice replies short while working, then summarize the outcome.";
+                + continuity
+                + "Act first. Use the phone tools whenever they help. Inspect the screen to "
+                + "understand and operate the UI, not to lecture about whether the screen is "
+                + "okay. If the user asks about the visible screen, call get_screen before "
+                + "answering. If the user asks you to control an app, keep observing and "
+                + "acting until the requested result is done or the tools report a real "
+                + "block. Do not ask clarification questions unless every concrete next "
+                + "step is impossible without the answer. For vague requests, make a "
+                + "reasonable choice and continue. Never claim you cannot use the phone "
+                + "when a relevant tool exists. Do not ask for approval for ordinary app "
+                + "navigation, typing fields, searching, choosing visible options, or "
+                + "preparing a workflow. If an OS/tool result requires approval, show it "
+                + "with ask_user_confirmation and include action_json with the exact next "
+                + "tool and arguments. Keep voice replies short while working, then "
+                + "summarize the outcome.";
     }
 
     private void startAudioInput(final RealtimeWebSocket socket, final Callback callback)
@@ -229,13 +255,7 @@ public final class OpenAiRealtimeVoiceSession {
         int minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
         int bufferSize = Math.max(minBuffer, SAMPLE_RATE / 5);
-        AudioRecord recorder = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize);
-        if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
-            recorder.release();
-            throw new IOException("microphone_unavailable");
-        }
+        AudioRecord recorder = createAudioRecord(bufferSize);
         configureAudioEffects(recorder.getAudioSessionId());
         mRecorder = recorder;
         recorder.startRecording();
@@ -259,10 +279,8 @@ public final class OpenAiRealtimeVoiceSession {
                     try {
                         byte[] chunk = new byte[read];
                         System.arraycopy(buffer, 0, chunk, 0, read);
-                        socket.send(new JSONObject()
-                                .put("type", "input_audio_buffer.append")
-                                .put("audio", Base64.encodeToString(chunk, Base64.NO_WRAP)));
-                        maybeBargeInFromLocalMic(socket, callback, rms);
+                        sendAudioChunk(socket, chunk);
+                        maybeStopPlaybackForLocalBargeIn(socket, callback, rms);
                     } catch (IOException | JSONException e) {
                         if (!mCancelled) {
                             callback.onError(e.getMessage() == null
@@ -275,6 +293,35 @@ public final class OpenAiRealtimeVoiceSession {
         }, "OpenPhoneRealtimeMic");
         mAudioThread = audioThread;
         audioThread.start();
+    }
+
+    private static AudioRecord createAudioRecord(int bufferSize) throws IOException {
+        int[] sources = new int[] {
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.MIC
+        };
+        for (int source : sources) {
+            AudioRecord recorder = new AudioRecord(source, SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize);
+            if (recorder.getState() == AudioRecord.STATE_INITIALIZED) {
+                Log.i(TAG, "audio record source=" + source);
+                return recorder;
+            }
+            recorder.release();
+        }
+        throw new IOException("microphone_unavailable");
+    }
+
+    private static void sendAudioChunk(RealtimeWebSocket socket, byte[] chunk)
+            throws IOException, JSONException {
+        if (chunk == null || chunk.length == 0) {
+            return;
+        }
+        socket.send(new JSONObject()
+                .put("type", "input_audio_buffer.append")
+                .put("audio", Base64.encodeToString(chunk, Base64.NO_WRAP)));
     }
 
     private void handleEvent(RealtimeWebSocket socket, String taskId,
@@ -297,12 +344,11 @@ public final class OpenAiRealtimeVoiceSession {
         }
         if ("input_audio_buffer.speech_started".equals(type)) {
             if (isPlaybackActiveOrRecentlyActive()) {
-                if (isLikelyUserBargeIn(mRecentMicRms)) {
-                    requestBargeIn(socket, callback, "server_vad");
+                if (mRecentMicRms >= SERVER_BARGE_IN_RMS) {
+                    handleServerSpeechStartedDuringPlayback(socket, callback);
                 } else {
-                    Log.i(TAG, "speech_started ignored during assistant playback"
-                            + " micRms=" + Math.round(mRecentMicRms)
-                            + " echoFloor=" + Math.round(mPlaybackMicFloorRms));
+                    Log.i(TAG, "server speech_started ignored during playback micRms="
+                            + Math.round(mRecentMicRms));
                 }
                 return;
             }
@@ -338,6 +384,14 @@ public final class OpenAiRealtimeVoiceSession {
             flushAssistantTranscript(callback);
             return;
         }
+        if ("response.cancelled".equals(type) || "response.canceled".equals(type)) {
+            markResponseInterrupted(SystemClock.uptimeMillis());
+            muteCurrentAssistantAudio("response_cancelled");
+            mPendingToolResponseCreate = false;
+            mPendingAssistantTranscript = null;
+            stopPlayback();
+            return;
+        }
         RealtimeFunctionCall call = functionCallFromEvent(event);
         if (call != null) {
             if (executeFunctionCall(socket, taskId, executor, callback, call)) {
@@ -349,9 +403,11 @@ public final class OpenAiRealtimeVoiceSession {
             boolean sentToolOutput = false;
             JSONObject response = event.optJSONObject("response");
             if (response != null && "cancelled".equals(response.optString("status"))) {
+                markResponseInterrupted(SystemClock.uptimeMillis());
+                muteCurrentAssistantAudio("response_done_cancelled");
                 mPendingToolResponseCreate = false;
                 mPendingAssistantTranscript = null;
-                mAssistantAudioActive = false;
+                stopPlayback();
                 return;
             }
             if (response != null) {
@@ -388,8 +444,26 @@ public final class OpenAiRealtimeVoiceSession {
             return false;
         }
         mCompletedCallIds.add(call.callId);
+        JSONObject arguments;
+        try {
+            arguments = parseArguments(call.arguments);
+        } catch (JSONException e) {
+            if (isIgnoringPartialFunctionCalls()) {
+                Log.i(TAG, "ignoring partial function call after interruption name="
+                        + call.name + " args=" + preview(call.arguments));
+                return false;
+            }
+            Log.w(TAG, "bad function arguments for " + call.name
+                    + ": " + preview(call.arguments), e);
+            socket.send(new JSONObject()
+                    .put("type", "conversation.item.create")
+                    .put("item", new JSONObject()
+                            .put("type", "function_call_output")
+                            .put("call_id", call.callId)
+                            .put("output", errorJson("bad_tool_json"))));
+            return true;
+        }
         callback.onToolCall(call.name);
-        JSONObject arguments = parseArguments(call.arguments);
         ensureToolReason(call.name, arguments);
         String output;
         if (!ToolCatalog.get().isAllowedTool(call.name)) {
@@ -399,6 +473,7 @@ public final class OpenAiRealtimeVoiceSession {
         } else {
             output = executor.callTool(call.name, arguments.toString());
         }
+        callback.onToolResult(call.name, output == null ? "" : output);
         socket.send(new JSONObject()
                 .put("type", "conversation.item.create")
                 .put("item", new JSONObject()
@@ -413,12 +488,17 @@ public final class OpenAiRealtimeVoiceSession {
         if (base64Audio == null || base64Audio.isEmpty()) {
             return;
         }
-        AudioTrack player = ensurePlayer();
         String responseId = event.optString("response_id", "");
+        String itemId = event.optString("item_id", "");
+        if (shouldDropAssistantAudio(responseId, itemId)) {
+            Log.i(TAG, "dropping muted assistant audio response=" + preview(responseId)
+                    + " item=" + preview(itemId));
+            return;
+        }
+        AudioTrack player = ensurePlayer();
         if (!responseId.isEmpty()) {
             mCurrentResponseId = responseId;
         }
-        String itemId = event.optString("item_id", "");
         if (!itemId.isEmpty() && !itemId.equals(mCurrentAssistantItemId)) {
             mCurrentAssistantItemId = itemId;
             mCurrentAssistantContentIndex = event.optInt("content_index", 0);
@@ -464,11 +544,22 @@ public final class OpenAiRealtimeVoiceSession {
         try {
             player.pause();
             player.flush();
-            mPlaybackFramesWritten = playbackHeadPosition(player);
-            mAssistantAudioActive = false;
-            mBargeInCandidateSinceUptimeMillis = 0L;
-            player.play();
         } catch (RuntimeException ignored) {
+        } finally {
+            try {
+                player.stop();
+            } catch (RuntimeException ignored) {
+            }
+            try {
+                player.release();
+            } catch (RuntimeException ignored) {
+            }
+            if (mPlayer == player) {
+                mPlayer = null;
+            }
+            mPlaybackFramesWritten = 0;
+            mAssistantAudioActive = false;
+            mLastAudioWriteUptimeMillis = 0L;
         }
     }
 
@@ -505,7 +596,6 @@ public final class OpenAiRealtimeVoiceSession {
             }
         }
         mAssistantAudioActive = false;
-        mBargeInCandidateSinceUptimeMillis = 0L;
         Log.i(TAG, "playback drain reason=" + reason
                 + " remainingFrames=" + Math.max(0,
                         mPlaybackFramesWritten - playbackHeadPosition(player))
@@ -516,45 +606,18 @@ public final class OpenAiRealtimeVoiceSession {
         return player.getPlaybackHeadPosition() & 0xffffffffL;
     }
 
-    private void maybeBargeInFromLocalMic(RealtimeWebSocket socket, Callback callback, double rms)
-            throws IOException, JSONException {
-        if (!mAssistantAudioActive || mCancelled) {
-            mBargeInCandidateSinceUptimeMillis = 0L;
+    private void maybeStopPlaybackForLocalBargeIn(RealtimeWebSocket socket, Callback callback,
+            double rms) throws IOException, JSONException {
+        if (mCancelled || !mAssistantAudioActive) {
             return;
         }
         long now = SystemClock.uptimeMillis();
-        if (now - mLastAudioWriteUptimeMillis < PLAYBACK_START_BARGE_GUARD_MS) {
-            return;
-        }
-        if (!isLikelyUserBargeIn(rms)) {
-            updatePlaybackEchoFloor(rms);
-            mBargeInCandidateSinceUptimeMillis = 0L;
-            return;
-        }
-        if (mBargeInCandidateSinceUptimeMillis == 0L) {
-            mBargeInCandidateSinceUptimeMillis = now;
-            return;
-        }
-        if (now - mBargeInCandidateSinceUptimeMillis < BARGE_IN_SUSTAIN_MS
-                || now - mLastBargeInUptimeMillis < BARGE_IN_COOLDOWN_MS) {
+        if (now - mLastAudioWriteUptimeMillis < LOCAL_BARGE_IN_GUARD_MS
+                || now - mLastBargeInUptimeMillis < BARGE_IN_COOLDOWN_MS
+                || rms < LOCAL_BARGE_IN_RMS) {
             return;
         }
         requestBargeIn(socket, callback, "local_mic");
-    }
-
-    private boolean isLikelyUserBargeIn(double rms) {
-        return rms >= BARGE_IN_MIN_RMS
-                && rms >= Math.max(BARGE_IN_MIN_RMS,
-                        mPlaybackMicFloorRms * BARGE_IN_ECHO_RATIO);
-    }
-
-    private void updatePlaybackEchoFloor(double rms) {
-        if (rms <= 0) {
-            return;
-        }
-        double floor = Math.max(BARGE_IN_MIN_RMS, mPlaybackMicFloorRms);
-        mPlaybackMicFloorRms = Math.min(PLAYBACK_ECHO_FLOOR_CAP_RMS,
-                (floor * 0.85) + (rms * 0.15));
     }
 
     private void requestBargeIn(RealtimeWebSocket socket, Callback callback, String reason)
@@ -563,39 +626,60 @@ public final class OpenAiRealtimeVoiceSession {
         if (now - mLastBargeInUptimeMillis < BARGE_IN_COOLDOWN_MS) {
             return;
         }
-        mLastBargeInUptimeMillis = now;
-        mBargeInCandidateSinceUptimeMillis = 0L;
+        markResponseInterrupted(now);
         Log.i(TAG, "barge-in accepted reason=" + reason
-                + " micRms=" + Math.round(mRecentMicRms)
-                + " echoFloor=" + Math.round(mPlaybackMicFloorRms));
+                + " micRms=" + Math.round(mRecentMicRms));
         mPendingAssistantTranscript = null;
-        sendConversationTruncate(socket);
+        muteCurrentAssistantAudio(reason);
+        JSONObject truncate = conversationTruncateEvent();
         stopPlayback();
         JSONObject cancel = new JSONObject().put("type", "response.cancel");
         if (mCurrentResponseId != null && !mCurrentResponseId.isEmpty()) {
             cancel.put("response_id", mCurrentResponseId);
         }
         socket.send(cancel);
+        if (truncate != null) {
+            socket.send(truncate);
+        }
         callback.onStatus("Listening");
     }
 
-    private synchronized void sendConversationTruncate(RealtimeWebSocket socket)
-            throws IOException, JSONException {
+    private void handleServerSpeechStartedDuringPlayback(RealtimeWebSocket socket,
+            Callback callback) throws IOException, JSONException {
+        markResponseInterrupted(SystemClock.uptimeMillis());
+        Log.i(TAG, "server speech_started interrupted playback micRms="
+                + Math.round(mRecentMicRms));
+        mPendingAssistantTranscript = null;
+        muteCurrentAssistantAudio("server_vad");
+        JSONObject truncate = conversationTruncateEvent();
+        stopPlayback();
+        if (truncate != null) {
+            socket.send(truncate);
+        }
+        callback.onStatus("Listening");
+    }
+
+    private synchronized JSONObject conversationTruncateEvent() throws JSONException {
         AudioTrack player = mPlayer;
         String itemId = mCurrentAssistantItemId;
         if (player == null || itemId == null || itemId.isEmpty()) {
-            return;
+            return null;
+        }
+        if (mTruncatedAssistantItemIds.contains(itemId)) {
+            Log.i(TAG, "conversation truncate skipped already-truncated item=" + itemId);
+            return null;
         }
         long playedFrames = Math.max(0,
                 playbackHeadPosition(player) - mCurrentAssistantItemStartFrame);
         int audioEndMs = (int) Math.max(0, playedFrames * 1000L / SAMPLE_RATE);
-        socket.send(new JSONObject()
+        mTruncatedAssistantItemIds.add(itemId);
+        Log.i(TAG, "conversation truncate prepared for barge-in item=" + itemId
+                + " audioEndMs=" + audioEndMs);
+        return new JSONObject()
                 .put("type", "conversation.item.truncate")
                 .put("item_id", itemId)
                 .put("content_index", mCurrentAssistantContentIndex)
-                .put("audio_end_ms", audioEndMs));
-        Log.i(TAG, "conversation truncated for barge-in item=" + itemId
-                + " audioEndMs=" + audioEndMs);
+                .put("audio_end_ms", audioEndMs);
     }
 
     private static boolean isCancelRaceError(JSONObject error) {
@@ -606,10 +690,52 @@ public final class OpenAiRealtimeVoiceSession {
         String code = error.optString("code", "").toLowerCase(Locale.US);
         return code.contains("response_not_found")
                 || code.contains("no_active_response")
+                || code.contains("response_cancel_not_active")
                 || (message.contains("response.cancel")
                         && (message.contains("no response")
                                 || message.contains("not found")
-                                || message.contains("already")));
+                                || message.contains("already")))
+                || (message.contains("cancellation failed")
+                        && message.contains("no active response"));
+    }
+
+    private void markResponseInterrupted(long now) {
+        mLastBargeInUptimeMillis = now;
+        mDropAssistantAudioUntilUptimeMillis = now + INTERRUPTED_AUDIO_DROP_GRACE_MS;
+        mIgnorePartialFunctionCallsUntilUptimeMillis =
+                now + INTERRUPTED_FUNCTION_CALL_GRACE_MS;
+    }
+
+    private boolean isIgnoringPartialFunctionCalls() {
+        return SystemClock.uptimeMillis() < mIgnorePartialFunctionCallsUntilUptimeMillis;
+    }
+
+    private synchronized void muteCurrentAssistantAudio(String reason) {
+        String responseId = mCurrentResponseId;
+        String itemId = mCurrentAssistantItemId;
+        if (responseId != null && !responseId.isEmpty()) {
+            mMutedResponseIds.add(responseId);
+        }
+        if (itemId != null && !itemId.isEmpty()) {
+            mMutedAssistantItemIds.add(itemId);
+        }
+        Log.i(TAG, "assistant audio muted reason=" + reason
+                + " response=" + preview(responseId)
+                + " item=" + preview(itemId));
+    }
+
+    private synchronized boolean shouldDropAssistantAudio(String responseId, String itemId) {
+        if (responseId != null && !responseId.isEmpty()
+                && mMutedResponseIds.contains(responseId)) {
+            return true;
+        }
+        if (itemId != null && !itemId.isEmpty()
+                && mMutedAssistantItemIds.contains(itemId)) {
+            return true;
+        }
+        return (responseId == null || responseId.isEmpty())
+                && (itemId == null || itemId.isEmpty())
+                && SystemClock.uptimeMillis() < mDropAssistantAudioUntilUptimeMillis;
     }
 
     private void configureAudioEffects(int sessionId) {
@@ -750,6 +876,14 @@ public final class OpenAiRealtimeVoiceSession {
         } catch (JSONException e) {
             return "{\"status\":\"error\"}";
         }
+    }
+
+    private static String preview(String value) {
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value.replace('\n', ' ').replace('\r', ' ').trim();
+        return cleaned.length() <= 120 ? cleaned : cleaned.substring(0, 120) + "...";
     }
 
     private static final class RealtimeFunctionCall {

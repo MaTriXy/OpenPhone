@@ -236,6 +236,44 @@ public final class ContextIndexStore {
         return conversation.toString();
     }
 
+    /**
+     * Compact cross-session continuity bundle for model prompts. This is not a
+     * durable-memory replacement: it gives the model recent conversational and
+     * agent-state breadcrumbs, while memory/commitment/watch tools remain the
+     * source of truth for long-lived state.
+     */
+    public String continuityContextJson(int conversationLimit, int agentEventLimit) {
+        JSONObject out = new JSONObject();
+        try {
+            out.put("generated_at", System.currentTimeMillis())
+                    .put("recent_conversation_oldest_first",
+                            new JSONArray(recentConversationJson(conversationLimit)))
+                    .put("recent_agent_events_oldest_first",
+                            recentAgentEventsJson(agentEventLimit));
+        } catch (JSONException e) {
+            return "{}";
+        }
+        return out.toString();
+    }
+
+    private JSONArray recentAgentEventsJson(int limit) {
+        int boundedLimit = Math.max(1, Math.min(limit, 12));
+        List<ContextEvent> events = queryEvents("", "", "assistant.agent.", boundedLimit);
+        JSONArray out = new JSONArray();
+        for (int i = events.size() - 1; i >= 0; i--) {
+            ContextEvent event = events.get(i);
+            try {
+                out.put(new JSONObject()
+                        .put("source_type", event.sourceType)
+                        .put("observed_at", event.observedAtMillis)
+                        .put("title", event.title == null ? "" : event.title)
+                        .put("text", event.text == null ? "" : event.text));
+            } catch (JSONException ignored) {
+            }
+        }
+        return out;
+    }
+
     public String searchJson(String query, int limit) {
         StringBuilder builder = new StringBuilder();
         builder.append("{\"events\":[");

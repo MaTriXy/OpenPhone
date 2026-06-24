@@ -30,8 +30,8 @@ those against the synced Lineage tree is part of Phase 1.
 
 ## Device Check
 
-No physical device is supported until its `devices/<codename>.md` checklist is
-complete.
+No physical device is supported until its `docs/devices/<codename>.md`
+checklist is complete.
 
 ## Pixel 9a Hardware Smoke Test
 
@@ -74,12 +74,11 @@ adb shell 'settings get secure enabled_accessibility_services'
 adb shell 'settings get secure accessibility_enabled'
 ```
 
-Expected current assistant package metadata after the preview OTA client build:
-
-```text
-versionCode=129
-versionName=0.1.93-dev
-```
+Expected assistant package metadata should match
+`overlay/packages/apps/OpenPhoneAssistant/AndroidManifest.xml`. Prefer
+`scripts/verify-tegu-device.sh`; it derives the expected version from the
+repository manifest and catches stale PackageManager metadata after OTA or
+privileged APK pushes.
 
 ## Assistant UI Smoke Test
 

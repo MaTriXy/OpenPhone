@@ -6,45 +6,53 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 required=(
   README.md
-  SPEC.md
-  COMMERCIAL.md
-  CONTRIBUTING.md
   LICENSE
-  LICENSE.noncommercial
-  NOTICE
-  SECURITY.md
-  THIRD_PARTY_NOTICES.md
-  CHANGELOG.md
+  .github/CONTRIBUTING.md
+  .github/SECURITY.md
+  docs/README.md
+  docs/AGENT_RUNTIME_V1.md
   docs/ARCHITECTURE.md
   docs/BUILD.md
-  docs/BRINGUP_LOG.md
   docs/CAPABILITIES.md
   docs/DEVICE_SUPPORT.md
-  docs/FRAMEWORK_PLAN.md
   docs/GMS.md
-  docs/IMPLEMENTATION_STATUS.md
   docs/LICENSING.md
-  docs/PLAN.md
+  docs/legal/README.md
+  docs/legal/COMMERCIAL.md
+  docs/legal/LICENSE.noncommercial
+  docs/legal/NOTICE
+  docs/legal/THIRD_PARTY_NOTICES.md
   docs/RELEASE_PROCESS.md
-  docs/ROADMAP.md
+  docs/TESTING.md
+  docs/releases/README.md
+  docs/releases/CHANGELOG.md
+  docs/assets/github_hero.png
   docs/releases/0.0.1.md
-  docs/contracts/action-request.schema.json
-  docs/contracts/action-registry.schema.json
-  docs/contracts/agent-eval-report.schema.json
-  docs/contracts/agent-task.schema.json
-  docs/contracts/app-policy.schema.json
-  docs/contracts/audit-evidence.schema.json
-  docs/contracts/audit-event.schema.json
-  docs/contracts/model-tool.schema.json
-  docs/contracts/ota-feed.schema.json
-  docs/contracts/screen-context.schema.json
-  docs/contracts/trajectory-event.schema.json
+  schemas/README.md
+  schemas/action-request.schema.json
+  schemas/action-registry.schema.json
+  schemas/action-result.schema.json
+  schemas/agent-eval-report.schema.json
+  schemas/agent-job.schema.json
+  schemas/agent-task.schema.json
+  schemas/app-policy.schema.json
+  schemas/audit-evidence.schema.json
+  schemas/audit-event.schema.json
+  schemas/audit-log.schema.json
+  schemas/model-tool.schema.json
+  schemas/ota-feed.schema.json
+  schemas/screen-context.schema.json
+  schemas/trajectory-event.schema.json
   .github/workflows/ci.yml
+  .github/workflows/eval.yml
+  .github/workflows/release.yml
+  .github/RUNNERS.md
   .github/ISSUE_TEMPLATE/bug_report.md
   .github/ISSUE_TEMPLATE/feature_request.md
   .github/pull_request_template.md
-  devices/MATRIX.md
-  devices/tegu.md
+  docs/devices/MATRIX.md
+  docs/devices/README.md
+  docs/devices/tegu.md
   manifests/openphone.xml
   scripts/prepare-tegu-dtb.sh
   scripts/generate-release-manifest.sh
@@ -209,11 +217,11 @@ if mismatched:
 tool_path = root / "overlay/vendor/openphone/config/openphone_model_tools.json"
 action_registry_path = root / "overlay/vendor/openphone/config/openphone_action_registry.json"
 app_policy_path = root / "overlay/vendor/openphone/config/openphone_app_policy.json"
-action_registry_schema_path = root / "docs/contracts/action-registry.schema.json"
-action_schema_path = root / "docs/contracts/action-request.schema.json"
-audit_schema_path = root / "docs/contracts/audit-event.schema.json"
-screen_schema_path = root / "docs/contracts/screen-context.schema.json"
-trajectory_schema_path = root / "docs/contracts/trajectory-event.schema.json"
+action_registry_schema_path = root / "schemas/action-registry.schema.json"
+action_schema_path = root / "schemas/action-request.schema.json"
+audit_schema_path = root / "schemas/audit-event.schema.json"
+screen_schema_path = root / "schemas/screen-context.schema.json"
+trajectory_schema_path = root / "schemas/trajectory-event.schema.json"
 executor_path = root / "overlay/packages/apps/OpenPhoneAssistant/src/org/openphone/assistant/agent/FrameworkToolExecutor.java"
 adapter_path = root / "overlay/packages/apps/OpenPhoneAssistant/src/org/openphone/assistant/model/OpenAiRealtimeAdapter.java"
 trajectory_path = root / "overlay/packages/apps/OpenPhoneAssistant/src/org/openphone/assistant/agent/TrajectoryRecorder.java"

@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenPhone Model Broker
-Documentation=https://github.com/openphone-os/OpenPhone
+Documentation=https://github.com/secondly-com/OpenPhone
 After=network-online.target
 Wants=network-online.target
 

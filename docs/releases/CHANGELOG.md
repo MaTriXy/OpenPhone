@@ -122,10 +122,10 @@ flow, and device support.
 - Added `scripts/validate-trajectory-export.sh` for assistant trajectory
   evidence directories/zips, including event ordering, screenshot reference,
   and leakage checks.
-- Added `docs/contracts/audit-evidence.schema.json` and
+- Added `schemas/audit-evidence.schema.json` and
   `scripts/validate-audit-evidence-export.sh` for framework audit evidence
   exports.
-- Added `docs/contracts/agent-eval-report.schema.json` and
+- Added `schemas/agent-eval-report.schema.json` and
   `scripts/validate-agent-eval-report.sh` so physical agent eval runs can be
   recorded with validated trajectory and audit evidence references.
 - Added `scripts/collect-agent-eval.sh` to pull the latest phone-exported
@@ -190,8 +190,8 @@ flow, and device support.
   Pixel 9a OTA builds pass release hygiene gates.
 - OpenPhone Assistant can export the latest trajectory as a zip file under
   `Downloads/OpenPhone`, giving physical evals a non-root evidence path.
-- `docs/PLAN.md` is now the canonical active plan.
-- `docs/ROADMAP.md` is now the short public roadmap.
+- Public documentation now uses `docs/README.md` as the index, with old
+  planning/status documents removed from the public tree.
 - Stopping an active agent run now cancels the model adapter, interrupts the
   run thread, prevents stale generations from updating the UI, and treats
   disconnected OpenAI requests as cancellation rather than network failure.

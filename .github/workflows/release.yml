@@ -1,107 +1,82 @@
 name: Release
 
-# Builds an OTA on the EC2 self-hosted runner and publishes it as a GitHub
-# Release asset. Triggered manually so we never accidentally cut a release on
-# every push.
-#
-# Prereqs:
-# - A self-hosted runner registered with the label `openphone-build` against
-#   this repo, running on the EC2 build host (~200GB disk, the existing
-#   /home/ubuntu/OpenPhone tree, and the SSH keys + Android source already in
-#   place).
-# - The runner user can invoke `scripts/build.sh openphone_tegu` directly.
-# - The runner has `gh` (GitHub CLI) authenticated, OR the workflow uses
-#   GITHUB_TOKEN to upload via softprops/action-gh-release@v2.
-
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v0.0.1). Used as both the tag and the release name.'
+        description: "Release version, for example v0.0.1-preview.1"
         required: true
-        default: 'v0.0.1'
-      prerelease:
-        description: 'Mark as pre-release?'
+        default: "v0.0.1-preview.1"
+      device:
+        description: "Device target"
         required: true
-        default: 'true'
+        default: "tegu"
         type: choice
         options:
-          - 'true'
-          - 'false'
+          - tegu
+      prerelease:
+        description: "Mark as a GitHub prerelease"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 permissions:
   contents: write
 
 jobs:
-  build-ota:
-    name: Build OpenPhone OTA
+  build-device-preview:
+    name: Build device preview
     runs-on: [self-hosted, openphone-build]
-    timeout-minutes: 60
+    timeout-minutes: 180
+    env:
+      OPENPHONE_ANDROID_DIR: ${{ vars.OPENPHONE_ANDROID_DIR || '.worktree/android' }}
+      OPENPHONE_RELEASE: bp4a
+      OPENPHONE_BUILD_GOAL: otapackage
     steps:
-      - name: Check out repository at this commit
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Build openphone_tegu OTA
-        env:
-          OPENPHONE_ANDROID_DIR: /home/ubuntu/OpenPhone/.worktree/android
-          OPENPHONE_RELEASE: bp4a
-          OPENPHONE_BUILD_GOAL: otapackage
+      - name: Validate repository
         run: |
           set -euxo pipefail
-          ./scripts/build.sh openphone_tegu
+          ./scripts/check.sh
+          git diff --check
 
-      - name: Stage OTA artifact for upload
+      - name: Build OTA
+        run: |
+          set -euxo pipefail
+          ./scripts/build.sh openphone_${{ inputs.device }}
+
+      - name: Stage release artifacts
         id: stage
-        env:
-          OPENPHONE_ANDROID_DIR: /home/ubuntu/OpenPhone/.worktree/android
         run: |
           set -euxo pipefail
-          mkdir -p release-staging
-          src="${OPENPHONE_ANDROID_DIR}/out/target/product/tegu/openphone_tegu-ota.zip"
-          dst="release-staging/openphone_tegu-${{ inputs.version }}-ota.zip"
+          staging=".worktree/releases/${{ inputs.version }}"
+          product_dir="${OPENPHONE_ANDROID_DIR}/out/target/product/${{ inputs.device }}"
+          src="${product_dir}/openphone_${{ inputs.device }}-ota.zip"
+          dst="${staging}/openphone_${{ inputs.device }}-${{ inputs.version }}-ota.zip"
+
+          mkdir -p "$staging"
           cp "$src" "$dst"
-          sha256sum "$dst" | tee "${dst}.sha256"
+          scripts/generate-release-manifest.sh "${{ inputs.version }}" "$staging" "$staging"
+          scripts/validate-release-artifacts.sh "$staging"
+
+          echo "staging=$staging" >> "$GITHUB_OUTPUT"
           echo "ota_path=$dst" >> "$GITHUB_OUTPUT"
-          echo "sha_path=${dst}.sha256" >> "$GITHUB_OUTPUT"
+          echo "sha_path=${staging}/SHA256SUMS" >> "$GITHUB_OUTPUT"
+          echo "artifacts_path=${staging}/ARTIFACTS.md" >> "$GITHUB_OUTPUT"
 
-      - name: Generate release notes
-        id: notes
-        run: |
-          set -euxo pipefail
-          {
-            echo "OpenPhone ${{ inputs.version }}"
-            echo
-            echo "Pixel 9a (tegu) OTA built from commit ${GITHUB_SHA}."
-            echo
-            echo "**Sideload:**"
-            echo
-            echo '```'
-            echo 'adb reboot sideload-auto-reboot'
-            echo "adb sideload openphone_tegu-${{ inputs.version }}-ota.zip"
-            echo '```'
-            echo
-            echo "After the device boots, push the assistant APK from"
-            echo "\`/system_ext/priv-app/OpenPhoneAssistant/\` (already in the OTA)."
-            echo
-            echo "**Bring your own OpenAI API key** — set it via the assistant's dev"
-            echo "settings or:"
-            echo
-            echo '```'
-            echo 'adb shell settings put secure openphone_dev_openai_api_key sk-...'
-            echo '```'
-            echo
-            echo "Recent commits:"
-            echo
-            git log -10 --pretty='format:- %h %s'
-          } > release-notes.md
-
-      - name: Create GitHub Release with OTA + sha256
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
           name: ${{ inputs.version }}
-          body_path: release-notes.md
+          body_path: docs/releases/0.0.1.md
           prerelease: ${{ inputs.prerelease == 'true' }}
           files: |
             ${{ steps.stage.outputs.ota_path }}
             ${{ steps.stage.outputs.sha_path }}
+            ${{ steps.stage.outputs.artifacts_path }}

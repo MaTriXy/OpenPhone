@@ -9,8 +9,7 @@ Do not file public GitHub issues for vulnerabilities, leaked secrets, bypasses,
 or exploitable device-control bugs.
 
 Report privately through GitHub private vulnerability reporting when available,
-or through the maintainer's existing private contact channel until a dedicated
-security address is published.
+or email support@secondly.com with `OpenPhone security` in the subject.
 
 ## Current Security Posture
 

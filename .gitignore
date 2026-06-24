@@ -6,6 +6,7 @@ out/
 *.swp
 *.swo
 *.pem
+/*.png
 docs/local/
 __pycache__/
 *.pyc

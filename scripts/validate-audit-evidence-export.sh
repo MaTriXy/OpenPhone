@@ -39,9 +39,9 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 root = pathlib.Path(__file__).resolve().parents[1] if "__file__" in globals() else pathlib.Path.cwd()
-contract_path = pathlib.Path.cwd() / "docs/contracts/audit-event.schema.json"
+contract_path = pathlib.Path.cwd() / "schemas/audit-event.schema.json"
 if not contract_path.is_file():
-    contract_path = path.parent / "docs/contracts/audit-event.schema.json"
+    contract_path = path.parent / "schemas/audit-event.schema.json"
 
 allowed_events = None
 if contract_path.is_file():

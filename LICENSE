@@ -1,6 +1,6 @@
 OpenPhone License
 
-Required Notice: Copyright 2026 Dafdef, inc. and Adam Cohen Hillel.
+Required Notice: Copyright 2026 Dafdef, inc.
 All rights reserved.
 
 OpenPhone uses a mixed-license model because this repository may contain
@@ -12,10 +12,10 @@ trees, vendor extraction flows, and other third-party projects.
 
 OpenPhone-owned materials are proprietary and source-available. They are made
 available for non-commercial use only under the PolyForm Noncommercial License
-1.0.0. See LICENSE.noncommercial.
+1.0.0. See docs/legal/LICENSE.noncommercial.
 
 Commercial use of OpenPhone-owned materials requires a separate written
-commercial license from Dafdef, inc. See COMMERCIAL.md.
+commercial license from Dafdef, inc. See docs/legal/COMMERCIAL.md.
 
 2. Upstream And Third-Party Materials
 
@@ -36,7 +36,7 @@ controls for that file.
 
 5. Contributions
 
-All contributions are governed by CONTRIBUTING.md. By submitting a contribution,
-you agree to the contributor terms in that file. If there is a conflict between
-this license and CONTRIBUTING.md for a contribution you submit, CONTRIBUTING.md
-controls for that contribution.
+All contributions are governed by .github/CONTRIBUTING.md. By submitting a
+contribution, you agree to the contributor terms in that file. If there is a
+conflict between this license and .github/CONTRIBUTING.md for a contribution
+you submit, .github/CONTRIBUTING.md controls for that contribution.
