@@ -1171,7 +1171,8 @@ public class AssistantActivityBackend extends ComponentActivity {
         mAgentRunCancelled = false;
         final int voiceGeneration = ++mVoiceRunGeneration;
         final int runGeneration = ++mAgentRunGeneration;
-        final OpenAiRealtimeVoiceSession session = new OpenAiRealtimeVoiceSession(endpointConfig);
+        final OpenAiRealtimeVoiceSession session = new OpenAiRealtimeVoiceSession(endpointConfig,
+                continuityContextJson());
         mRunningRealtimeVoiceSession = session;
         Log.i(TAG, "live realtime voice start control=" + isControlSurface());
         setTaskText("Live Realtime 2 is listening.");
@@ -1270,6 +1271,11 @@ public class AssistantActivityBackend extends ComponentActivity {
                         }
 
                         @Override
+                        public void onToolResult(String toolName, String resultJson) {
+                            postRealtimeVoiceToolResult(voiceGeneration, toolName, resultJson);
+                        }
+
+                        @Override
                         public void onError(String message) {
                             postRealtimeVoiceError(voiceGeneration, message);
                         }
@@ -1334,6 +1340,20 @@ public class AssistantActivityBackend extends ComponentActivity {
                 if (mPointerOverlayController != null) {
                     mPointerOverlayController.setIslandState("realtime", "Live Realtime 2");
                 }
+            }
+        });
+    }
+
+    private void postRealtimeVoiceToolResult(final int voiceGeneration, final String toolName,
+            final String resultJson) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (voiceGeneration != mVoiceRunGeneration || resultJson == null
+                        || resultJson.trim().isEmpty()) {
+                    return;
+                }
+                showRealtimeConfirmationIfNeeded(toolName, resultJson);
             }
         });
     }
@@ -1608,8 +1628,7 @@ public class AssistantActivityBackend extends ComponentActivity {
                 + " message=\"" + previewForLog(message) + "\"");
         final OperatingMode operatingMode = currentOperatingMode();
         final boolean hasActiveTask = mActiveTaskId != null || mAgentThread != null;
-        final String recentConversation = mContextIndexStore == null
-                ? "[]" : mContextIndexStore.recentConversationJson(10);
+        final String recentConversation = continuityContextJson();
         appendConversation("You", message);
         setCurrentGoalText("");
         cancelChatRun();
@@ -2204,6 +2223,24 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
     }
 
+    private String continuityContextJson() {
+        if (mContextIndexStore == null) {
+            return "{}";
+        }
+        try {
+            return mContextIndexStore.continuityContextJson(16, 8);
+        } catch (RuntimeException e) {
+            try {
+                return new JSONObject()
+                        .put("recent_conversation_oldest_first",
+                                new JSONArray(mContextIndexStore.recentConversationJson(10)))
+                        .toString();
+            } catch (JSONException ignored) {
+                return "{}";
+            }
+        }
+    }
+
     private void recordContextAgentEvent(String eventType, String title, String text,
             String taskId, String payloadJson) {
         if (mContextIndexStore == null) {
@@ -2744,6 +2781,35 @@ public class AssistantActivityBackend extends ComponentActivity {
             showPendingConfirmation(confirmationBodyFromAgentResult(status, confirmation));
         } catch (JSONException e) {
             hidePendingConfirmation();
+        }
+    }
+
+    private void showRealtimeConfirmationIfNeeded(String toolName, String toolResultJson) {
+        try {
+            JSONObject result = new JSONObject(toolResultJson);
+            String status = result.optString("status", result.optString("state", ""));
+            if (!"confirmation_requested".equals(status)
+                    && !"confirmation_required".equals(status)
+                    && !"action.confirmation_required".equals(status)
+                    && !"action_denied".equals(status)) {
+                return;
+            }
+            String pendingActionId = findStringRecursive(result, "pending_action_id");
+            if (pendingActionId != null && !pendingActionId.isEmpty()
+                    && !"null".equals(pendingActionId)) {
+                mPendingActionId = pendingActionId;
+            }
+            capturePendingToolAction(result);
+            String body = confirmationBodyFromAgentResult(status, result);
+            showPendingConfirmation(body);
+            setTaskText(body);
+            updateComposerActionButton();
+            refreshAudit();
+            Log.i(TAG, "live realtime confirmation shown tool="
+                    + (toolName == null ? "" : toolName)
+                    + " status=" + status);
+        } catch (JSONException e) {
+            Log.w(TAG, "bad realtime confirmation result", e);
         }
     }
 
