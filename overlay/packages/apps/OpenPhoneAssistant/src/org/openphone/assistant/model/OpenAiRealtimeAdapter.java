@@ -495,6 +495,16 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "after the result. ";
     }
 
+    private static String initiativeInstruction() {
+        return "Be execution-biased. Assume the user wants the phone task completed, not "
+                + "a cautious plan. Make reasonable assumptions, pick default/top/visible "
+                + "options, continue through reversible UI, and verify progress yourself "
+                + "from screen/tool results. Do not mumble, apologize, narrate uncertainty, "
+                + "or ask the user to verify every step. Ask only when missing information "
+                + "blocks every concrete path. Keep any user-facing text brief and "
+                + "outcome-focused. ";
+    }
+
     private static String initialTaskPrompt(String userGoal, boolean fullYolo) {
         return "Start this Android phone task and keep working until it is visibly complete "
                 + "or blocked. Device time: " + deviceTimeContext()
@@ -503,6 +513,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + (userGoal == null ? "" : userGoal.trim())
                 + (fullYolo ? "\n\n" : "")
                 + yoloModeInstruction(fullYolo)
+                + initiativeInstruction()
                 + "\n\nUse memory_search for durable user preferences/instructions and "
                 + "context_search if prior assistant conversation or task history may "
                 + "help. Use notifications_list or notifications_search when recent "
@@ -578,6 +589,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return "You are OpenPhone Agent, a persistent mobile GUI agent running inside Android. "
                 + "You can control the phone only through the provided function tools. "
                 + yoloModeInstruction(fullYolo)
+                + initiativeInstruction()
                 + "Work on long-horizon tasks: observe, decide one action, inspect the result, "
                 + "recover from no-ops, and continue until the task is visibly complete. "
                 + "You are capable of operating apps end to end; do not narrate doubts, "

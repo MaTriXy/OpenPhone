@@ -569,6 +569,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "Use memory_save or memory_search in proposed_actions.\n"
                 + "- stop: the user wants to stop or cancel what is happening.\n\n"
                 + "Rules:\n"
+                + initiativeRule()
                 + orchestratorAutonomyRule()
                 + "- Every proposed_actions tool call must come from the tool list below, with "
                 + "arguments matching its schema, including a specific \"reason\" argument "
@@ -623,6 +624,14 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                     + "watch/memory and let the tool layer execute them.\n";
         }
         return "";
+    }
+
+    private String initiativeRule() {
+        return "- Be execution-biased. If the request is actionable, do the useful thing "
+                + "instead of explaining limits, asking the user to verify every step, or "
+                + "handing ordinary choices back. Make reasonable assumptions, choose "
+                + "default/top/visible options, and proceed through reversible UI. Ask only "
+                + "when missing information blocks every concrete path.\n";
     }
 
     private String taskAutonomyRule() {
@@ -783,10 +792,14 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "exactly one action, then verify progress on the next observation. Return "
                 + "exactly one JSON object and no markdown.\n\n"
                 + "Agent rules:\n"
+                + initiativeRule()
                 + taskAutonomyRule()
                 + "- Treat this as a long-horizon task. Use up to the available step budget.\n"
                 + "- First understand where you are: foreground app, visible text, UI tree, "
                 + "and screenshot.\n"
+                + "- Do not mumble, apologize, narrate uncertainty, or stop at a plan. "
+                + "When a tool can advance the task, call the tool. Keep user-facing "
+                + "summaries brief and outcome-focused.\n"
                 + "- Prefer semantic UI actions. Use tap_element or long_press_element with "
                 + "an interactive_elements id whenever a matching enabled element exists.\n"
                 + "- Use raw coordinates only for unlabeled/custom UI when no suitable "
@@ -794,6 +807,9 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "- If an action did not change the screen, recover: choose another visible "
                 + "target, scroll, press back, wait for loading, or fail with a precise reason.\n"
                 + "- Do not repeat the same failed/no-op action.\n"
+                + "- Do not ask for repeated verification. One clear user request is enough "
+                + "authorization for the requested workflow within the current autonomy "
+                + "mode; use the screen and tool results to verify progress yourself.\n"
                 + "- Do not finish just because an app opened. Finish only when the current "
                 + "screen visibly satisfies the user's goal and your success_criteria.\n"
                 + "- For goals phrased as \"open <app/site>\", stop once that app or site is "

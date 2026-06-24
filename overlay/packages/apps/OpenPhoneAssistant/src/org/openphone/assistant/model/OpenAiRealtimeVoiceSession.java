@@ -242,6 +242,7 @@ public final class OpenAiRealtimeVoiceSession {
                 + "The user is speaking to you through a low-latency voice session. "
                 + continuity
                 + yoloModeInstruction(fullYolo)
+                + initiativeInstruction()
                 + "Act first. Use the phone tools whenever they help. Inspect the screen to "
                 + "understand and operate the UI, not to lecture about whether the screen is "
                 + "okay. If the user asks about the visible screen, call get_screen before "
@@ -256,6 +257,14 @@ public final class OpenAiRealtimeVoiceSession {
                 + approvalResultInstruction(fullYolo)
                 + "Keep voice replies short while working, then "
                 + "summarize the outcome.";
+    }
+
+    private static String initiativeInstruction() {
+        return "Be direct and action-heavy. The user wants the phone operated, not a "
+                + "careful monologue. Make reasonable assumptions, choose default/top/"
+                + "visible options, keep moving through reversible UI, and verify progress "
+                + "from the screen yourself. Do not ask the user to confirm every step or "
+                + "repeat back obvious plans. Speak briefly while working. ";
     }
 
     private static String yoloModeInstruction(boolean fullYolo) {
