@@ -128,6 +128,40 @@ public class AssistantActivityBackend extends ComponentActivity {
     private static final String PREF_VOICE_MODE = "voice_mode";
     private static final String VOICE_MODE_CLASSIC = "classic";
     private static final String VOICE_MODE_LIVE_REALTIME_2 = "live_realtime_2";
+    private static final String[] FULL_YOLO_APPROVED_CAPABILITIES = {
+            "screen.read.visible",
+            "screen.capture",
+            "input.perform",
+            "apps.read",
+            "apps.launch",
+            "tasks.observe",
+            "memory.read",
+            "memory.write",
+            "commitments.read",
+            "commitments.write",
+            "watchers.read",
+            "watchers.write",
+            "notifications.read",
+            "notifications.act",
+            "clipboard.read",
+            "clipboard.write",
+            "share.content",
+            "files.read.scoped",
+            "contacts.read",
+            "calendar.read",
+            "calendar.write",
+            "calendar.delete",
+            "messages.read",
+            "messages.draft",
+            "messages.send",
+            "calls.read",
+            "calls.place",
+            "settings.read",
+            "settings.write",
+            "background.run",
+            "network.use",
+            "account.access"
+    };
     private static final String SECURE_GRANT_INPUT = "openphone_task_grant_input";
     private static final String SECURE_GRANT_SCREEN_CAPTURE = "openphone_task_grant_screenshot";
     private static final String SECURE_GRANT_CLIPBOARD = "openphone_task_grant_clipboard";
@@ -980,7 +1014,8 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     private ModelAdapter selectedModelAdapter(ModelEndpointConfig endpointConfig) {
         return useRealtimeModel()
-                ? new OpenAiRealtimeAdapter(endpointConfig, realtimeModelId())
+                ? new OpenAiRealtimeAdapter(endpointConfig, realtimeModelId(),
+                        "yolo".equals(mAutonomyMode))
                 : new LocalHeuristicModelAdapter();
     }
 
@@ -1172,7 +1207,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         final int voiceGeneration = ++mVoiceRunGeneration;
         final int runGeneration = ++mAgentRunGeneration;
         final OpenAiRealtimeVoiceSession session = new OpenAiRealtimeVoiceSession(endpointConfig,
-                continuityContextJson());
+                continuityContextJson(), "yolo".equals(mAutonomyMode));
         mRunningRealtimeVoiceSession = session;
         Log.i(TAG, "live realtime voice start control=" + isControlSurface());
         setTaskText("Live Realtime 2 is listening.");
@@ -2367,24 +2402,30 @@ public class AssistantActivityBackend extends ComponentActivity {
             request.put("background_allowed", false);
             request.put("grant_defaults_source", "settings_secure");
             JSONArray capabilities = new JSONArray();
-            capabilities.put("screen.read.visible");
-            capabilities.put("tasks.observe");
-            capabilities.put("apps.launch");
-            if (inputGrantEnabled()) {
-                capabilities.put("input.perform");
-            }
-            if (screenCaptureGrantEnabled()) {
-                capabilities.put("screen.capture");
-            }
-            if (clipboardGrantEnabled()) {
-                capabilities.put("clipboard.read");
-                capabilities.put("clipboard.write");
-            }
-            if (shareGrantEnabled()) {
-                capabilities.put("share.content");
-            }
-            if (networkGrantEnabled()) {
-                capabilities.put("network.use");
+            if ("yolo".equals(mAutonomyMode)) {
+                for (String capability : FULL_YOLO_APPROVED_CAPABILITIES) {
+                    capabilities.put(capability);
+                }
+            } else {
+                capabilities.put("screen.read.visible");
+                capabilities.put("tasks.observe");
+                capabilities.put("apps.launch");
+                if (inputGrantEnabled()) {
+                    capabilities.put("input.perform");
+                }
+                if (screenCaptureGrantEnabled()) {
+                    capabilities.put("screen.capture");
+                }
+                if (clipboardGrantEnabled()) {
+                    capabilities.put("clipboard.read");
+                    capabilities.put("clipboard.write");
+                }
+                if (shareGrantEnabled()) {
+                    capabilities.put("share.content");
+                }
+                if (networkGrantEnabled()) {
+                    capabilities.put("network.use");
+                }
             }
             request.put("approved_capabilities", capabilities);
         } catch (JSONException e) {
@@ -3012,7 +3053,8 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private String preflightDenial(String toolName, JSONObject arguments) {
-        String missingCapability = missingTaskGrant(toolName, arguments);
+        String missingCapability = "yolo".equals(mAutonomyMode)
+                ? null : missingTaskGrant(toolName, arguments);
         if (missingCapability == null) {
             String appPolicy = appPolicyDenial(toolName, arguments);
             if (appPolicy != null) {
@@ -3164,25 +3206,10 @@ public class AssistantActivityBackend extends ComponentActivity {
             return false;
         }
         if (!"confirm".equals(action.authorizationPolicy)
-                || !"medium".equals(action.riskClass)) {
+                && !"explicit_confirm".equals(action.authorizationPolicy)) {
             return false;
         }
-        return isYoloCapability(capability);
-    }
-
-    private static boolean isYoloCapability(String capability) {
-        return "memory.write".equals(capability)
-                || "calendar.write".equals(capability)
-                || "commitments.write".equals(capability)
-                || "watchers.write".equals(capability)
-                || "notifications.read".equals(capability)
-                || "notifications.act".equals(capability)
-                || "messages.read".equals(capability)
-                || "messages.draft".equals(capability)
-                || "calls.read".equals(capability)
-                || "settings.write".equals(capability)
-                || "background.run".equals(capability)
-                || "network.use".equals(capability);
+        return capability != null && !capability.trim().isEmpty();
     }
 
     private static String actionConfirmationSummary(ActionRegistry.ActionMetadata action,
@@ -3216,8 +3243,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         if (!decision.requiresIntervention()) {
             return null;
         }
-        if ("confirm".equals(decision.action) && "yolo".equals(mAutonomyMode)
-                && isYoloCapability(capability)) {
+        if (appPolicyYoloAllows(decision, capability)) {
             return null;
         }
         try {
@@ -3241,6 +3267,15 @@ public class AssistantActivityBackend extends ComponentActivity {
             return "{\"status\":\"confirmation_required\","
                     + "\"reason\":\"app_policy_required\"}";
         }
+    }
+
+    private boolean appPolicyYoloAllows(AppCapabilityPolicy.Decision decision, String capability) {
+        if (!"yolo".equals(mAutonomyMode) || decision == null || capability == null
+                || capability.trim().isEmpty()) {
+            return false;
+        }
+        return "confirm".equals(decision.action)
+                || "explicit_confirm".equals(decision.action);
     }
 
     private String missingTaskGrant(String toolName, JSONObject arguments) {

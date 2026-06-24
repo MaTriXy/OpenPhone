@@ -46,7 +46,7 @@ fun AutonomySection(mode: String, onModeChange: (String) -> Unit) {
             }
             Text(
                 text = when {
-                    yolo -> "YOLO runs medium-risk registered actions without repeated review. High-risk actions still require approval."
+                    yolo -> "YOLO runs registered actions without confirmation prompts. External app or OS prompts may still appear."
                     dryRun -> "Dry run previews registered actions and records them without executing device changes."
                     else -> "Reviewed asks before medium and high-risk registered actions."
                 },

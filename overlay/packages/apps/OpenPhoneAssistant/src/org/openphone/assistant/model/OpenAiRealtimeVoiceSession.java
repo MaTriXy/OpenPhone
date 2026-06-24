@@ -95,17 +95,24 @@ public final class OpenAiRealtimeVoiceSession {
     private volatile int mCurrentAssistantContentIndex;
     private volatile long mCurrentAssistantItemStartFrame;
     private final String mContinuityContextJson;
+    private final boolean mFullYolo;
 
     public OpenAiRealtimeVoiceSession(ModelEndpointConfig endpointConfig) {
-        this(endpointConfig, "");
+        this(endpointConfig, "", false);
     }
 
     public OpenAiRealtimeVoiceSession(ModelEndpointConfig endpointConfig,
             String continuityContextJson) {
+        this(endpointConfig, continuityContextJson, false);
+    }
+
+    public OpenAiRealtimeVoiceSession(ModelEndpointConfig endpointConfig,
+            String continuityContextJson, boolean fullYolo) {
         mEndpointConfig = endpointConfig == null
                 ? ModelEndpointConfig.directOpenAi("") : endpointConfig;
         mContinuityContextJson = continuityContextJson == null
                 ? "" : continuityContextJson.trim();
+        mFullYolo = fullYolo;
     }
 
     public void cancel() {
@@ -209,7 +216,7 @@ public final class OpenAiRealtimeVoiceSession {
         JSONObject session = new JSONObject()
                 .put("type", "realtime")
                 .put("model", MODEL)
-                .put("instructions", liveVoiceInstructions(mContinuityContextJson))
+                .put("instructions", liveVoiceInstructions(mContinuityContextJson, mFullYolo))
                 .put("output_modalities", new JSONArray().put("audio"))
                 .put("audio", new JSONObject()
                         .put("input", input)
@@ -222,7 +229,7 @@ public final class OpenAiRealtimeVoiceSession {
                 .put("session", session);
     }
 
-    private static String liveVoiceInstructions(String continuityContextJson) {
+    private static String liveVoiceInstructions(String continuityContextJson, boolean fullYolo) {
         String continuity = continuityContextJson == null
                 || continuityContextJson.trim().isEmpty()
                 || "{}".equals(continuityContextJson.trim())
@@ -234,6 +241,7 @@ public final class OpenAiRealtimeVoiceSession {
         return "You are OpenPhone, a capable live OS voice agent running on the user's phone. "
                 + "The user is speaking to you through a low-latency voice session. "
                 + continuity
+                + yoloModeInstruction(fullYolo)
                 + "Act first. Use the phone tools whenever they help. Inspect the screen to "
                 + "understand and operate the UI, not to lecture about whether the screen is "
                 + "okay. If the user asks about the visible screen, call get_screen before "
@@ -248,6 +256,16 @@ public final class OpenAiRealtimeVoiceSession {
                 + "with ask_user_confirmation and include action_json with the exact next "
                 + "tool and arguments. Keep voice replies short while working, then "
                 + "summarize the outcome.";
+    }
+
+    private static String yoloModeInstruction(boolean fullYolo) {
+        if (!fullYolo) {
+            return "";
+        }
+        return "Autonomy mode is full YOLO: execute requested high-risk actions directly, "
+                + "including payment, purchase, booking, sending, calling, posting, "
+                + "installation, and account surfaces. Do not call ask_user_confirmation "
+                + "unless a tool result explicitly requires it. ";
     }
 
     private void startAudioInput(final RealtimeWebSocket socket, final Callback callback)

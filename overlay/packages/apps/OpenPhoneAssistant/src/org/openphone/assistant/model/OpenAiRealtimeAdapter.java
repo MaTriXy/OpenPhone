@@ -36,6 +36,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
 
     private final ModelEndpointConfig mEndpointConfig;
     private final String mRealtimeModel;
+    private final boolean mFullYolo;
     private final OpenAiResponsesAgentAdapter mResponsesFallback;
     private volatile boolean mCancelled;
     private volatile RealtimeWebSocket mSocket;
@@ -49,10 +50,16 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
     }
 
     public OpenAiRealtimeAdapter(ModelEndpointConfig endpointConfig, String realtimeModel) {
+        this(endpointConfig, realtimeModel, false);
+    }
+
+    public OpenAiRealtimeAdapter(ModelEndpointConfig endpointConfig, String realtimeModel,
+            boolean fullYolo) {
         mEndpointConfig = endpointConfig == null
                 ? ModelEndpointConfig.directOpenAi("") : endpointConfig;
         mRealtimeModel = sanitizeRealtimeModel(realtimeModel);
-        mResponsesFallback = new OpenAiResponsesAgentAdapter(mEndpointConfig);
+        mFullYolo = fullYolo;
+        mResponsesFallback = new OpenAiResponsesAgentAdapter(mEndpointConfig, mFullYolo);
     }
 
     @Override
@@ -147,7 +154,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
             mSocket = socket;
             socket.send(sessionUpdateEvent());
             waitForEventType(socket, "session.updated", CONNECT_TIMEOUT_MS);
-            sendUserMessage(socket, initialTaskPrompt(userGoal));
+            sendUserMessage(socket, initialTaskPrompt(userGoal, mFullYolo));
             socket.send(responseCreateEvent(true));
             int textOnlyTurns = 0;
 
@@ -244,7 +251,7 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
     private JSONObject sessionUpdateEvent() throws JSONException {
         JSONObject session = new JSONObject()
                 .put("type", "realtime")
-                .put("instructions", realtimeInstructions())
+                .put("instructions", realtimeInstructions(mFullYolo))
                 .put("output_modalities", new JSONArray().put("text"))
                 .put("tool_choice", "auto")
                 .put("tools", realtimeTools());
@@ -467,12 +474,24 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
         return format.format(new java.util.Date(now)) + " (unix_ms " + now + ")";
     }
 
-    private static String initialTaskPrompt(String userGoal) {
+    private static String yoloModeInstruction(boolean fullYolo) {
+        if (!fullYolo) {
+            return "";
+        }
+        return "Autonomy mode is full YOLO: execute requested high-risk actions directly, "
+                + "including payment, purchase, booking, sending, calling, posting, "
+                + "installation, and account surfaces. Do not call ask_user_confirmation "
+                + "unless a tool result explicitly requires it. ";
+    }
+
+    private static String initialTaskPrompt(String userGoal, boolean fullYolo) {
         return "Start this Android phone task and keep working until it is visibly complete "
                 + "or blocked. Device time: " + deviceTimeContext()
                 + ". Compute any unix-ms times (calendar windows, deadlines) from this "
                 + "device time, never guess. User goal: "
                 + (userGoal == null ? "" : userGoal.trim())
+                + (fullYolo ? "\n\n" : "")
+                + yoloModeInstruction(fullYolo)
                 + "\n\nUse memory_search for durable user preferences/instructions and "
                 + "context_search if prior assistant conversation or task history may "
                 + "help. Use notifications_list or notifications_search when recent "
@@ -540,9 +559,10 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 + "preference requests, choose a reasonable option yourself.";
     }
 
-    private static String realtimeInstructions() {
+    private static String realtimeInstructions(boolean fullYolo) {
         return "You are OpenPhone Agent, a persistent mobile GUI agent running inside Android. "
                 + "You can control the phone only through the provided function tools. "
+                + yoloModeInstruction(fullYolo)
                 + "Work on long-horizon tasks: observe, decide one action, inspect the result, "
                 + "recover from no-ops, and continue until the task is visibly complete. "
                 + "You are capable of operating apps end to end; do not narrate doubts, "

@@ -57,16 +57,22 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
     private static final long MAX_DURATION_MS = 300000;
 
     private final ModelEndpointConfig mEndpointConfig;
+    private final boolean mFullYolo;
     private volatile boolean mCancelled;
     private volatile HttpURLConnection mActiveConnection;
 
     public OpenAiResponsesAgentAdapter(String apiKey) {
-        this(ModelEndpointConfig.directOpenAi(apiKey));
+        this(ModelEndpointConfig.directOpenAi(apiKey), false);
     }
 
     public OpenAiResponsesAgentAdapter(ModelEndpointConfig endpointConfig) {
+        this(endpointConfig, false);
+    }
+
+    public OpenAiResponsesAgentAdapter(ModelEndpointConfig endpointConfig, boolean fullYolo) {
         mEndpointConfig = endpointConfig == null
                 ? ModelEndpointConfig.directOpenAi("") : endpointConfig;
+        mFullYolo = fullYolo;
     }
 
     @Override
@@ -332,8 +338,8 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                     stepJson.put("tool_result", errorJson("unknown_model_tool:" + toolName));
                     return result("agent.blocked", userGoal, steps);
                 }
-                JSONObject guardrail = guardrailConfirmation(userGoal, screenJson, toolName,
-                        arguments);
+                JSONObject guardrail = guardrailConfirmation(mFullYolo, userGoal, screenJson,
+                        toolName, arguments);
                 if (guardrail != null) {
                     stepJson.put("guardrail", guardrail);
                     String toolResult = executor.callTool("ask_user_confirmation",
@@ -563,6 +569,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "Use memory_save or memory_search in proposed_actions.\n"
                 + "- stop: the user wants to stop or cancel what is happening.\n\n"
                 + "Rules:\n"
+                + orchestratorAutonomyRule()
                 + "- Every proposed_actions tool call must come from the tool list below, with "
                 + "arguments matching its schema, including a specific \"reason\" argument "
                 + "where the tool requires one.\n"
@@ -606,6 +613,47 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                         .put("mode", "orchestrator_decision"))
                 .put("max_output_tokens", 600);
         return postResponses(body);
+    }
+
+    private String orchestratorAutonomyRule() {
+        if (mFullYolo) {
+            return "- Autonomy mode is full YOLO: do not create confirmation requests for "
+                    + "payment, purchase, booking, sending, calling, posting, installation, "
+                    + "or other high-risk actions. Route actionable requests to act/retrieve/"
+                    + "watch/memory and let the tool layer execute them.\n";
+        }
+        return "";
+    }
+
+    private String taskAutonomyRule() {
+        if (mFullYolo) {
+            return "- Autonomy mode is full YOLO: execute requested high-risk visible UI "
+                    + "actions directly, including payment, purchase, booking, sending, "
+                    + "calling, posting, installation, and account surfaces. Do not call "
+                    + "ask_user_confirmation unless a tool result explicitly requires it.\n";
+        }
+        return "";
+    }
+
+    private String sensitiveActionRule() {
+        if (mFullYolo) {
+            return "- If the goal involves credentials, payment, purchase, posting, sending, "
+                    + "calling, deleting, booking, or installation, keep operating the app "
+                    + "until the requested result is visible or no tool can progress.\n";
+        }
+        return "- If the goal involves credentials, payment, purchase, posting, sending, "
+                + "calling, deleting, booking, or installation, keep operating the app until "
+                + "the next concrete tool result requires approval or no tool can progress.\n";
+    }
+
+    private String installPaymentRule() {
+        if (mFullYolo) {
+            return "Full YOLO is enabled. Do not stop to request approval before Android "
+                    + "install-security prompts, credential entry, or payment/subscription "
+                    + "acceptance when the user asked for the workflow.\n\n";
+        }
+        return "Do not bypass Android install-security prompts, enter credentials, or "
+                + "accept payments/subscriptions.\n\n";
     }
 
     private JSONObject callScreenAnswerResponsesApi(String userMessage, JSONObject screenJson,
@@ -718,6 +766,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "exactly one action, then verify progress on the next observation. Return "
                 + "exactly one JSON object and no markdown.\n\n"
                 + "Agent rules:\n"
+                + taskAutonomyRule()
                 + "- Treat this as a long-horizon task. Use up to the available step budget.\n"
                 + "- First understand where you are: foreground app, visible text, UI tree, "
                 + "and screenshot.\n"
@@ -733,9 +782,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "- For goals phrased as \"open <app/site>\", stop once that app or site is "
                 + "visibly open. Do not click login, sign up, get app, install, notification, "
                 + "or feed-personalization surfaces unless the user explicitly asked for that.\n"
-                + "- If the goal involves credentials, payment, purchase, posting, sending, "
-                + "calling, deleting, booking, or installation, keep operating the app until "
-                + "the next concrete tool result requires approval or no tool can progress.\n"
+                + sensitiveActionRule()
                 + "- Do not ask the user to choose among ordinary visible options. If the user "
                 + "said random, any, something, surprise me, best, or did not specify a "
                 + "preference, choose a reasonable/default/top visible option yourself and "
@@ -784,8 +831,7 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 + "installed, finish_task with that explanation instead of continuing to scroll. "
                 + "For Twitter/X, if a browser page shows X, Twitter, or 'See what’s happening', "
                 + "the open task is complete; do not tap Get the app or login surfaces. "
-                + "Do not bypass Android install-security prompts, enter credentials, or "
-                + "accept payments/subscriptions.\n\n"
+                + installPaymentRule()
                 + "Device time: " + deviceTimeContext()
                 + "\n\nUser goal: " + userGoal
                 + "\n\nPrevious steps:\n" + steps.toString(2)
@@ -980,8 +1026,11 @@ public final class OpenAiResponsesAgentAdapter implements ModelAdapter {
                 && !ToolCatalog.get().isTerminalTool(toolName);
     }
 
-    private static JSONObject guardrailConfirmation(String userGoal, JSONObject screenJson,
-            String toolName, JSONObject arguments) throws JSONException {
+    private static JSONObject guardrailConfirmation(boolean fullYolo, String userGoal,
+            JSONObject screenJson, String toolName, JSONObject arguments) throws JSONException {
+        if (fullYolo) {
+            return null;
+        }
         if (!canChangeDeviceOrExternalState(toolName)) {
             return null;
         }
