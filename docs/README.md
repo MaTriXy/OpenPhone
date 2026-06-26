@@ -7,6 +7,8 @@ build, architecture, release, device, and policy docs.
 
 - [Architecture](ARCHITECTURE.md) - system layers, OS services, agent runtime,
   and current implementation boundaries.
+- [Agent Runtime V1](AGENT_RUNTIME_V1.md) - background job model, scheduling,
+  safety posture, and migration path for durable agent work.
 - [Build](BUILD.md) - Android repo sync, patch application, generic build, and
   Pixel 9a build commands.
 - [Testing](TESTING.md) - repository checks, physical device smoke tests,
