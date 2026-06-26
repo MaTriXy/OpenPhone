@@ -995,10 +995,15 @@ public final class PointerOverlayController {
 
     private void updateBodyContentViews(IslandPresentation presentation) {
         boolean showChat = presentation.showTabs && mStatusTab == STATUS_TAB_CHAT;
+        boolean showRuntime = presentation.showTabs && mStatusTab == STATUS_TAB_RUNTIME;
         if (showChat) {
             mIslandBodyText.setVisibility(View.GONE);
             mIslandChatColumn.setVisibility(View.VISIBLE);
             populateChatColumn();
+        } else if (showRuntime) {
+            mIslandBodyText.setVisibility(View.GONE);
+            mIslandChatColumn.setVisibility(View.VISIBLE);
+            populateRuntimeColumn();
         } else {
             mIslandChatColumn.setVisibility(View.GONE);
             mIslandBodyText.setVisibility(View.VISIBLE);
@@ -1205,6 +1210,74 @@ public final class PointerOverlayController {
         mIslandChatColumn.addView(row, rowLp);
     }
 
+    private void populateRuntimeColumn() {
+        if (mIslandChatColumn == null) {
+            return;
+        }
+        mIslandChatColumn.removeAllViews();
+        ExternalRuntimeConfig config = ExternalRuntimeConfig.load(mContext);
+        addRuntimeCard("Local Phone Runtime", "", AssistantBrainConfig.BUILTIN, config);
+        if (config.globallyEnabled && config.openClaw.configured()) {
+            addRuntimeCard("🦞 " + config.openClaw.label,
+                    endpointLabel(config.openClaw.url), AssistantBrainConfig.OPENCLAW, config);
+        }
+        if (config.globallyEnabled && config.hermes.configured()) {
+            addRuntimeCard(config.hermes.label,
+                    endpointLabel(config.hermes.url), AssistantBrainConfig.HERMES, config);
+        }
+    }
+
+    private void addRuntimeCard(String title, String endpoint, String runtime,
+            ExternalRuntimeConfig config) {
+        String surfaces = runtimeSurfaceLabels(runtime, config);
+        boolean selected = !surfaces.isEmpty();
+        TextView card = new TextView(mContext);
+        StringBuilder label = new StringBuilder(title);
+        if (endpoint != null && !endpoint.isEmpty()) {
+            label.append(" IP ").append(endpoint);
+        }
+        String status = runtimeAdapterStatus(runtime);
+        if (!status.isEmpty()) {
+            label.append(" · ").append(status);
+        }
+        if (selected) {
+            label.append("\n").append(surfaces);
+        }
+        card.setText(label.toString());
+        card.setTextColor(selected ? runtimeSelectedTextColor(runtime) : 0xfff4f7f8);
+        card.setTextSize(14);
+        card.setTypeface(Typeface.DEFAULT_BOLD);
+        card.setLineSpacing(3f, 1.05f);
+        card.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        card.setPadding(18, 14, 18, 14);
+        card.setSingleLine(false);
+        card.setClickable(true);
+        card.setFocusable(true);
+        card.setBackground(runtimeCardBackground(runtime, selected));
+        card.setOnClickListener(v -> selectRuntime(runtime));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = 10;
+        mIslandChatColumn.addView(card, lp);
+    }
+
+    private void selectRuntime(String runtime) {
+        AssistantBrainConfig.persistMode(mContext, runtime);
+        AssistantBrainConfig.persistVolumeMode(mContext, runtime);
+        AssistantBrainConfig.persistBackgroundMode(mContext, runtime);
+        mStateDetail = runtimeLabel(runtime) + " selected";
+        if (!AssistantBrainConfig.BUILTIN.equals(runtime)) {
+            Intent reload = new Intent(mContext, OpenPhoneAssistantService.class);
+            reload.setAction(OpenPhoneAssistantService.ACTION_RELOAD_EXTERNAL_RUNTIMES);
+            try {
+                mContext.startService(reload);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        updateIslandViews();
+    }
+
     private String watchersStatusBody() {
         List<WatcherRecord> watchers = activeWatchers(5);
         int watcherCount = Math.max(mWatchingCount, watchers.size());
@@ -1283,11 +1356,11 @@ public final class PointerOverlayController {
 
     private void appendLocalRuntimeLine(StringBuilder body, ExternalRuntimeConfig config) {
         String surfaces = runtimeSurfaceLabels(AssistantBrainConfig.BUILTIN, config);
-        if (surfaces.isEmpty()) {
-            return;
-        }
         appendRuntimeLinePrefix(body);
-        body.append("Local Phone Runtime\n").append(surfaces);
+        body.append("Local Phone Runtime");
+        if (!surfaces.isEmpty()) {
+            body.append("\n").append(surfaces);
+        }
     }
 
     private void appendRuntimeLinePrefix(StringBuilder body) {
@@ -2263,6 +2336,35 @@ public final class PointerOverlayController {
             drawable.setStroke(1, 0x33ffffff);
         }
         return drawable;
+    }
+
+    private static GradientDrawable runtimeCardBackground(String runtime, boolean selected) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(selected ? runtimeCardAccent(runtime) : 0x22ffffff);
+        drawable.setCornerRadius(18);
+        if (!selected) {
+            drawable.setStroke(1, 0x33ffffff);
+        }
+        return drawable;
+    }
+
+    private static int runtimeCardAccent(String runtime) {
+        String clean = normalizeRuntime(runtime);
+        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
+            return OPENCLAW_ACCENT;
+        }
+        if (AssistantBrainConfig.HERMES.equals(clean)) {
+            return 0xff9ab8ff;
+        }
+        return OPENPHONE_ACCENT;
+    }
+
+    private static int runtimeSelectedTextColor(String runtime) {
+        String clean = normalizeRuntime(runtime);
+        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
+            return 0xffffffff;
+        }
+        return 0xff101418;
     }
 
     private static GradientDrawable rippleBackground(boolean longPress) {
