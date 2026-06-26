@@ -1216,9 +1216,9 @@ public final class PointerOverlayController {
         }
         mIslandChatColumn.removeAllViews();
         ExternalRuntimeConfig config = ExternalRuntimeConfig.load(mContext);
-        addRuntimeCard("Local Phone Runtime", "", AssistantBrainConfig.BUILTIN, config);
+        addRuntimeCard("⚡ Phone", "", AssistantBrainConfig.BUILTIN, config);
         if (config.globallyEnabled && config.openClaw.configured()) {
-            addRuntimeCard("🦞 " + config.openClaw.label,
+            addRuntimeCard("🦞 OpenClaw",
                     endpointLabel(config.openClaw.url), AssistantBrainConfig.OPENCLAW, config);
         }
         if (config.globallyEnabled && config.hermes.configured()) {
@@ -1231,34 +1231,63 @@ public final class PointerOverlayController {
             ExternalRuntimeConfig config) {
         String surfaces = runtimeSurfaceLabels(runtime, config);
         boolean selected = !surfaces.isEmpty();
-        TextView card = new TextView(mContext);
-        StringBuilder label = new StringBuilder(title);
-        if (endpoint != null && !endpoint.isEmpty()) {
-            label.append(" IP ").append(endpoint);
-        }
-        String status = runtimeAdapterStatus(runtime);
-        if (!status.isEmpty()) {
-            label.append(" · ").append(status);
-        }
-        if (selected) {
-            label.append("\n").append(surfaces);
-        }
-        card.setText(label.toString());
-        card.setTextColor(selected ? runtimeSelectedTextColor(runtime) : 0xfff4f7f8);
-        card.setTextSize(14);
-        card.setTypeface(Typeface.DEFAULT_BOLD);
-        card.setLineSpacing(3f, 1.05f);
-        card.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        card.setPadding(18, 14, 18, 14);
-        card.setSingleLine(false);
+        LinearLayout card = new LinearLayout(mContext);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(20, 14, 20, 14);
         card.setClickable(true);
         card.setFocusable(true);
         card.setBackground(runtimeCardBackground(runtime, selected));
         card.setOnClickListener(v -> selectRuntime(runtime));
+
+        TextView titleView = new TextView(mContext);
+        titleView.setText(title);
+        titleView.setTextColor(selected ? runtimeSelectedTextColor(runtime) : 0xffffffff);
+        titleView.setTextSize(15);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setSingleLine(true);
+        titleView.setGravity(Gravity.START);
+        card.addView(titleView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        StringBuilder detail = new StringBuilder();
+        if (endpoint != null && !endpoint.isEmpty()) {
+            detail.append(endpoint);
+        }
+        String status = runtimeAdapterStatus(runtime);
+        if (!status.isEmpty()) {
+            if (detail.length() > 0) {
+                detail.append(" · ");
+            }
+            detail.append(status);
+        }
+        if (selected) {
+            if (detail.length() > 0) {
+                detail.append("\n");
+            }
+            detail.append(surfaces);
+        }
+        if (detail.length() > 0) {
+            TextView detailView = new TextView(mContext);
+            detailView.setText(detail.toString());
+            detailView.setTextColor(selected ? runtimeSelectedSecondaryTextColor(runtime)
+                    : 0xccffffff);
+            detailView.setTextSize(12);
+            detailView.setTypeface(Typeface.DEFAULT);
+            detailView.setLineSpacing(2f, 1.05f);
+            detailView.setGravity(Gravity.START);
+            detailView.setSingleLine(false);
+            LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            detailLp.topMargin = 4;
+            card.addView(detailView, detailLp);
+        }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = 10;
+        lp.bottomMargin = 8;
         mIslandChatColumn.addView(card, lp);
     }
 
@@ -1357,7 +1386,7 @@ public final class PointerOverlayController {
     private void appendLocalRuntimeLine(StringBuilder body, ExternalRuntimeConfig config) {
         String surfaces = runtimeSurfaceLabels(AssistantBrainConfig.BUILTIN, config);
         appendRuntimeLinePrefix(body);
-        body.append("Local Phone Runtime");
+        body.append("⚡ Phone");
         if (!surfaces.isEmpty()) {
             body.append("\n").append(surfaces);
         }
@@ -1447,7 +1476,7 @@ public final class PointerOverlayController {
             return "Hermes";
         }
         if (AssistantBrainConfig.BUILTIN.equals(clean) || "local".equals(clean)) {
-            return "Local Phone Runtime";
+            return "Phone";
         }
         if (AssistantBrainConfig.AUTO.equals(clean)) {
             return "Auto";
@@ -2340,11 +2369,10 @@ public final class PointerOverlayController {
 
     private static GradientDrawable runtimeCardBackground(String runtime, boolean selected) {
         GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(selected ? runtimeCardAccent(runtime) : 0x22ffffff);
-        drawable.setCornerRadius(18);
-        if (!selected) {
-            drawable.setStroke(1, 0x33ffffff);
-        }
+        int accent = runtimeCardAccent(runtime);
+        drawable.setColor(selected ? accent : 0x1affffff);
+        drawable.setCornerRadius(30);
+        drawable.setStroke(selected ? 0 : 1, selected ? accent : 0x44ffffff);
         return drawable;
     }
 
@@ -2365,6 +2393,14 @@ public final class PointerOverlayController {
             return 0xffffffff;
         }
         return 0xff101418;
+    }
+
+    private static int runtimeSelectedSecondaryTextColor(String runtime) {
+        String clean = normalizeRuntime(runtime);
+        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
+            return 0xeeffffff;
+        }
+        return 0xdd101418;
     }
 
     private static GradientDrawable rippleBackground(boolean longPress) {
