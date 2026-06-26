@@ -362,11 +362,14 @@ public final class OpenPhoneAssistantService extends Service {
                 return compact.put("available", false).put("reason", "missing_task_id");
             }
             String screenJson = mAgentManager.getScreen(taskId,
-                    "{\"include_screenshot\":false,\"include_activity\":true,"
+                    "{\"include_screenshot\":true,\"include_activity\":true,"
                             + "\"include_ui_tree\":true,"
+                            + "\"max_dimension\":768,"
+                            + "\"quality\":70,"
                             + "\"reason\":\"preflight context for OpenClaw attention\"}");
             JSONObject screen = parseObject(screenJson);
             JSONObject context = screen.optJSONObject("context");
+            JSONObject screenshot = compactScreenshot(screen.optJSONObject("screenshot"));
             compact.put("available", true)
                     .put("state", screen.optString("state"))
                     .put("capture_mode", screen.optString("capture_mode"))
@@ -383,8 +386,13 @@ public final class OpenPhoneAssistantService extends Service {
             if (context != null) {
                 compact.put("foreground_app", context.optString("foreground_app"))
                         .put("activity", context.optString("activity"))
+                        .put("screen_width", context.optInt("screen_width", 0))
+                        .put("screen_height", context.optInt("screen_height", 0))
                         .put("risk_flags", compactStringArray(
                                 context.optJSONArray("risk_flags"), 12));
+            }
+            if (screenshot.length() > 0) {
+                compact.put("screenshot", screenshot);
             }
             Log.i(TAG, "OpenClaw attention screen preflight chars=" + compact.length());
             return compact;
@@ -404,6 +412,26 @@ public final class OpenPhoneAssistantService extends Service {
                 }
             }
         }
+    }
+
+    private static JSONObject compactScreenshot(JSONObject screenshot) throws JSONException {
+        JSONObject compact = new JSONObject();
+        if (screenshot == null) {
+            return compact;
+        }
+        String data = screenshot.optString("data", "");
+        String encoding = screenshot.optString("encoding", "base64");
+        if (data.isEmpty() || !"base64".equalsIgnoreCase(encoding)) {
+            compact.put("included", false);
+            return compact;
+        }
+        compact.put("included", true)
+                .put("encoding", "base64")
+                .put("mime_type", screenshot.optString("mime_type", "image/jpeg"))
+                .put("width", screenshot.optInt("width", 0))
+                .put("height", screenshot.optInt("height", 0))
+                .put("data", data);
+        return compact;
     }
 
     private static JSONArray firstArray(JSONArray primary, JSONArray fallback) {

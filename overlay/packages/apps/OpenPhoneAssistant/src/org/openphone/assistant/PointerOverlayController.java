@@ -1248,47 +1248,125 @@ public final class PointerOverlayController {
     private String runtimeStatusBody() {
         ExternalRuntimeConfig config = ExternalRuntimeConfig.load(mContext);
         StringBuilder body = new StringBuilder();
-        body.append("Current runtime assignments");
-        body.append("\nChat: ").append(runtimeLabel(AssistantBrainConfig.loadMode(mContext)));
-        body.append("\nVolume: ")
-                .append(runtimeLabel(AssistantBrainConfig.loadVolumeMode(mContext)));
-        body.append("\nBackground: ")
-                .append(runtimeLabel(AssistantBrainConfig.loadBackgroundMode(mContext)));
-        body.append("\nEffective chat: ")
-                .append(runtimeLabel(AssistantBrainConfig.routeRuntime(mContext, config)));
-        body.append("\n\nConnected environments");
-        body.append(runtimeAdapterStatusLines());
+        appendRuntimeEnvironmentLine(body, config.openClaw, "🦞",
+                AssistantBrainConfig.OPENCLAW, config);
+        appendRuntimeEnvironmentLine(body, config.hermes, "Hermes",
+                AssistantBrainConfig.HERMES, config);
+        appendLocalRuntimeLine(body, config);
+        if (body.length() == 0) {
+            body.append("No runtimes configured");
+        }
         return body.toString();
     }
 
-    private String runtimeAdapterStatusLines() {
+    private void appendRuntimeEnvironmentLine(StringBuilder body,
+            ExternalRuntimeConfig.RuntimeSettings settings, String mark, String runtime,
+            ExternalRuntimeConfig config) {
+        if (settings == null || !config.globallyEnabled || !settings.configured()) {
+            return;
+        }
+        appendRuntimeLinePrefix(body);
+        body.append(mark).append(" ").append(settings.label);
+        String endpoint = endpointLabel(settings.url);
+        if (!endpoint.isEmpty()) {
+            body.append(" IP ").append(endpoint);
+        }
+        String status = runtimeAdapterStatus(runtime);
+        if (!status.isEmpty()) {
+            body.append(" · ").append(status);
+        }
+        String surfaces = runtimeSurfaceLabels(runtime, config);
+        if (!surfaces.isEmpty()) {
+            body.append("\n").append(surfaces);
+        }
+    }
+
+    private void appendLocalRuntimeLine(StringBuilder body, ExternalRuntimeConfig config) {
+        String surfaces = runtimeSurfaceLabels(AssistantBrainConfig.BUILTIN, config);
+        if (surfaces.isEmpty()) {
+            return;
+        }
+        appendRuntimeLinePrefix(body);
+        body.append("Local Phone Runtime\n").append(surfaces);
+    }
+
+    private void appendRuntimeLinePrefix(StringBuilder body) {
+        if (body.length() > 0) {
+            body.append("\n\n");
+        }
+    }
+
+    private String runtimeSurfaceLabels(String runtime, ExternalRuntimeConfig config) {
+        StringBuilder surfaces = new StringBuilder();
+        appendSurfaceLabel(surfaces, "Chat", AssistantBrainConfig.routeRuntime(mContext, config),
+                runtime);
+        appendSurfaceLabel(surfaces, "Volume",
+                AssistantBrainConfig.routeVolumeRuntime(mContext, config), runtime);
+        appendSurfaceLabel(surfaces, "Background",
+                AssistantBrainConfig.routeBackgroundRuntime(mContext, config), runtime);
+        return surfaces.toString();
+    }
+
+    private void appendSurfaceLabel(StringBuilder surfaces, String label, String selected,
+            String runtime) {
+        if (!runtime.equals(selected)) {
+            return;
+        }
+        if (surfaces.length() > 0) {
+            surfaces.append(" · ");
+        }
+        surfaces.append(label);
+    }
+
+    private String runtimeAdapterStatus(String runtime) {
         String statusJson = OpenPhoneAssistantService.latestExternalRuntimeStatusJson();
         try {
             JSONObject status = new JSONObject(statusJson == null ? "{}" : statusJson);
             JSONArray adapters = status.optJSONArray("adapters");
             if (adapters == null || adapters.length() == 0) {
-                return "\nNo external runtime status yet.";
+                return "";
             }
-            StringBuilder lines = new StringBuilder();
-            for (int i = 0; i < adapters.length() && i < 4; i++) {
+            for (int i = 0; i < adapters.length(); i++) {
                 JSONObject adapter = adapters.optJSONObject(i);
                 if (adapter == null) {
                     continue;
                 }
-                lines.append("\n")
-                        .append(runtimeLabel(adapter.optString("name", "")))
-                        .append(": ")
-                        .append(adapter.optString("status", "unknown"));
+                if (runtime.equals(normalizeRuntime(adapter.optString("name", "")))) {
+                    return adapter.optString("status", "unknown");
+                }
             }
-            return lines.length() == 0 ? "\nNo external runtime status yet."
-                    : lines.toString();
+            return "";
         } catch (JSONException e) {
-            return "\nRuntime status unavailable.";
+            return "";
         }
     }
 
+    private static String endpointLabel(String url) {
+        String value = url == null ? "" : url.trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+        int scheme = value.indexOf("://");
+        if (scheme >= 0) {
+            value = value.substring(scheme + 3);
+        }
+        int slash = value.indexOf('/');
+        if (slash >= 0) {
+            value = value.substring(0, slash);
+        }
+        int at = value.lastIndexOf('@');
+        if (at >= 0) {
+            value = value.substring(at + 1);
+        }
+        return value;
+    }
+
+    private static String normalizeRuntime(String runtime) {
+        return runtime == null ? "" : runtime.trim().toLowerCase(java.util.Locale.US);
+    }
+
     private static String runtimeLabel(String runtime) {
-        String clean = runtime == null ? "" : runtime.trim().toLowerCase(java.util.Locale.US);
+        String clean = normalizeRuntime(runtime);
         if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
             return "OpenClaw";
         }
