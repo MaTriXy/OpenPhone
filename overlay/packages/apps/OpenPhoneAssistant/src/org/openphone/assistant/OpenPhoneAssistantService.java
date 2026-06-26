@@ -306,13 +306,7 @@ public final class OpenPhoneAssistantService extends Service {
                 intent.getStringExtra(EXTRA_OPENCLAW_ATTENTION_AUTONOMY), "ask_before_action");
         boolean includeScreen = intent != null
                 && intent.getBooleanExtra(EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN, true);
-        JSONObject context = new JSONObject();
-        try {
-            context.put("trigger", "openphone_assistant")
-                    .put("source", source)
-                    .put("sentAtMs", System.currentTimeMillis());
-        } catch (JSONException ignored) {
-        }
+        JSONObject context = buildOpenClawAttentionContext(text, source, includeScreen);
         String result = mExternalRuntimeManager.requestOpenClawAttention(text, source,
                 autonomy, includeScreen, context);
         sLatestExternalRuntimeStatusJson = mExternalRuntimeManager.statusJson();
@@ -329,6 +323,127 @@ public final class OpenPhoneAssistantService extends Service {
                 "OpenClaw runtime is not available.");
         Log.w(TAG, "OpenClaw attention failed: " + message);
         handleExternalRuntimeMessage("openclaw", "", message, true);
+    }
+
+    private JSONObject buildOpenClawAttentionContext(String text, String source,
+            boolean includeScreen) {
+        JSONObject context = new JSONObject();
+        try {
+            context.put("trigger", "openphone_assistant")
+                    .put("source", source)
+                    .put("sentAtMs", System.currentTimeMillis());
+            if (includeScreen) {
+                context.put("screen_preflight", captureOpenClawAttentionScreen(text));
+            }
+        } catch (JSONException ignored) {
+        }
+        return context;
+    }
+
+    private JSONObject captureOpenClawAttentionScreen(String prompt) {
+        JSONObject compact = new JSONObject();
+        if (mAgentManager == null) {
+            try {
+                compact.put("available", false).put("reason", "framework_unavailable");
+            } catch (JSONException ignored) {
+            }
+            return compact;
+        }
+        String taskId = null;
+        try {
+            String response = mAgentManager.startTask("{"
+                    + "\"goal\":\"" + jsonEscape(prompt) + "\","
+                    + "\"user_visible\":true,"
+                    + "\"background_allowed\":false,"
+                    + "\"approved_capabilities\":[\"screen.read.visible\",\"tasks.observe\"]"
+                    + "}");
+            taskId = parseString(response, "task_id");
+            if (taskId == null || taskId.isEmpty()) {
+                return compact.put("available", false).put("reason", "missing_task_id");
+            }
+            String screenJson = mAgentManager.getScreen(taskId,
+                    "{\"include_screenshot\":false,\"include_activity\":true,"
+                            + "\"include_ui_tree\":true,"
+                            + "\"reason\":\"preflight context for OpenClaw attention\"}");
+            JSONObject screen = parseObject(screenJson);
+            JSONObject context = screen.optJSONObject("context");
+            compact.put("available", true)
+                    .put("state", screen.optString("state"))
+                    .put("capture_mode", screen.optString("capture_mode"))
+                    .put("source", screen.optString("source"))
+                    .put("visible_text", compactStringArray(
+                            firstArray(screen.optJSONArray("visible_text"),
+                                    context == null ? null : context.optJSONArray("visible_text")),
+                            30))
+                    .put("interactive_elements", compactElements(
+                            firstArray(screen.optJSONArray("interactive_elements"),
+                                    context == null ? null
+                                            : context.optJSONArray("interactive_elements")),
+                            10));
+            if (context != null) {
+                compact.put("foreground_app", context.optString("foreground_app"))
+                        .put("activity", context.optString("activity"))
+                        .put("risk_flags", compactStringArray(
+                                context.optJSONArray("risk_flags"), 12));
+            }
+            Log.i(TAG, "OpenClaw attention screen preflight chars=" + compact.length());
+            return compact;
+        } catch (RuntimeException | JSONException e) {
+            Log.w(TAG, "OpenClaw attention screen preflight failed", e);
+            try {
+                compact.put("available", false).put("reason", e.getClass().getSimpleName());
+            } catch (JSONException ignored) {
+            }
+            return compact;
+        } finally {
+            if (taskId != null && !taskId.isEmpty()) {
+                try {
+                    mAgentManager.stopTask(taskId,
+                            "{\"reason\":\"openclaw_attention_preflight_complete\"}");
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+    }
+
+    private static JSONArray firstArray(JSONArray primary, JSONArray fallback) {
+        return primary != null && primary.length() > 0 ? primary : fallback;
+    }
+
+    private static JSONArray compactStringArray(JSONArray values, int limit) throws JSONException {
+        JSONArray compact = new JSONArray();
+        if (values == null) {
+            return compact;
+        }
+        int count = Math.min(values.length(), limit);
+        for (int index = 0; index < count; index++) {
+            String value = values.optString(index);
+            if (value != null && !value.trim().isEmpty()) {
+                compact.put(value.trim());
+            }
+        }
+        return compact;
+    }
+
+    private static JSONArray compactElements(JSONArray elements, int limit) throws JSONException {
+        JSONArray compact = new JSONArray();
+        if (elements == null) {
+            return compact;
+        }
+        int count = Math.min(elements.length(), limit);
+        for (int index = 0; index < count; index++) {
+            JSONObject element = elements.optJSONObject(index);
+            if (element == null) {
+                continue;
+            }
+            JSONObject item = new JSONObject()
+                    .put("id", element.optString("id"))
+                    .put("kind", element.optString("kind"))
+                    .put("label", element.optString("label"))
+                    .put("bounds", element.optJSONArray("bounds"));
+            compact.put(item);
+        }
+        return compact;
     }
 
     private static String cleanExtra(String value, String fallback) {

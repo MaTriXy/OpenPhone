@@ -774,6 +774,11 @@ public class AssistantActivityBackend extends ComponentActivity {
         return composeExternalRuntimeStatusJson();
     }
 
+    public String onComposeSelectChatRuntime(String mode) {
+        AssistantBrainConfig.persistMode(this, mode);
+        return composeExternalRuntimeStatusJson();
+    }
+
     public void onComposeStartTask() {
         startTask();
     }
@@ -2208,7 +2213,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         mLastExternalRuntimeMessageKey = dedupeKey;
         mChatThread = null;
         mRunningChatAdapter = null;
-        appendConversation("OpenPhone", clean);
+        appendConversation(runtimeLabel, clean);
         setTaskText(runtimeLabel + " is ready.");
         showTerminalReplyOnIsland(clean);
         updateComposerActionButton();
@@ -2713,6 +2718,10 @@ public class AssistantActivityBackend extends ComponentActivity {
                 OpenPhoneAssistantService.latestExternalRuntimeStatusJson());
         try {
             ExternalRuntimeConfig config = ExternalRuntimeConfig.load(this);
+            status.put("chat_runtime", AssistantBrainConfig.loadMode(this));
+            status.put("effective_chat_runtime", AssistantBrainConfig.routeRuntime(this, config));
+            status.put("volume_runtime", AssistantBrainConfig.BUILTIN);
+            status.put("background_runtime", AssistantBrainConfig.BUILTIN);
             status.put("configured", new JSONArray()
                     .put(runtimeSettingsJson(config.openClaw))
                     .put(runtimeSettingsJson(config.hermes)));

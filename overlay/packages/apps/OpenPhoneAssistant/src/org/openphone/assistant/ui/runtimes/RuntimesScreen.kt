@@ -44,6 +44,7 @@ fun RuntimesScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onReconnect: () -> Unit,
+    onSelectChatRuntime: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -76,7 +77,22 @@ fun RuntimesScreen(
         ) {
             GlassSurface(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("External runtime manager", style = MaterialTheme.typography.titleMedium)
+                    Text("Default chat runtime", style = MaterialTheme.typography.titleMedium)
+                    KeyValueLine("Selected", runtimeDisplayName(state.chatRuntime))
+                    KeyValueLine("Effective", runtimeDisplayName(state.effectiveChatRuntime))
+                    KeyValueLine("Volume trigger", "${runtimeDisplayName(state.volumeRuntime)} (V1)")
+                    KeyValueLine("Background tasks", "${runtimeDisplayName(state.backgroundRuntime)} (V1)")
+                }
+            }
+
+            LocalRuntimeCard(
+                selected = state.chatRuntime != "openclaw",
+                onSelect = { onSelectChatRuntime("builtin") },
+            )
+
+            GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Remote runtime manager", style = MaterialTheme.typography.titleMedium)
                     KeyValueLine("Status", state.status)
                     KeyValueLine("Manager", state.managerStatus)
                     if (state.updatedAtMillis > 0L) {
@@ -105,7 +121,11 @@ fun RuntimesScreen(
                 }
             } else {
                 state.adapters.forEach { adapter ->
-                    RuntimeCard(adapter)
+                    RuntimeCard(
+                        adapter = adapter,
+                        selected = state.chatRuntime == adapter.name,
+                        onSelect = { onSelectChatRuntime(adapter.name) },
+                    )
                 }
             }
         }
@@ -114,7 +134,53 @@ fun RuntimesScreen(
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun RuntimeCard(adapter: RuntimeAdapterUiState) {
+private fun LocalRuntimeCard(
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusDot("connected")
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 10.dp),
+                ) {
+                    Text(
+                        text = "Local Phone Runtime",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Built-in phone brain and execution layer",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                StatusBadge("available")
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SmallBadge("Always on")
+                SmallBadge("Volume trigger")
+                SmallBadge("Phone actions")
+                SmallBadge(if (selected) "Selected" else "Fallback")
+            }
+            RuntimeSelectButton(selected = selected, enabled = true, onSelect = onSelect)
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun RuntimeCard(
+    adapter: RuntimeAdapterUiState,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
     GlassSurface(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -143,6 +209,7 @@ private fun RuntimeCard(adapter: RuntimeAdapterUiState) {
             ) {
                 SmallBadge(if (adapter.enabled) "Enabled" else "Disabled")
                 SmallBadge(if (adapter.configured) "Configured" else "Missing URL")
+                SmallBadge(if (selected) "Selected" else "Remote brain")
             }
             if (adapter.url.isNotBlank()) {
                 KeyValueLine("Endpoint", adapter.url)
@@ -150,7 +217,25 @@ private fun RuntimeCard(adapter: RuntimeAdapterUiState) {
             if (adapter.deviceId.isNotBlank()) {
                 KeyValueLine("Device", adapter.deviceId)
             }
+            RuntimeSelectButton(
+                selected = selected,
+                enabled = adapter.enabled && adapter.configured,
+                onSelect = onSelect,
+            )
         }
+    }
+}
+
+@Composable
+private fun RuntimeSelectButton(
+    selected: Boolean,
+    enabled: Boolean,
+    onSelect: () -> Unit,
+) {
+    if (selected) {
+        OutlinedButton(onClick = {}, enabled = false) { Text("Selected for chat") }
+    } else {
+        Button(onClick = onSelect, enabled = enabled) { Text("Use for chat") }
     }
 }
 
@@ -200,7 +285,7 @@ private fun StatusDot(status: String) {
 
 private fun statusColor(status: String): Color =
     when (status.lowercase()) {
-        "connected" -> Color(0xFF0E8A4A)
+        "connected", "available" -> Color(0xFF0E8A4A)
         "connecting", "waiting_for_challenge", "handshaking" -> Color(0xFFB7791F)
         "degraded" -> Color(0xFFD97706)
         "disabled", "stopped", "not_configured" -> Color(0xFF768094)
@@ -212,6 +297,15 @@ private fun runtimeTitle(name: String): String =
         "openclaw" -> "OpenClaw"
         "hermes" -> "Hermes"
         else -> name.replaceFirstChar { it.uppercase() }
+    }
+
+private fun runtimeDisplayName(name: String): String =
+    when (name.lowercase()) {
+        "builtin", "local" -> "Local Phone Runtime"
+        "openclaw" -> "OpenClaw"
+        "hermes" -> "Hermes"
+        "auto" -> "Auto"
+        else -> name.ifBlank { "unknown" }
     }
 
 private fun ageText(updatedAtMillis: Long): String {
@@ -233,6 +327,7 @@ private fun RuntimesScreenPreview() {
             onBack = {},
             onRefresh = {},
             onReconnect = {},
+            onSelectChatRuntime = {},
         )
     }
 }

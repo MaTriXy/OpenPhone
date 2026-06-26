@@ -118,6 +118,23 @@ object AssistantComposeHost {
                 }, 1200L)
             }
 
+            fun selectChatRuntime(mode: String) {
+                val label = when (mode) {
+                    "openclaw" -> "OpenClaw"
+                    else -> "Local Phone Runtime"
+                }
+                viewModel.setRuntimesFromJson(
+                    activity.onComposeSelectChatRuntime(mode),
+                    "Chat runtime set to $label",
+                )
+                postDelayed({
+                    viewModel.setRuntimesFromJson(
+                        activity.onComposeRuntimeStatusSnapshot(),
+                        "Chat runtime set to $label",
+                    )
+                }, 400L)
+            }
+
             setContent {
                 val state by viewModel.state.collectAsState()
                 OpenPhoneTheme {
@@ -169,6 +186,9 @@ object AssistantComposeHost {
                         },
                         onReloadRuntimes = {
                             reloadRuntimes()
+                        },
+                        onSelectChatRuntime = {
+                            selectChatRuntime(it)
                         },
                         onReadScreen = activity::onComposeReadScreen,
                         onReadScreenshot = activity::onComposeReadScreenshot,

@@ -53,6 +53,10 @@ data class AdvancedUiState(
 data class RuntimesUiState(
     val status: String = "unknown",
     val managerStatus: String = "unknown",
+    val chatRuntime: String = "auto",
+    val effectiveChatRuntime: String = "builtin",
+    val volumeRuntime: String = "builtin",
+    val backgroundRuntime: String = "builtin",
     val updatedAtMillis: Long = 0L,
     val lastAction: String = "",
     val adapters: List<RuntimeAdapterUiState> = emptyList(),

@@ -40,6 +40,7 @@ fun AssistantApp(
     onRefresh: () -> Unit,
     onRefreshRuntimes: () -> Unit,
     onReloadRuntimes: () -> Unit,
+    onSelectChatRuntime: (String) -> Unit,
     onReadScreen: () -> Unit,
     onReadScreenshot: () -> Unit,
     onExecuteBack: () -> Unit,
@@ -112,6 +113,7 @@ fun AssistantApp(
                 onBack = onShowChat,
                 onRefresh = onRefreshRuntimes,
                 onReconnect = onReloadRuntimes,
+                onSelectChatRuntime = onSelectChatRuntime,
             )
         }
     }
@@ -142,6 +144,7 @@ private fun AssistantAppPreview() {
             onRefresh = {},
             onRefreshRuntimes = {},
             onReloadRuntimes = {},
+            onSelectChatRuntime = {},
             onReadScreen = {},
             onReadScreenshot = {},
             onExecuteBack = {},

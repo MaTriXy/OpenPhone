@@ -183,25 +183,33 @@ class AssistantViewModel(
 
         val adapters = mutableListOf<RuntimeAdapterUiState>()
         val statusAdapters = root.optJSONArray("adapters")
+        val runtimeNamesWithStatus = mutableSetOf<String>()
         if (statusAdapters != null) {
             for (index in 0 until statusAdapters.length()) {
                 val item = statusAdapters.optJSONObject(index) ?: continue
                 val name = item.optString("name")
                 if (name.isBlank()) continue
+                runtimeNamesWithStatus += name
                 val configuredAdapter = configuredByName.remove(name)
                 adapters += (configuredAdapter ?: RuntimeAdapterUiState(name = name, label = name)).copy(
                     status = item.optString("status", configuredAdapter?.status ?: "unknown"),
                 )
             }
         }
-        adapters += configuredByName.values
+        adapters += configuredByName.values.filter {
+            it.name == "openclaw" || it.enabled || it.configured || runtimeNamesWithStatus.contains(it.name)
+        }
 
         return RuntimesUiState(
             status = root.optString("status", "unknown"),
             managerStatus = root.optString("manager_status", "unknown"),
+            chatRuntime = root.optString("chat_runtime", "auto"),
+            effectiveChatRuntime = root.optString("effective_chat_runtime", "builtin"),
+            volumeRuntime = root.optString("volume_runtime", "builtin"),
+            backgroundRuntime = root.optString("background_runtime", "builtin"),
             updatedAtMillis = root.optLong("updated_at_ms", 0L),
             lastAction = lastAction,
-            adapters = adapters.sortedWith(compareBy<RuntimeAdapterUiState> { it.name != "hermes" }.thenBy { it.name }),
+            adapters = adapters.sortedWith(compareBy<RuntimeAdapterUiState> { it.name != "openclaw" }.thenBy { it.name }),
         )
     }
 
@@ -244,21 +252,16 @@ class AssistantViewModel(
             runtimes = RuntimesUiState(
                 status = "connected",
                 managerStatus = "connected",
+                chatRuntime = "openclaw",
+                effectiveChatRuntime = "openclaw",
+                volumeRuntime = "builtin",
+                backgroundRuntime = "builtin",
                 updatedAtMillis = System.currentTimeMillis(),
-                lastAction = "Status refreshed",
+                lastAction = "Chat runtime set to OpenClaw",
                 adapters = listOf(
                     RuntimeAdapterUiState(
-                        name = "hermes",
-                        label = "OpenPhoneDemoHermes",
-                        status = "connected",
-                        enabled = true,
-                        configured = true,
-                        url = "ws://127.0.0.1:18788",
-                        deviceId = "openphone-demo-hermes",
-                    ),
-                    RuntimeAdapterUiState(
                         name = "openclaw",
-                        label = "OpenPhoneDemoOpenClaw",
+                        label = "OpenClaw",
                         status = "connected",
                         enabled = true,
                         configured = true,
