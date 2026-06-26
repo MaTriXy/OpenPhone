@@ -29,6 +29,10 @@ class AssistantViewModel(
         mutableState.update { it.copy(route = AssistantRoute.Advanced) }
     }
 
+    fun showRuntimes() {
+        mutableState.update { it.copy(route = AssistantRoute.Runtimes) }
+    }
+
     fun setComposerText(text: String) {
         mutableState.update { it.copy(chat = it.chat.copy(composerText = text)) }
     }
@@ -151,6 +155,56 @@ class AssistantViewModel(
         }
     }
 
+    fun setRuntimesFromJson(rawJson: String, lastAction: String = "") {
+        mutableState.update {
+            it.copy(runtimes = parseRuntimes(rawJson, lastAction.ifBlank { it.runtimes.lastAction }))
+        }
+    }
+
+    private fun parseRuntimes(rawJson: String, lastAction: String): RuntimesUiState {
+        val root = runCatching { JSONObject(rawJson.ifBlank { "{}" }) }.getOrElse { JSONObject() }
+        val configuredByName = linkedMapOf<String, RuntimeAdapterUiState>()
+        val configured = root.optJSONArray("configured")
+        if (configured != null) {
+            for (index in 0 until configured.length()) {
+                val item = configured.optJSONObject(index) ?: continue
+                val name = item.optString("name").ifBlank { item.optString("runtime") }
+                if (name.isBlank()) continue
+                configuredByName[name] = RuntimeAdapterUiState(
+                    name = name,
+                    label = item.optString("label", name),
+                    enabled = item.optBoolean("enabled", false),
+                    configured = item.optBoolean("configured", false),
+                    url = item.optString("url"),
+                    deviceId = item.optString("device_id"),
+                )
+            }
+        }
+
+        val adapters = mutableListOf<RuntimeAdapterUiState>()
+        val statusAdapters = root.optJSONArray("adapters")
+        if (statusAdapters != null) {
+            for (index in 0 until statusAdapters.length()) {
+                val item = statusAdapters.optJSONObject(index) ?: continue
+                val name = item.optString("name")
+                if (name.isBlank()) continue
+                val configuredAdapter = configuredByName.remove(name)
+                adapters += (configuredAdapter ?: RuntimeAdapterUiState(name = name, label = name)).copy(
+                    status = item.optString("status", configuredAdapter?.status ?: "unknown"),
+                )
+            }
+        }
+        adapters += configuredByName.values
+
+        return RuntimesUiState(
+            status = root.optString("status", "unknown"),
+            managerStatus = root.optString("manager_status", "unknown"),
+            updatedAtMillis = root.optLong("updated_at_ms", 0L),
+            lastAction = lastAction,
+            adapters = adapters.sortedWith(compareBy<RuntimeAdapterUiState> { it.name != "hermes" }.thenBy { it.name }),
+        )
+    }
+
     companion object {
         fun previewState() = AssistantUiState(
             chat = ChatUiState(
@@ -185,6 +239,32 @@ class AssistantViewModel(
                     rawActionJson = """{"type":"back"}""",
                     screenContext = "package: com.android.settings\nactivity: .Settings",
                     auditLog = "task_started task_preview\nscreen_context_read",
+                ),
+            ),
+            runtimes = RuntimesUiState(
+                status = "connected",
+                managerStatus = "connected",
+                updatedAtMillis = System.currentTimeMillis(),
+                lastAction = "Status refreshed",
+                adapters = listOf(
+                    RuntimeAdapterUiState(
+                        name = "hermes",
+                        label = "OpenPhoneDemoHermes",
+                        status = "connected",
+                        enabled = true,
+                        configured = true,
+                        url = "ws://127.0.0.1:18788",
+                        deviceId = "openphone-demo-hermes",
+                    ),
+                    RuntimeAdapterUiState(
+                        name = "openclaw",
+                        label = "OpenPhoneDemoOpenClaw",
+                        status = "connected",
+                        enabled = true,
+                        configured = true,
+                        url = "ws://127.0.0.1:18789",
+                        deviceId = "openphone-demo-openclaw",
+                    ),
                 ),
             ),
         )

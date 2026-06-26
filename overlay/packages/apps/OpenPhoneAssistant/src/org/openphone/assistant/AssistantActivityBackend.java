@@ -28,6 +28,7 @@ import org.openphone.assistant.agent.AuditEvidenceExporter;
 import org.openphone.assistant.agent.TrajectoryRecorder;
 import org.openphone.assistant.actions.ActionRegistry;
 import org.openphone.assistant.context.ContextIndexStore;
+import org.openphone.assistant.external.ExternalRuntimeConfig;
 import org.openphone.assistant.model.LocalHeuristicModelAdapter;
 import org.openphone.assistant.model.GeminiLiveVoiceSession;
 import org.openphone.assistant.model.ModelEndpointConfig;
@@ -106,6 +107,21 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
     }
 
+    static void deliverExternalRuntimeMessage(final String runtime, final String sessionKey,
+            final String message, final boolean terminal) {
+        AssistantActivityBackend target = sActiveControlRunner != null
+                ? sActiveControlRunner : sForegroundActivity;
+        if (target == null) {
+            return;
+        }
+        target.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                target.handleExternalRuntimeMessage(runtime, sessionKey, message, terminal);
+            }
+        });
+    }
+
     private static final String TAG = "OpenPhoneAssistant";
     private static final int REQUEST_RECORD_AUDIO = 1001;
     private static final long VOICE_TOGGLE_DUPLICATE_GRACE_MILLIS = 2500L;
@@ -177,6 +193,7 @@ public class AssistantActivityBackend extends ComponentActivity {
     private static final String SECURE_DEV_OPENAI_API_KEY = "openphone_dev_openai_api_key";
     private static final String SECURE_DEV_GEMINI_API_KEY = "openphone_dev_gemini_api_key";
     private static AssistantActivityBackend sActiveControlRunner;
+    private static AssistantActivityBackend sForegroundActivity;
     private static long sLastQuickVolumeChordUptimeMillis;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private final OpenPhoneOrchestrator mOrchestrator = new OpenPhoneOrchestrator();
@@ -229,6 +246,7 @@ public class AssistantActivityBackend extends ComponentActivity {
     private String mComposeAuditText = "";
     private String mComposeModelDisclosureText = "";
     private String mComposeOtaStatusText = "";
+    private String mLastExternalRuntimeMessageKey = "";
     private boolean mComposeUseBroker;
     private boolean mComposeUseRealtime;
     private boolean mComposeUseRealtime2;
@@ -302,6 +320,7 @@ public class AssistantActivityBackend extends ComponentActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        sForegroundActivity = this;
         if (isControlSurface()) {
             return;
         }
@@ -328,6 +347,9 @@ public class AssistantActivityBackend extends ComponentActivity {
         cancelAgentRun();
         if (mPointerOverlayController != null) {
             mPointerOverlayController.hide();
+        }
+        if (sForegroundActivity == this) {
+            sForegroundActivity = null;
         }
         setServiceIslandVisible(true);
         super.onDestroy();
@@ -732,6 +754,24 @@ public class AssistantActivityBackend extends ComponentActivity {
     public void onComposeShowChat() {
         mComposeAdvancedVisible = false;
         showChatSurface();
+    }
+
+    public void onComposeShowRuntimes() {
+        mComposeAdvancedVisible = true;
+    }
+
+    public String onComposeRuntimeStatusSnapshot() {
+        return composeExternalRuntimeStatusJson();
+    }
+
+    public String onComposeRefreshExternalRuntimes() {
+        startAssistantServiceAction(OpenPhoneAssistantService.ACTION_LOG_EXTERNAL_STATUS);
+        return composeExternalRuntimeStatusJson();
+    }
+
+    public String onComposeReloadExternalRuntimes() {
+        startAssistantServiceAction(OpenPhoneAssistantService.ACTION_RELOAD_EXTERNAL_RUNTIMES);
+        return composeExternalRuntimeStatusJson();
     }
 
     public void onComposeStartTask() {
@@ -1826,7 +1866,7 @@ public class AssistantActivityBackend extends ComponentActivity {
                         mPointerOverlayController.showTranscript(transcript);
                         if (voiceGeneration == mVoiceRunGeneration) {
                             Log.i(TAG, "voice transcript routing generation=" + voiceGeneration);
-                            routeMessageFromCurrentMessage();
+                            routeMessageFromCurrentMessage("classic_voice");
                             if (isControlSurface()) {
                                 moveTaskToBack(true);
                             }
@@ -1930,6 +1970,10 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void routeMessageFromCurrentMessage() {
+        routeMessageFromCurrentMessage("chat");
+    }
+
+    private void routeMessageFromCurrentMessage(String source) {
         final String message = currentGoalText().trim();
         if (message.isEmpty()) {
             setTaskText("Ask me anything, or tell me what to do on this phone.");
@@ -1938,6 +1982,9 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
         Log.i(TAG, "route start control=" + isControlSurface()
                 + " message=\"" + previewForLog(message) + "\"");
+        if (routeMessageToOpenClaw(message, source)) {
+            return;
+        }
         final OperatingMode operatingMode = currentOperatingMode();
         final boolean hasActiveTask = mActiveTaskId != null || mAgentThread != null;
         final String recentConversation = continuityContextJson();
@@ -2003,6 +2050,65 @@ public class AssistantActivityBackend extends ComponentActivity {
         updateComposerActionButton();
         getWindow().getDecorView().postDelayed(timeoutRunnable, ROUTING_TIMEOUT_MILLIS);
         chatThread.start();
+    }
+
+    private boolean routeMessageToOpenClaw(String message, String source) {
+        ExternalRuntimeConfig config = ExternalRuntimeConfig.load(this);
+        String route = AssistantBrainConfig.routeRuntime(this, config);
+        if (!AssistantBrainConfig.OPENCLAW.equals(route)) {
+            return false;
+        }
+        if (!config.globallyEnabled || !config.openClaw.configured()) {
+            appendConversation("You", message);
+            setCurrentGoalText("");
+            cancelChatRun();
+            mAgentRunCancelled = false;
+            appendConversation("OpenPhone", "OpenClaw runtime is not configured.");
+            setTaskText("OpenClaw is not configured.");
+            updateIsland("OpenClaw");
+            updateComposerActionButton();
+            return true;
+        }
+        appendConversation("You", message);
+        setCurrentGoalText("");
+        cancelChatRun();
+        mAgentRunCancelled = false;
+        String cleanSource = source == null || source.trim().isEmpty() ? "chat" : source.trim();
+        Intent service = new Intent(this, OpenPhoneAssistantService.class);
+        service.setAction(OpenPhoneAssistantService.ACTION_REQUEST_OPENCLAW_ATTENTION);
+        service.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_TEXT, message);
+        service.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_SOURCE, cleanSource);
+        service.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_AUTONOMY,
+                externalAutonomyMode());
+        service.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN,
+                screenCaptureGrantEnabled());
+        try {
+            startService(service);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Could not request OpenClaw attention", e);
+            appendConversation("OpenPhone", "Message routing failed: OpenClaw service request failed.");
+            setTaskText("OpenClaw request failed.");
+            updateIsland("Needs review");
+            return true;
+        }
+        setTaskText("Sent to OpenClaw.");
+        updateIsland("OpenClaw");
+        updateComposerActionButton();
+        if (isControlSurface()) {
+            moveTaskToBack(true);
+        }
+        return true;
+    }
+
+    private String externalAutonomyMode() {
+        reloadAutonomyMode();
+        if ("yolo".equals(mAutonomyMode)) {
+            return "trusted_actions";
+        }
+        if ("dry_run".equals(mAutonomyMode)) {
+            return "observe_only";
+        }
+        return "ask_before_action";
     }
 
     private OperatingMode currentOperatingMode() {
@@ -2081,6 +2187,31 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
         mPointerOverlayController.showReply(reply);
         finishVoicePipelineIfIdle();
+    }
+
+    private void handleExternalRuntimeMessage(String runtime, String sessionKey, String message,
+            boolean terminal) {
+        String clean = message == null ? "" : message.trim();
+        if (clean.isEmpty()) {
+            return;
+        }
+        String runtimeLabel = "openclaw".equals(runtime) ? "OpenClaw" : "Remote runtime";
+        if (!terminal) {
+            setTaskText(clean);
+            updateIsland(runtimeLabel);
+            return;
+        }
+        String dedupeKey = runtime + ":" + sessionKey + ":" + clean;
+        if (dedupeKey.equals(mLastExternalRuntimeMessageKey)) {
+            return;
+        }
+        mLastExternalRuntimeMessageKey = dedupeKey;
+        mChatThread = null;
+        mRunningChatAdapter = null;
+        appendConversation("OpenPhone", clean);
+        setTaskText(runtimeLabel + " is ready.");
+        showTerminalReplyOnIsland(clean);
+        updateComposerActionButton();
     }
 
     private static boolean isSystemFailureReply(String reply) {
@@ -2577,7 +2708,44 @@ public class AssistantActivityBackend extends ComponentActivity {
         mComposeAdvancedVisible = false;
     }
 
-    
+    private String composeExternalRuntimeStatusJson() {
+        JSONObject status = parseObjectOrEmpty(
+                OpenPhoneAssistantService.latestExternalRuntimeStatusJson());
+        try {
+            ExternalRuntimeConfig config = ExternalRuntimeConfig.load(this);
+            status.put("configured", new JSONArray()
+                    .put(runtimeSettingsJson(config.openClaw))
+                    .put(runtimeSettingsJson(config.hermes)));
+            if (!status.has("updated_at_ms")) {
+                status.put("updated_at_ms", System.currentTimeMillis());
+            }
+            status.put("global_enabled", config.globallyEnabled);
+        } catch (JSONException ignored) {
+        }
+        return status.toString();
+    }
+
+    private JSONObject runtimeSettingsJson(ExternalRuntimeConfig.RuntimeSettings settings)
+            throws JSONException {
+        return new JSONObject()
+                .put("name", settings.runtime)
+                .put("label", settings.label)
+                .put("enabled", settings.enabled)
+                .put("configured", settings.configured())
+                .put("url", settings.url)
+                .put("device_id", settings.deviceId);
+    }
+
+    private void startAssistantServiceAction(String action) {
+        Intent service = new Intent(this, OpenPhoneAssistantService.class);
+        service.setAction(action);
+        try {
+            startService(service);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Could not send service action " + action, e);
+        }
+    }
+
     public void onBackPressed() {
         if (isAdvancedVisible()) {
             mComposeAdvancedVisible = false;

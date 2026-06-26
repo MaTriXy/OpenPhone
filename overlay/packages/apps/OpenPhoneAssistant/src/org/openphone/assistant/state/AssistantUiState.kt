@@ -4,12 +4,14 @@ data class AssistantUiState(
     val route: AssistantRoute = AssistantRoute.Chat,
     val chat: ChatUiState = ChatUiState(),
     val advanced: AdvancedUiState = AdvancedUiState(),
+    val runtimes: RuntimesUiState = RuntimesUiState(),
     val pending: PendingConfirmation? = null,
 )
 
 enum class AssistantRoute {
     Chat,
     Advanced,
+    Runtimes,
 }
 
 data class ChatUiState(
@@ -46,6 +48,24 @@ data class AdvancedUiState(
     val grants: TaskGrants = TaskGrants(),
     val autonomyMode: String = "yolo",
     val developer: DeveloperState = DeveloperState(),
+)
+
+data class RuntimesUiState(
+    val status: String = "unknown",
+    val managerStatus: String = "unknown",
+    val updatedAtMillis: Long = 0L,
+    val lastAction: String = "",
+    val adapters: List<RuntimeAdapterUiState> = emptyList(),
+)
+
+data class RuntimeAdapterUiState(
+    val name: String,
+    val label: String,
+    val status: String = "unknown",
+    val enabled: Boolean = false,
+    val configured: Boolean = false,
+    val url: String = "",
+    val deviceId: String = "",
 )
 
 data class ModelConfig(

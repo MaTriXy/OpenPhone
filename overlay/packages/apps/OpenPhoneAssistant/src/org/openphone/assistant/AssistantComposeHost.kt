@@ -14,6 +14,7 @@ object AssistantComposeHost {
     @JvmStatic
     fun createView(activity: AssistantActivityBackend): View {
         val viewModel = AssistantViewModel(ChatHistoryStore(activity))
+        viewModel.setRuntimesFromJson(activity.onComposeRuntimeStatusSnapshot())
         activity.setComposeStateCallbacks(object : AssistantActivityBackend.ComposeStateCallbacks {
             override fun setTaskStatus(text: String) {
                 viewModel.updateDeveloperState { it.copy(taskStatus = text) }
@@ -99,6 +100,24 @@ object AssistantComposeHost {
             }
         })
         return ComposeView(activity).apply {
+            fun refreshRuntimes(action: String) {
+                viewModel.setRuntimesFromJson(activity.onComposeRefreshExternalRuntimes(), action)
+                postDelayed({
+                    viewModel.setRuntimesFromJson(activity.onComposeRuntimeStatusSnapshot(), action)
+                }, 800L)
+            }
+
+            fun reloadRuntimes() {
+                val action = "Reconnect requested"
+                viewModel.setRuntimesFromJson(activity.onComposeReloadExternalRuntimes(), action)
+                postDelayed({
+                    viewModel.setRuntimesFromJson(activity.onComposeRefreshExternalRuntimes(), action)
+                    postDelayed({
+                        viewModel.setRuntimesFromJson(activity.onComposeRuntimeStatusSnapshot(), action)
+                    }, 800L)
+                }, 1200L)
+            }
+
             setContent {
                 val state by viewModel.state.collectAsState()
                 OpenPhoneTheme {
@@ -107,6 +126,11 @@ object AssistantComposeHost {
                         onShowAdvanced = {
                             viewModel.showAdvanced()
                             activity.onComposeShowAdvanced()
+                        },
+                        onShowRuntimes = {
+                            viewModel.showRuntimes()
+                            activity.onComposeShowRuntimes()
+                            refreshRuntimes("Status refreshed")
                         },
                         onShowChat = {
                             viewModel.showChat()
@@ -140,6 +164,12 @@ object AssistantComposeHost {
                         onRunAgent = activity::onComposeRunAgent,
                         onStopAgent = activity::onComposeStop,
                         onRefresh = activity::onComposeRefresh,
+                        onRefreshRuntimes = {
+                            refreshRuntimes("Status refreshed")
+                        },
+                        onReloadRuntimes = {
+                            reloadRuntimes()
+                        },
                         onReadScreen = activity::onComposeReadScreen,
                         onReadScreenshot = activity::onComposeReadScreenshot,
                         onExecuteBack = activity::onComposeExecuteBack,

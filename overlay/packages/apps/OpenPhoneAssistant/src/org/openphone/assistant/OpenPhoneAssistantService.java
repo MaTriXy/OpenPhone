@@ -16,6 +16,8 @@ import org.openphone.assistant.agent.ActionExecution;
 import org.openphone.assistant.agent.AgentOrchestrator;
 import org.openphone.assistant.agent.ScreenUnderstanding;
 import org.openphone.assistant.agent.TaskRegistry;
+import org.openphone.assistant.external.ExternalRuntimeManager;
+import org.openphone.assistant.external.ExternalRuntimeCallback;
 import org.openphone.assistant.model.ModelEndpointConfig;
 import org.openphone.assistant.model.OpenAiResponsesAgentAdapter;
 import org.openphone.assistant.jobs.OpenPhoneAgentJobScheduler;
@@ -34,9 +36,26 @@ public final class OpenPhoneAssistantService extends Service {
             "org.openphone.assistant.action.HIDE_ISLAND";
     static final String ACTION_SHOW_MIC_ISLAND =
             "org.openphone.assistant.action.SHOW_MIC_ISLAND";
+    static final String ACTION_LOG_EXTERNAL_STATUS =
+            "org.openphone.assistant.action.LOG_EXTERNAL_RUNTIME_STATUS";
+    static final String ACTION_RELOAD_EXTERNAL_RUNTIMES =
+            "org.openphone.assistant.action.RELOAD_EXTERNAL_RUNTIMES";
+    static final String ACTION_REQUEST_OPENCLAW_ATTENTION =
+            "org.openphone.assistant.action.REQUEST_OPENCLAW_ATTENTION";
+    static final String EXTRA_OPENCLAW_ATTENTION_TEXT =
+            "org.openphone.assistant.extra.OPENCLAW_ATTENTION_TEXT";
+    static final String EXTRA_OPENCLAW_ATTENTION_SOURCE =
+            "org.openphone.assistant.extra.OPENCLAW_ATTENTION_SOURCE";
+    static final String EXTRA_OPENCLAW_ATTENTION_AUTONOMY =
+            "org.openphone.assistant.extra.OPENCLAW_ATTENTION_AUTONOMY";
+    static final String EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN =
+            "org.openphone.assistant.extra.OPENCLAW_ATTENTION_INCLUDE_SCREEN";
+    private static volatile String sLatestExternalRuntimeStatusJson =
+            "{\"status\":\"disabled\",\"manager_status\":\"not_created\"}";
 
     private OpenPhoneAgentManager mAgentManager;
     private PointerOverlayController mPointerOverlayController;
+    private ExternalRuntimeManager mExternalRuntimeManager;
     private String mNotificationTaskId;
     private boolean mIslandHiddenByActivity;
 
@@ -50,10 +69,11 @@ public final class OpenPhoneAssistantService extends Service {
     private final IOpenPhoneAssistant.Stub mBinder = new IOpenPhoneAssistant.Stub() {
         @Override
         public String getStatus() {
+            String externalStatus = "external=" + externalRuntimeStatusJson();
             if (mAgentManager == null) {
-                return "assistant.ready framework.unavailable";
+                return "assistant.ready framework.unavailable " + externalStatus;
             }
-            return "assistant.ready " + mAgentManager.getServiceStatus();
+            return "assistant.ready " + mAgentManager.getServiceStatus() + " " + externalStatus;
         }
 
         @Override
@@ -127,6 +147,9 @@ public final class OpenPhoneAssistantService extends Service {
         });
         refreshIslandAutonomy();
         mAgentManager = getSystemService(OpenPhoneAgentManager.class);
+        mExternalRuntimeManager = new ExternalRuntimeManager(this, mAgentManager);
+        configureExternalRuntimeCallback();
+        mExternalRuntimeManager.start();
         OpenPhoneNotificationListenerService.ensureEnabled(this);
         if (mAgentManager == null) {
             Log.w(TAG, "OpenPhone framework service is not available");
@@ -157,6 +180,19 @@ public final class OpenPhoneAssistantService extends Service {
             mPointerOverlayController.showMicButton();
             return START_STICKY;
         }
+        if (ACTION_LOG_EXTERNAL_STATUS.equals(action)) {
+            Log.i(TAG, "external runtime status " + externalRuntimeStatusJson());
+            return START_STICKY;
+        }
+        if (ACTION_RELOAD_EXTERNAL_RUNTIMES.equals(action)) {
+            reloadExternalRuntimeManager();
+            Log.i(TAG, "external runtime reloaded " + externalRuntimeStatusJson());
+            return START_STICKY;
+        }
+        if (ACTION_REQUEST_OPENCLAW_ATTENTION.equals(action)) {
+            requestOpenClawAttention(intent);
+            return START_STICKY;
+        }
         if (OpenPhoneNotificationController.ACTION_START.equals(action)) {
             mIslandHiddenByActivity = false;
             mNotificationTaskId = startNotificationTask();
@@ -166,6 +202,12 @@ public final class OpenPhoneAssistantService extends Service {
         }
         if (OpenPhoneNotificationController.ACTION_STOP.equals(action)) {
             stopNotificationTask();
+            return START_STICKY;
+        }
+        if (OpenPhoneNotificationController.ACTION_EXTERNAL_APPROVE.equals(action)
+                || OpenPhoneNotificationController.ACTION_EXTERNAL_DENY.equals(action)) {
+            resolveExternalRuntimeConfirmation(intent,
+                    OpenPhoneNotificationController.ACTION_EXTERNAL_APPROVE.equals(action));
             return START_STICKY;
         }
         if (!mIslandHiddenByActivity) {
@@ -186,6 +228,9 @@ public final class OpenPhoneAssistantService extends Service {
     public void onDestroy() {
         if (mPointerOverlayController != null) {
             mPointerOverlayController.hide();
+        }
+        if (mExternalRuntimeManager != null) {
+            mExternalRuntimeManager.stop();
         }
         OpenPhoneNotificationController.cancel(this);
         super.onDestroy();
@@ -214,6 +259,100 @@ public final class OpenPhoneAssistantService extends Service {
         return response.substring(firstQuote + 1, secondQuote);
     }
 
+    private String externalRuntimeStatusJson() {
+        String status = mExternalRuntimeManager == null
+                ? "{\"status\":\"disabled\",\"manager_status\":\"not_created\"}"
+                : mExternalRuntimeManager.statusJson();
+        sLatestExternalRuntimeStatusJson = status;
+        return status;
+    }
+
+    static String latestExternalRuntimeStatusJson() {
+        return sLatestExternalRuntimeStatusJson;
+    }
+
+    private void reloadExternalRuntimeManager() {
+        if (mExternalRuntimeManager == null) {
+            mExternalRuntimeManager = new ExternalRuntimeManager(this, mAgentManager);
+        }
+        configureExternalRuntimeCallback();
+        mExternalRuntimeManager.start();
+    }
+
+    private void configureExternalRuntimeCallback() {
+        if (mExternalRuntimeManager == null) {
+            return;
+        }
+        mExternalRuntimeManager.setRuntimeCallback(new ExternalRuntimeCallback() {
+            @Override
+            public void onRuntimeMessage(String runtime, String sessionKey, String message,
+                    boolean terminal) {
+                handleExternalRuntimeMessage(runtime, sessionKey, message, terminal);
+            }
+        });
+    }
+
+    private void requestOpenClawAttention(Intent intent) {
+        if (mExternalRuntimeManager == null) {
+            mExternalRuntimeManager = new ExternalRuntimeManager(this, mAgentManager);
+            configureExternalRuntimeCallback();
+            mExternalRuntimeManager.start();
+        }
+        String text = cleanExtra(intent == null ? "" :
+                intent.getStringExtra(EXTRA_OPENCLAW_ATTENTION_TEXT), "");
+        String source = cleanExtra(intent == null ? "" :
+                intent.getStringExtra(EXTRA_OPENCLAW_ATTENTION_SOURCE), "chat");
+        String autonomy = cleanExtra(intent == null ? "" :
+                intent.getStringExtra(EXTRA_OPENCLAW_ATTENTION_AUTONOMY), "ask_before_action");
+        boolean includeScreen = intent != null
+                && intent.getBooleanExtra(EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN, true);
+        JSONObject context = new JSONObject();
+        try {
+            context.put("trigger", "openphone_assistant")
+                    .put("source", source)
+                    .put("sentAtMs", System.currentTimeMillis());
+        } catch (JSONException ignored) {
+        }
+        String result = mExternalRuntimeManager.requestOpenClawAttention(text, source,
+                autonomy, includeScreen, context);
+        sLatestExternalRuntimeStatusJson = mExternalRuntimeManager.statusJson();
+        JSONObject parsed = parseObject(result);
+        if (parsed.optBoolean("ok", false)) {
+            Log.i(TAG, "OpenClaw attention sent source=" + source);
+            if (mPointerOverlayController != null && !mIslandHiddenByActivity) {
+                mPointerOverlayController.setIslandState("thinking",
+                        "OpenClaw is working on it.");
+            }
+            return;
+        }
+        String message = parsed.optString("message",
+                "OpenClaw runtime is not available.");
+        Log.w(TAG, "OpenClaw attention failed: " + message);
+        handleExternalRuntimeMessage("openclaw", "", message, true);
+    }
+
+    private static String cleanExtra(String value, String fallback) {
+        String clean = value == null ? "" : value.trim();
+        return clean.isEmpty() ? fallback : clean;
+    }
+
+    private void handleExternalRuntimeMessage(String runtime, String sessionKey, String message,
+            boolean terminal) {
+        String clean = message == null ? "" : message.trim();
+        if (clean.isEmpty()) {
+            return;
+        }
+        Log.i(TAG, "external runtime message runtime=" + runtime
+                + " terminal=" + terminal + " session=" + sessionKey);
+        if (mPointerOverlayController != null && terminal) {
+            mPointerOverlayController.showReply(clean);
+        } else if (mPointerOverlayController != null && !mIslandHiddenByActivity) {
+            mPointerOverlayController.setIslandState("thinking", clean);
+        }
+        AssistantActivityBackend.deliverExternalRuntimeMessage(runtime, sessionKey, clean,
+                terminal);
+    }
+
     private void stopNotificationTask() {
         try {
             if (mAgentManager != null && mNotificationTaskId != null) {
@@ -228,6 +367,30 @@ public final class OpenPhoneAssistantService extends Service {
             }
             OpenPhoneNotificationController.showReady(this);
         }
+    }
+
+    private void resolveExternalRuntimeConfirmation(Intent intent, boolean approved) {
+        String confirmationId = intent == null ? "" : intent.getStringExtra(
+                OpenPhoneNotificationController.EXTRA_EXTERNAL_CONFIRMATION_ID);
+        if (mExternalRuntimeManager == null || confirmationId == null
+                || confirmationId.trim().isEmpty()) {
+            Log.w(TAG, "external confirmation action missing manager or id");
+            return;
+        }
+        ExternalRuntimeManager manager = mExternalRuntimeManager;
+        String trimmedId = confirmationId.trim();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String result = manager.resolveExternalConfirmation(trimmedId, approved);
+                    Log.i(TAG, "external confirmation resolved approved=" + approved
+                            + " id=" + trimmedId + " result=" + result);
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "external confirmation resolution failed id=" + trimmedId, e);
+                }
+            }
+        }, "OpenPhoneExternalConfirm").start();
     }
 
     private void refreshIslandAutonomy() {
@@ -412,6 +575,14 @@ public final class OpenPhoneAssistantService extends Service {
             return new JSONObject(json == null ? "{}" : json).optString(key, "");
         } catch (JSONException e) {
             return "";
+        }
+    }
+
+    private static JSONObject parseObject(String json) {
+        try {
+            return new JSONObject(json == null ? "{}" : json);
+        } catch (JSONException e) {
+            return new JSONObject();
         }
     }
 
