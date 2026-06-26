@@ -31,6 +31,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.openphone.assistant.context.ContextIndexStore;
+import org.openphone.assistant.external.ExternalRuntimeConfig;
 import org.openphone.assistant.jobs.AgentJobRecord;
 import org.openphone.assistant.jobs.AgentJobStore;
 import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
@@ -94,6 +95,7 @@ public final class PointerOverlayController {
     private static final int STATUS_TAB_CHAT = 0;
     private static final int STATUS_TAB_WATCHERS = 1;
     private static final int STATUS_TAB_RUNS = 2;
+    private static final int STATUS_TAB_RUNTIME = 3;
     private static final int OPENPHONE_ACCENT = 0xff72e0c4;
     private static final int OPENCLAW_ACCENT = 0xffe43d20;
     private static final int YOLO_ACCENT = 0xffffd166;
@@ -122,6 +124,7 @@ public final class PointerOverlayController {
     private TextView mChatTabButton;
     private TextView mWatchersTabButton;
     private TextView mRunsTabButton;
+    private TextView mRuntimeTabButton;
     private ScrollView mIslandBodyScroll;
     private FrameLayout mIslandBodyFrame;
     private TextView mIslandBodyText;
@@ -223,6 +226,7 @@ public final class PointerOverlayController {
             mChatTabButton = null;
             mWatchersTabButton = null;
             mRunsTabButton = null;
+            mRuntimeTabButton = null;
             mIslandBodyScroll = null;
             mIslandBodyFrame = null;
             mIslandBodyText = null;
@@ -634,9 +638,11 @@ public final class PointerOverlayController {
         mChatTabButton = islandTabButton("Chat", STATUS_TAB_CHAT);
         mWatchersTabButton = islandTabButton("Watchers", STATUS_TAB_WATCHERS);
         mRunsTabButton = islandTabButton("Runs", STATUS_TAB_RUNS);
+        mRuntimeTabButton = islandTabButton("Runtime", STATUS_TAB_RUNTIME);
         addTabButton(mIslandTabRow, mChatTabButton, 10);
         addTabButton(mIslandTabRow, mWatchersTabButton, 10);
-        addTabButton(mIslandTabRow, mRunsTabButton, 0);
+        addTabButton(mIslandTabRow, mRunsTabButton, 10);
+        addTabButton(mIslandTabRow, mRuntimeTabButton, 0);
         LinearLayout.LayoutParams tabRowLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -886,12 +892,13 @@ public final class PointerOverlayController {
         mIslandTabRow = null;
         mChatTabButton = null;
         mWatchersTabButton = null;
-            mRunsTabButton = null;
-            mIslandBodyScroll = null;
-            mIslandBodyFrame = null;
-            mIslandBodyText = null;
-            mIslandChatColumn = null;
-            mIslandActionRow = null;
+        mRunsTabButton = null;
+        mRuntimeTabButton = null;
+        mIslandBodyScroll = null;
+        mIslandBodyFrame = null;
+        mIslandBodyText = null;
+        mIslandChatColumn = null;
+        mIslandActionRow = null;
         mApproveButton = null;
         mDenyButton = null;
         mActionLabel = null;
@@ -953,6 +960,7 @@ public final class PointerOverlayController {
         styleTabButton(mChatTabButton, mStatusTab == STATUS_TAB_CHAT);
         styleTabButton(mWatchersTabButton, mStatusTab == STATUS_TAB_WATCHERS);
         styleTabButton(mRunsTabButton, mStatusTab == STATUS_TAB_RUNS);
+        styleTabButton(mRuntimeTabButton, mStatusTab == STATUS_TAB_RUNTIME);
     }
 
     private static void styleTabButton(TextView button, boolean selected) {
@@ -1081,6 +1089,8 @@ public final class PointerOverlayController {
 
     private String backgroundStatusBody() {
         switch (mStatusTab) {
+            case STATUS_TAB_RUNTIME:
+                return runtimeStatusBody();
             case STATUS_TAB_WATCHERS:
                 return watchersStatusBody();
             case STATUS_TAB_RUNS:
@@ -1233,6 +1243,65 @@ public final class PointerOverlayController {
                     job.type, job.status, job.nextRunAtMillis));
         }
         return body.toString();
+    }
+
+    private String runtimeStatusBody() {
+        ExternalRuntimeConfig config = ExternalRuntimeConfig.load(mContext);
+        StringBuilder body = new StringBuilder();
+        body.append("Current runtime assignments");
+        body.append("\nChat: ").append(runtimeLabel(AssistantBrainConfig.loadMode(mContext)));
+        body.append("\nVolume: ")
+                .append(runtimeLabel(AssistantBrainConfig.loadVolumeMode(mContext)));
+        body.append("\nBackground: ")
+                .append(runtimeLabel(AssistantBrainConfig.loadBackgroundMode(mContext)));
+        body.append("\nEffective chat: ")
+                .append(runtimeLabel(AssistantBrainConfig.routeRuntime(mContext, config)));
+        body.append("\n\nConnected environments");
+        body.append(runtimeAdapterStatusLines());
+        return body.toString();
+    }
+
+    private String runtimeAdapterStatusLines() {
+        String statusJson = OpenPhoneAssistantService.latestExternalRuntimeStatusJson();
+        try {
+            JSONObject status = new JSONObject(statusJson == null ? "{}" : statusJson);
+            JSONArray adapters = status.optJSONArray("adapters");
+            if (adapters == null || adapters.length() == 0) {
+                return "\nNo external runtime status yet.";
+            }
+            StringBuilder lines = new StringBuilder();
+            for (int i = 0; i < adapters.length() && i < 4; i++) {
+                JSONObject adapter = adapters.optJSONObject(i);
+                if (adapter == null) {
+                    continue;
+                }
+                lines.append("\n")
+                        .append(runtimeLabel(adapter.optString("name", "")))
+                        .append(": ")
+                        .append(adapter.optString("status", "unknown"));
+            }
+            return lines.length() == 0 ? "\nNo external runtime status yet."
+                    : lines.toString();
+        } catch (JSONException e) {
+            return "\nRuntime status unavailable.";
+        }
+    }
+
+    private static String runtimeLabel(String runtime) {
+        String clean = runtime == null ? "" : runtime.trim().toLowerCase(java.util.Locale.US);
+        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
+            return "OpenClaw";
+        }
+        if (AssistantBrainConfig.HERMES.equals(clean)) {
+            return "Hermes";
+        }
+        if (AssistantBrainConfig.BUILTIN.equals(clean) || "local".equals(clean)) {
+            return "Local Phone Runtime";
+        }
+        if (AssistantBrainConfig.AUTO.equals(clean)) {
+            return "Auto";
+        }
+        return clean.isEmpty() ? "unknown" : clean;
     }
 
     private List<WatcherRecord> activeWatchers(int limit) {
