@@ -14,8 +14,11 @@ import android.openphone.OpenPhoneAgentManager;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.openphone.assistant.OpenPhoneNotificationController;
+import org.openphone.assistant.AssistantBrainConfig;
+import org.openphone.assistant.OpenPhoneAssistantService;
 import org.openphone.assistant.actions.ToolCatalog;
 import org.openphone.assistant.agent.FrameworkToolExecutor;
+import org.openphone.assistant.external.ExternalRuntimeConfig;
 import org.openphone.assistant.model.ModelAdapter;
 import org.openphone.assistant.model.ModelEndpointConfig;
 import org.openphone.assistant.model.OpenAiResponsesAgentAdapter;
@@ -89,6 +92,12 @@ public final class OpenPhoneAgentJobScheduler {
             scheduleNext(context, store);
             return;
         }
+        if (AssistantBrainConfig.OPENCLAW.equals(AssistantBrainConfig.routeBackgroundRuntime(
+                context, ExternalRuntimeConfig.load(context)))) {
+            sendBackgroundJobToOpenClaw(context, store, job);
+            scheduleNext(context, store);
+            return;
+        }
         OpenPhoneAgentManager agentManager = context.getSystemService(OpenPhoneAgentManager.class);
         if (agentManager == null) {
             failJob(context, store, job, "framework_unavailable");
@@ -154,6 +163,33 @@ public final class OpenPhoneAgentJobScheduler {
             return false;
         }
         return ToolCatalog.get().isStateChangingTool(toolName);
+    }
+
+    private static void sendBackgroundJobToOpenClaw(Context context, AgentJobStore store,
+            AgentJobRecord job) {
+        try {
+            Intent intent = new Intent(context, OpenPhoneAssistantService.class);
+            intent.setAction(OpenPhoneAssistantService.ACTION_REQUEST_OPENCLAW_ATTENTION);
+            intent.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_TEXT,
+                    job.prompt + "\n\nBackground job payload JSON:\n"
+                            + (job.payloadJson == null ? "{}" : job.payloadJson));
+            intent.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_SOURCE,
+                    "background_job");
+            intent.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_AUTONOMY,
+                    "ask_before_action");
+            intent.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN,
+                    true);
+            context.startService(intent);
+            store.markCompleted(job.id, "openclaw_attention.sent", System.currentTimeMillis());
+            if (shouldNotify(job)) {
+                OpenPhoneNotificationController.showAgentJobFinished(context, job,
+                        "OpenClaw is working on this background job.");
+            }
+        } catch (RuntimeException e) {
+            failJob(context, store, job,
+                    "openclaw_background_dispatch_failed:"
+                            + e.getClass().getSimpleName());
+        }
     }
 
     private static void failJob(Context context, AgentJobStore store,

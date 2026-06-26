@@ -94,6 +94,9 @@ public final class PointerOverlayController {
     private static final int STATUS_TAB_CHAT = 0;
     private static final int STATUS_TAB_WATCHERS = 1;
     private static final int STATUS_TAB_RUNS = 2;
+    private static final int OPENPHONE_ACCENT = 0xff72e0c4;
+    private static final int OPENCLAW_ACCENT = 0xffe43d20;
+    private static final int YOLO_ACCENT = 0xffffd166;
 
     private final Context mContext;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -1010,27 +1013,30 @@ public final class PointerOverlayController {
         if ("transcript".equals(mMode)) {
             String transcript = mTranscriptText == null ? "" : mTranscriptText;
             if (hasMultiLineTranscript()) {
-                return IslandPresentation.expanded("AI", transcript, false,
+                return IslandPresentation.expanded(runtimeExpandedTitle(), transcript, false,
                         REPLY_MAX_LINES);
             }
             return IslandPresentation.compact("You said", transcript, 0xfff4f7f8);
         }
         if ("reply".equals(mMode)) {
-            return IslandPresentation.expanded("AI",
+            return IslandPresentation.expanded(runtimeExpandedTitle(),
                     mReplyText == null ? "" : mReplyText, false, REPLY_MAX_LINES);
         }
         if ("thinking".equals(mMode)) {
             if (mInspectExpanded) {
-                return IslandPresentation.expanded("Thinking", detailOr("Thinking"), false, 4);
+                return IslandPresentation.expanded(runtimeThinkingTitle(),
+                        detailOr("Thinking"), false, 4);
             }
-            return IslandPresentation.compact("", thinkingDots(), 0xff9ab8ff);
+            return IslandPresentation.compact(runtimeThinkingGlyph(), thinkingDots(),
+                    runtimeAccentColor(0xff9ab8ff));
         }
         if ("realtime".equals(mMode)) {
             if (mInspectExpanded) {
-                return IslandPresentation.expanded("Realtime", detailOr("Live Realtime 2"),
-                        false, 4);
+                return IslandPresentation.expanded(runtimeRealtimeTitle(),
+                        detailOr("Live Realtime 2"), false, 4);
             }
-            return IslandPresentation.compact("⚡", thinkingDots(), 0xffffcc6c);
+            return IslandPresentation.compact(runtimeRealtimeGlyph(), thinkingDots(),
+                    runtimeAccentColor(0xffffcc6c));
         }
         if ("action_running".equals(mMode)) {
             if (mInspectExpanded) {
@@ -1055,19 +1061,21 @@ public final class PointerOverlayController {
             if (mInspectExpanded) {
                 return backgroundStatusPresentation();
             }
-            return IslandPresentation.compact(yoloPrefix() + "AI",
-                    mWatchingCount > 1 ? "◎ " + mWatchingCount : "◎", 0xff9ab8ff);
+            return IslandPresentation.compact(runtimeCompactTitle(),
+                    mWatchingCount > 1 ? "◎ " + mWatchingCount : "◎",
+                    runtimeAccentColor(0xff9ab8ff));
         }
         if (mInspectExpanded) {
             return backgroundStatusPresentation();
         }
-        return IslandPresentation.compact(yoloPrefix() + "AI", "◉", 0xff72e0c4);
+        return IslandPresentation.compact(runtimeCompactTitle(), "◉",
+                runtimeAccentColor(OPENPHONE_ACCENT));
     }
 
     private IslandPresentation backgroundStatusPresentation() {
         int watcherCount = Math.max(mWatchingCount, activeWatchers(50).size());
         boolean showStop = mStatusTab == STATUS_TAB_WATCHERS && watcherCount > 0;
-        return IslandPresentation.expandedStatus("AI", backgroundStatusBody(),
+        return IslandPresentation.expandedStatus(runtimeExpandedTitle(), backgroundStatusBody(),
                 true, showStop, 10);
     }
 
@@ -1722,7 +1730,46 @@ public final class PointerOverlayController {
     }
 
     private String yoloPrefix() {
-        return mYoloActive ? "⚡ " : "";
+        if (!mYoloActive || isOpenClawSelected()) {
+            return "";
+        }
+        return "⚡ ";
+    }
+
+    private String runtimeCompactTitle() {
+        return isOpenClawSelected() ? "🦞" : yoloPrefix() + "AI";
+    }
+
+    private String runtimeExpandedTitle() {
+        return isOpenClawSelected() ? "OpenClaw" : "AI";
+    }
+
+    private String runtimeThinkingTitle() {
+        return isOpenClawSelected() ? "OpenClaw" : "Thinking";
+    }
+
+    private String runtimeThinkingGlyph() {
+        return isOpenClawSelected() ? "🦞" : "";
+    }
+
+    private String runtimeRealtimeTitle() {
+        return isOpenClawSelected() ? "OpenClaw" : "Realtime";
+    }
+
+    private String runtimeRealtimeGlyph() {
+        return isOpenClawSelected() ? "🦞" : "⚡";
+    }
+
+    private int runtimeAccentColor(int localAccent) {
+        return isOpenClawSelected() ? OPENCLAW_ACCENT : localAccent;
+    }
+
+    private boolean isOpenClawSelected() {
+        return AssistantBrainConfig.OPENCLAW.equals(AssistantBrainConfig.loadMode(mContext))
+                || AssistantBrainConfig.OPENCLAW.equals(
+                        AssistantBrainConfig.loadVolumeMode(mContext))
+                || AssistantBrainConfig.OPENCLAW.equals(
+                        AssistantBrainConfig.loadBackgroundMode(mContext));
     }
 
     private String thinkingDots() {
@@ -2015,7 +2062,7 @@ public final class PointerOverlayController {
         }
     }
 
-    private static GradientDrawable chipBackground(boolean yoloActive, boolean attachedToPanel) {
+    private GradientDrawable chipBackground(boolean yoloActive, boolean attachedToPanel) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(0xff000000);
         float radius = ISLAND_HEIGHT / 2f;
@@ -2030,7 +2077,7 @@ public final class PointerOverlayController {
             drawable.setCornerRadius(radius);
         }
         if (yoloActive) {
-            drawable.setStroke(3, 0xffffd166);
+            drawable.setStroke(3, isOpenClawSelected() ? OPENCLAW_ACCENT : YOLO_ACCENT);
         }
         return drawable;
     }
@@ -2038,7 +2085,7 @@ public final class PointerOverlayController {
     private static GradientDrawable cursorBackground() {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setShape(GradientDrawable.OVAL);
-        drawable.setColor(0xff72e0c4);
+        drawable.setColor(OPENPHONE_ACCENT);
         drawable.setStroke(4, 0xdd101418);
         return drawable;
     }

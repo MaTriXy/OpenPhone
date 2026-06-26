@@ -135,6 +135,40 @@ object AssistantComposeHost {
                 }, 400L)
             }
 
+            fun selectVolumeRuntime(mode: String) {
+                val label = when (mode) {
+                    "openclaw" -> "OpenClaw"
+                    else -> "Local Phone Runtime"
+                }
+                viewModel.setRuntimesFromJson(
+                    activity.onComposeSelectVolumeRuntime(mode),
+                    "Volume buttons set to $label",
+                )
+                postDelayed({
+                    viewModel.setRuntimesFromJson(
+                        activity.onComposeRuntimeStatusSnapshot(),
+                        "Volume buttons set to $label",
+                    )
+                }, 400L)
+            }
+
+            fun selectBackgroundRuntime(mode: String) {
+                val label = when (mode) {
+                    "openclaw" -> "OpenClaw"
+                    else -> "Local Phone Runtime"
+                }
+                viewModel.setRuntimesFromJson(
+                    activity.onComposeSelectBackgroundRuntime(mode),
+                    "Watchers/background set to $label",
+                )
+                postDelayed({
+                    viewModel.setRuntimesFromJson(
+                        activity.onComposeRuntimeStatusSnapshot(),
+                        "Watchers/background set to $label",
+                    )
+                }, 400L)
+            }
+
             setContent {
                 val state by viewModel.state.collectAsState()
                 OpenPhoneTheme {
@@ -189,6 +223,12 @@ object AssistantComposeHost {
                         },
                         onSelectChatRuntime = {
                             selectChatRuntime(it)
+                        },
+                        onSelectVolumeRuntime = {
+                            selectVolumeRuntime(it)
+                        },
+                        onSelectBackgroundRuntime = {
+                            selectBackgroundRuntime(it)
                         },
                         onReadScreen = activity::onComposeReadScreen,
                         onReadScreenshot = activity::onComposeReadScreenshot,

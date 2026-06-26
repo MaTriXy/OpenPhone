@@ -45,6 +45,8 @@ fun RuntimesScreen(
     onRefresh: () -> Unit,
     onReconnect: () -> Unit,
     onSelectChatRuntime: (String) -> Unit,
+    onSelectVolumeRuntime: (String) -> Unit,
+    onSelectBackgroundRuntime: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -78,16 +80,20 @@ fun RuntimesScreen(
             GlassSurface(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Default chat runtime", style = MaterialTheme.typography.titleMedium)
-                    KeyValueLine("Selected", runtimeDisplayName(state.chatRuntime))
-                    KeyValueLine("Effective", runtimeDisplayName(state.effectiveChatRuntime))
-                    KeyValueLine("Volume trigger", "${runtimeDisplayName(state.volumeRuntime)} (V1)")
-                    KeyValueLine("Background tasks", "${runtimeDisplayName(state.backgroundRuntime)} (V1)")
+                    KeyValueLine("Selected for chat", runtimeDisplayName(state.chatRuntime))
+                    KeyValueLine("Effective chat route", runtimeDisplayName(state.effectiveChatRuntime))
+                    KeyValueLine("Volume buttons", "${runtimeDisplayName(state.volumeRuntime)} (V1)")
+                    KeyValueLine("Watchers/background", "${runtimeDisplayName(state.backgroundRuntime)} (V1)")
                 }
             }
 
             LocalRuntimeCard(
-                selected = state.chatRuntime != "openclaw",
-                onSelect = { onSelectChatRuntime("builtin") },
+                chatSelected = state.chatRuntime == "builtin",
+                volumeSelected = state.volumeRuntime == "builtin",
+                backgroundSelected = state.backgroundRuntime == "builtin",
+                onSelectChat = { onSelectChatRuntime("builtin") },
+                onSelectVolume = { onSelectVolumeRuntime("builtin") },
+                onSelectBackground = { onSelectBackgroundRuntime("builtin") },
             )
 
             GlassSurface(modifier = Modifier.fillMaxWidth()) {
@@ -123,8 +129,12 @@ fun RuntimesScreen(
                 state.adapters.forEach { adapter ->
                     RuntimeCard(
                         adapter = adapter,
-                        selected = state.chatRuntime == adapter.name,
-                        onSelect = { onSelectChatRuntime(adapter.name) },
+                        chatSelected = state.chatRuntime == adapter.name,
+                        volumeSelected = state.volumeRuntime == adapter.name,
+                        backgroundSelected = state.backgroundRuntime == adapter.name,
+                        onSelectChat = { onSelectChatRuntime(adapter.name) },
+                        onSelectVolume = { onSelectVolumeRuntime(adapter.name) },
+                        onSelectBackground = { onSelectBackgroundRuntime(adapter.name) },
                     )
                 }
             }
@@ -135,8 +145,12 @@ fun RuntimesScreen(
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 private fun LocalRuntimeCard(
-    selected: Boolean,
-    onSelect: () -> Unit,
+    chatSelected: Boolean,
+    volumeSelected: Boolean,
+    backgroundSelected: Boolean,
+    onSelectChat: () -> Unit,
+    onSelectVolume: () -> Unit,
+    onSelectBackground: () -> Unit,
 ) {
     GlassSurface(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -165,11 +179,21 @@ private fun LocalRuntimeCard(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SmallBadge("Always on")
-                SmallBadge("Volume trigger")
+                SmallBadge("Volume buttons")
                 SmallBadge("Phone actions")
-                SmallBadge(if (selected) "Selected" else "Fallback")
+                if (chatSelected) SmallBadge("Chat")
+                if (volumeSelected) SmallBadge("Volume")
+                if (backgroundSelected) SmallBadge("Background")
             }
-            RuntimeSelectButton(selected = selected, enabled = true, onSelect = onSelect)
+            RuntimeSurfaceButtons(
+                chatSelected = chatSelected,
+                volumeSelected = volumeSelected,
+                backgroundSelected = backgroundSelected,
+                enabled = true,
+                onSelectChat = onSelectChat,
+                onSelectVolume = onSelectVolume,
+                onSelectBackground = onSelectBackground,
+            )
         }
     }
 }
@@ -178,8 +202,12 @@ private fun LocalRuntimeCard(
 @OptIn(ExperimentalLayoutApi::class)
 private fun RuntimeCard(
     adapter: RuntimeAdapterUiState,
-    selected: Boolean,
-    onSelect: () -> Unit,
+    chatSelected: Boolean,
+    volumeSelected: Boolean,
+    backgroundSelected: Boolean,
+    onSelectChat: () -> Unit,
+    onSelectVolume: () -> Unit,
+    onSelectBackground: () -> Unit,
 ) {
     GlassSurface(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -209,7 +237,9 @@ private fun RuntimeCard(
             ) {
                 SmallBadge(if (adapter.enabled) "Enabled" else "Disabled")
                 SmallBadge(if (adapter.configured) "Configured" else "Missing URL")
-                SmallBadge(if (selected) "Selected" else "Remote brain")
+                if (chatSelected) SmallBadge("Chat")
+                if (volumeSelected) SmallBadge("Volume")
+                if (backgroundSelected) SmallBadge("Background")
             }
             if (adapter.url.isNotBlank()) {
                 KeyValueLine("Endpoint", adapter.url)
@@ -217,25 +247,51 @@ private fun RuntimeCard(
             if (adapter.deviceId.isNotBlank()) {
                 KeyValueLine("Device", adapter.deviceId)
             }
-            RuntimeSelectButton(
-                selected = selected,
+            RuntimeSurfaceButtons(
+                chatSelected = chatSelected,
+                volumeSelected = volumeSelected,
+                backgroundSelected = backgroundSelected,
                 enabled = adapter.enabled && adapter.configured,
-                onSelect = onSelect,
+                onSelectChat = onSelectChat,
+                onSelectVolume = onSelectVolume,
+                onSelectBackground = onSelectBackground,
             )
         }
     }
 }
 
 @Composable
-private fun RuntimeSelectButton(
+@OptIn(ExperimentalLayoutApi::class)
+private fun RuntimeSurfaceButtons(
+    chatSelected: Boolean,
+    volumeSelected: Boolean,
+    backgroundSelected: Boolean,
+    enabled: Boolean,
+    onSelectChat: () -> Unit,
+    onSelectVolume: () -> Unit,
+    onSelectBackground: () -> Unit,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        RuntimeSurfaceButton("Chat", chatSelected, enabled, onSelectChat)
+        RuntimeSurfaceButton("Volume", volumeSelected, enabled, onSelectVolume)
+        RuntimeSurfaceButton("Background", backgroundSelected, enabled, onSelectBackground)
+    }
+}
+
+@Composable
+private fun RuntimeSurfaceButton(
+    label: String,
     selected: Boolean,
     enabled: Boolean,
     onSelect: () -> Unit,
 ) {
     if (selected) {
-        OutlinedButton(onClick = {}, enabled = false) { Text("Selected for chat") }
+        OutlinedButton(onClick = {}, enabled = false) { Text(label) }
     } else {
-        Button(onClick = onSelect, enabled = enabled) { Text("Use for chat") }
+        Button(onClick = onSelect, enabled = enabled) { Text(label) }
     }
 }
 
@@ -328,6 +384,8 @@ private fun RuntimesScreenPreview() {
             onRefresh = {},
             onReconnect = {},
             onSelectChatRuntime = {},
+            onSelectVolumeRuntime = {},
+            onSelectBackgroundRuntime = {},
         )
     }
 }

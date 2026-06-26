@@ -225,6 +225,7 @@ public class AssistantActivityBackend extends ComponentActivity {
     private OtaUpdateClient.Update mLatestOtaUpdate;
     private boolean mListening;
     private boolean mVoiceHoldToRecord;
+    private String mVoiceRouteSource = "chat_voice";
     private boolean mVoiceCaptureFinishRequested;
     private boolean mRealtimeVoiceErrorShown;
     private boolean mPendingVoiceForceClassic;
@@ -565,10 +566,11 @@ public class AssistantActivityBackend extends ComponentActivity {
                 || (sLastQuickVolumeChordUptimeMillis > 0
                         && now - sLastQuickVolumeChordUptimeMillis
                                 <= VOLUME_CHORD_DOUBLE_TAP_MILLIS)) {
-            Log.i(TAG, "volume chord double tap starts live realtime");
+            Log.i(TAG, "volume chord double tap starts voice runtime="
+                    + selectedVolumeRuntime());
             cancelPendingVolumeChord();
             sLastQuickVolumeChordUptimeMillis = 0L;
-            startIslandVoiceAgent(false, false);
+            startVolumeVoiceAgent(false);
             return;
         }
         Log.i(TAG, "volume chord waiting for hold-or-double");
@@ -579,7 +581,7 @@ public class AssistantActivityBackend extends ComponentActivity {
             sActiveControlRunner = this;
         }
         final int generation = ++mVolumeChordGeneration;
-        setTaskText("Hold for classic, double-click for " + liveVoiceLabel() + ".");
+        setTaskText(volumeChordPrompt());
         updateIsland("Volume chord");
         postToUi(new Runnable() {
             @Override
@@ -590,9 +592,20 @@ public class AssistantActivityBackend extends ComponentActivity {
                 Log.i(TAG, "volume chord hold starts classic voice");
                 mVolumeChordPendingClassic = false;
                 mVolumeChordClassicStarted = true;
-                startIslandVoiceAgent(true, true);
+                startVolumeVoiceAgent(true);
             }
         }, VOLUME_CHORD_CLASSIC_HOLD_MILLIS);
+    }
+
+    private String selectedVolumeRuntime() {
+        return AssistantBrainConfig.routeVolumeRuntime(this, ExternalRuntimeConfig.load(this));
+    }
+
+    private String volumeChordPrompt() {
+        if (AssistantBrainConfig.OPENCLAW.equals(selectedVolumeRuntime())) {
+            return "Hold or double-click to speak to OpenClaw.";
+        }
+        return "Hold for classic, double-click for " + liveVoiceLabel() + ".";
     }
 
     private void cancelPendingVolumeChord() {
@@ -776,6 +789,16 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     public String onComposeSelectChatRuntime(String mode) {
         AssistantBrainConfig.persistMode(this, mode);
+        return composeExternalRuntimeStatusJson();
+    }
+
+    public String onComposeSelectVolumeRuntime(String mode) {
+        AssistantBrainConfig.persistVolumeMode(this, mode);
+        return composeExternalRuntimeStatusJson();
+    }
+
+    public String onComposeSelectBackgroundRuntime(String mode) {
+        AssistantBrainConfig.persistBackgroundMode(this, mode);
         return composeExternalRuntimeStatusJson();
     }
 
@@ -1190,6 +1213,13 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void startVoiceAgent(boolean holdToRecord, boolean forceClassic) {
+        startVoiceAgent(holdToRecord, forceClassic, "chat_voice");
+    }
+
+    private void startVoiceAgent(boolean holdToRecord, boolean forceClassic,
+            String routeSource) {
+        mVoiceRouteSource = routeSource == null || routeSource.trim().isEmpty()
+                ? "chat_voice" : routeSource.trim();
         Log.i(TAG, "voice start requested listening=" + mListening
                 + " live=" + useLiveRealtimeVoice()
                 + " forceClassic=" + forceClassic
@@ -1232,7 +1262,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         Log.i(TAG, "voice start control=" + isControlSurface()
                 + " island=" + mIslandVoiceLaunch
                 + " hold=" + holdToRecord);
-        listenThenRun(holdToRecord);
+        listenThenRun(holdToRecord, mVoiceRouteSource);
         if (mIslandVoiceLaunch) {
             getWindow().getDecorView().post(new Runnable() {
                 @Override
@@ -1253,7 +1283,13 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     private void startIslandVoiceAgent(boolean holdToRecord, boolean forceClassic) {
         mIslandVoiceLaunch = true;
-        startVoiceAgent(holdToRecord, forceClassic);
+        startVoiceAgent(holdToRecord, forceClassic, "island_voice");
+    }
+
+    private void startVolumeVoiceAgent(boolean holdToRecord) {
+        mIslandVoiceLaunch = true;
+        boolean forceClassic = AssistantBrainConfig.OPENCLAW.equals(selectedVolumeRuntime());
+        startVoiceAgent(holdToRecord, forceClassic, "volume_voice");
     }
 
     private void finishIslandVoiceLaunch() {
@@ -1305,7 +1341,7 @@ public class AssistantActivityBackend extends ComponentActivity {
             if (!mPendingVoiceForceClassic && useLiveRealtimeVoice()) {
                 startLiveVoiceAgent();
             } else {
-                listenThenRun(mVoiceHoldToRecord);
+                listenThenRun(mVoiceHoldToRecord, mVoiceRouteSource);
             }
             mPendingVoiceForceClassic = false;
         } else {
@@ -1787,6 +1823,12 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private void listenThenRun(boolean holdToRecord) {
+        listenThenRun(holdToRecord, "chat_voice");
+    }
+
+    private void listenThenRun(boolean holdToRecord, String routeSource) {
+        final String cleanRouteSource = routeSource == null || routeSource.trim().isEmpty()
+                ? "chat_voice" : routeSource.trim();
         final ModelEndpointConfig endpointConfig = modelEndpointConfig();
         if (isControlSurface()) {
             sActiveControlRunner = this;
@@ -1871,7 +1913,7 @@ public class AssistantActivityBackend extends ComponentActivity {
                         mPointerOverlayController.showTranscript(transcript);
                         if (voiceGeneration == mVoiceRunGeneration) {
                             Log.i(TAG, "voice transcript routing generation=" + voiceGeneration);
-                            routeMessageFromCurrentMessage("classic_voice");
+                            routeMessageFromCurrentMessage(cleanRouteSource);
                             if (isControlSurface()) {
                                 moveTaskToBack(true);
                             }
@@ -2059,7 +2101,7 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     private boolean routeMessageToOpenClaw(String message, String source) {
         ExternalRuntimeConfig config = ExternalRuntimeConfig.load(this);
-        String route = AssistantBrainConfig.routeRuntime(this, config);
+        String route = routeRuntimeForSource(source, config);
         if (!AssistantBrainConfig.OPENCLAW.equals(route)) {
             return false;
         }
@@ -2103,6 +2145,17 @@ public class AssistantActivityBackend extends ComponentActivity {
             moveTaskToBack(true);
         }
         return true;
+    }
+
+    private String routeRuntimeForSource(String source, ExternalRuntimeConfig config) {
+        String clean = source == null ? "" : source.trim().toLowerCase(Locale.US);
+        if (clean.startsWith("volume")) {
+            return AssistantBrainConfig.routeVolumeRuntime(this, config);
+        }
+        if (clean.startsWith("watcher") || clean.startsWith("background")) {
+            return AssistantBrainConfig.routeBackgroundRuntime(this, config);
+        }
+        return AssistantBrainConfig.routeRuntime(this, config);
     }
 
     private String externalAutonomyMode() {
@@ -2720,8 +2773,8 @@ public class AssistantActivityBackend extends ComponentActivity {
             ExternalRuntimeConfig config = ExternalRuntimeConfig.load(this);
             status.put("chat_runtime", AssistantBrainConfig.loadMode(this));
             status.put("effective_chat_runtime", AssistantBrainConfig.routeRuntime(this, config));
-            status.put("volume_runtime", AssistantBrainConfig.BUILTIN);
-            status.put("background_runtime", AssistantBrainConfig.BUILTIN);
+            status.put("volume_runtime", AssistantBrainConfig.loadVolumeMode(this));
+            status.put("background_runtime", AssistantBrainConfig.loadBackgroundMode(this));
             status.put("configured", new JSONArray()
                     .put(runtimeSettingsJson(config.openClaw))
                     .put(runtimeSettingsJson(config.hermes)));

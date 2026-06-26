@@ -40,15 +40,15 @@ public final class OpenPhoneAssistantService extends Service {
             "org.openphone.assistant.action.LOG_EXTERNAL_RUNTIME_STATUS";
     static final String ACTION_RELOAD_EXTERNAL_RUNTIMES =
             "org.openphone.assistant.action.RELOAD_EXTERNAL_RUNTIMES";
-    static final String ACTION_REQUEST_OPENCLAW_ATTENTION =
+    public static final String ACTION_REQUEST_OPENCLAW_ATTENTION =
             "org.openphone.assistant.action.REQUEST_OPENCLAW_ATTENTION";
-    static final String EXTRA_OPENCLAW_ATTENTION_TEXT =
+    public static final String EXTRA_OPENCLAW_ATTENTION_TEXT =
             "org.openphone.assistant.extra.OPENCLAW_ATTENTION_TEXT";
-    static final String EXTRA_OPENCLAW_ATTENTION_SOURCE =
+    public static final String EXTRA_OPENCLAW_ATTENTION_SOURCE =
             "org.openphone.assistant.extra.OPENCLAW_ATTENTION_SOURCE";
-    static final String EXTRA_OPENCLAW_ATTENTION_AUTONOMY =
+    public static final String EXTRA_OPENCLAW_ATTENTION_AUTONOMY =
             "org.openphone.assistant.extra.OPENCLAW_ATTENTION_AUTONOMY";
-    static final String EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN =
+    public static final String EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN =
             "org.openphone.assistant.extra.OPENCLAW_ATTENTION_INCLUDE_SCREEN";
     private static volatile String sLatestExternalRuntimeStatusJson =
             "{\"status\":\"disabled\",\"manager_status\":\"not_created\"}";

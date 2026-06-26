@@ -9,6 +9,8 @@ import java.util.Locale;
 
 public final class AssistantBrainConfig {
     public static final String KEY_ASSISTANT_BRAIN = "openphone_assistant_brain";
+    public static final String KEY_VOLUME_RUNTIME = "openphone_volume_runtime";
+    public static final String KEY_BACKGROUND_RUNTIME = "openphone_background_runtime";
     public static final String BUILTIN = "builtin";
     public static final String OPENCLAW = "openclaw";
     public static final String HERMES = "hermes";
@@ -26,6 +28,35 @@ public final class AssistantBrainConfig {
     public static void persistMode(Context context, String mode) {
         Settings.Secure.putString(context.getContentResolver(), KEY_ASSISTANT_BRAIN,
                 cleanMode(mode));
+    }
+
+    public static String loadVolumeMode(Context context) {
+        return loadSurfaceMode(context, KEY_VOLUME_RUNTIME, BUILTIN);
+    }
+
+    public static void persistVolumeMode(Context context, String mode) {
+        persistSurfaceMode(context, KEY_VOLUME_RUNTIME, mode, BUILTIN);
+    }
+
+    public static String loadBackgroundMode(Context context) {
+        return loadSurfaceMode(context, KEY_BACKGROUND_RUNTIME, BUILTIN);
+    }
+
+    public static void persistBackgroundMode(Context context, String mode) {
+        persistSurfaceMode(context, KEY_BACKGROUND_RUNTIME, mode, BUILTIN);
+    }
+
+    private static String loadSurfaceMode(Context context, String key, String fallback) {
+        String raw = Settings.Secure.getString(context.getContentResolver(), key);
+        String clean = cleanMode(raw);
+        return AUTO.equals(clean) ? fallback : clean;
+    }
+
+    private static void persistSurfaceMode(Context context, String key, String mode,
+            String fallback) {
+        String clean = cleanMode(mode);
+        Settings.Secure.putString(context.getContentResolver(), key,
+                AUTO.equals(clean) ? fallback : clean);
     }
 
     public static String cleanMode(String mode) {
@@ -52,6 +83,18 @@ public final class AssistantBrainConfig {
 
     public static String routeRuntime(Context context, ExternalRuntimeConfig config) {
         String mode = loadMode(context);
+        return routeSelectedRuntime(mode, config);
+    }
+
+    public static String routeVolumeRuntime(Context context, ExternalRuntimeConfig config) {
+        return routeSelectedRuntime(loadVolumeMode(context), config);
+    }
+
+    public static String routeBackgroundRuntime(Context context, ExternalRuntimeConfig config) {
+        return routeSelectedRuntime(loadBackgroundMode(context), config);
+    }
+
+    private static String routeSelectedRuntime(String mode, ExternalRuntimeConfig config) {
         if (BUILTIN.equals(mode)) {
             return BUILTIN;
         }
