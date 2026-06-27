@@ -182,6 +182,10 @@ See [docs/devices/MATRIX.md](docs/devices/MATRIX.md) and
 Contributions, issues, and device validation reports are welcome under the
 terms in [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md).
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=secondly-com/OpenPhone&type=Date)](https://www.star-history.com/#secondly-com/OpenPhone&Date)
+
 ## Commercial Use
 
 OpenPhone-owned materials are source-available for non-commercial use under the
