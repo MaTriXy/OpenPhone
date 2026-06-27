@@ -25,8 +25,10 @@ google/tegu/tegu:16/BP4A.260105.004.E1/14587043:user/release-keys
 - Kernel source: downloaded by Lineage `breakfast tegu`.
 - Vendor blobs: extract from a matching Lineage installable zip or from a
   device already running the matching Lineage branch.
-- Lineage build/install docs:
-  `https://blob.lineageos.org/preview/wiki/471381/devices/tegu/build/`
+- Lineage build docs:
+  [Build LineageOS for Google Pixel 9a](https://wiki.lineageos.org/devices/tegu/build/)
+- Lineage install docs:
+  [Install LineageOS on Google Pixel 9a](https://wiki.lineageos.org/devices/tegu/install/)
 
 ## Host Checks
 
@@ -142,7 +144,7 @@ until OpenPhone has its own release package and installer documentation.
 OpenPhone does not ship Google Play Store, Google Play Services, or Google
 apps. Users who want Google Play on their own Pixel 9a can sideload a
 compatible user-supplied Google apps package after installing the OpenPhone OTA.
-See [../docs/GMS.md](../docs/GMS.md) for the project policy and compatibility
+See [../GMS.md](../GMS.md) for the project policy and compatibility
 notes.
 
 Install the package immediately after the OpenPhone OTA, before first normal
@@ -175,7 +177,7 @@ The first OpenPhone smoke OTA installed and produced valid OpenPhone userspace,
 but its generated `vendor_kernel_boot.img` had a zero-byte DTB and fell back to
 fastboot before Android could start. The DTB-fixed OpenPhone smoke OTA booted
 successfully on slot `_a`. See
-[../docs/TEGU_BOOTCHAIN.md](../docs/TEGU_BOOTCHAIN.md) for the root cause and
+[../TEGU_BOOTCHAIN.md](../TEGU_BOOTCHAIN.md) for the root cause and
 the DTB extraction fix.
 
 The first full `openphone_tegu` OTA booted far enough to expose full product
