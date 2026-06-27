@@ -52,6 +52,41 @@ After installing Android build dependencies and `repo`:
 The first full Android build is expected to expose integration issues. Fixing
 those against the synced Lineage tree is part of Phase 1.
 
+## Emulator Smoke Test
+
+For simulator validation, build the OpenPhone SDK phone product on a Linux
+Android build host:
+
+```bash
+./scripts/sync.sh
+./scripts/apply-patches.sh
+./scripts/build-emulator.sh --arch x86_64
+```
+
+Then boot it:
+
+```bash
+./scripts/run-emulator.sh --arch x86_64
+```
+
+This requires an Android SDK Emulator binary in `PATH`. On build-only EC2
+hosts, first verify that the portable system image zip exists:
+
+```bash
+ls -lh "$OPENPHONE_ANDROID_DIR/out/target/product/emu64x/sdk-repo-linux-system-images.zip"
+```
+
+If the host also has the SDK emulator and acceleration available, start it
+without a window and verify ADB:
+
+```bash
+./scripts/run-emulator.sh --arch x86_64 -- -no-window -gpu swiftshader_indirect
+adb wait-for-device
+adb shell 'getprop ro.openphone.version'
+adb shell 'service check openphone_agent'
+adb shell 'dumpsys package org.openphone.assistant | grep -E "versionCode|versionName" -n'
+```
+
 ## Device Check
 
 No physical device is supported until its `docs/devices/<codename>.md`

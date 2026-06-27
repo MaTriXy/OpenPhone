@@ -123,6 +123,78 @@ This validates the hidden `OpenPhoneAgentManager` framework API,
 `OpenPhoneAgentManagerService`, and `SystemServer` startup wiring without
 building the full product graph.
 
+## Emulator Build
+
+OpenPhone provides LineageOS SDK phone products for emulator validation:
+
+```text
+openphone_sdk_phone_x86_64-bp4a-eng
+openphone_sdk_phone_arm64-bp4a-eng
+```
+
+Use `x86_64` on x86_64 Linux build hosts, including EC2. Use `arm64` on Apple
+Silicon hosts. The `eng` variant is the default because ADB is enabled without
+first completing emulator-side developer settings.
+
+Build the emulator image:
+
+```bash
+./scripts/build-emulator.sh --arch x86_64
+```
+
+By default this builds `droid emu_img_zip`. To only build the runnable image:
+
+```bash
+OPENPHONE_BUILD_GOAL=droid ./scripts/build-emulator.sh --arch x86_64
+```
+
+After the image is built, run it from the same Android tree:
+
+```bash
+./scripts/run-emulator.sh --arch x86_64
+```
+
+This requires the Android SDK Emulator binary to be installed and available as
+`emulator` in `PATH`. The portable artifact is
+`out/target/product/<device>/sdk-repo-linux-system-images.zip`, which can be
+copied to a workstation and installed into Android Studio/AVD.
+
+For a headless remote host, pass emulator options after `--`:
+
+```bash
+./scripts/run-emulator.sh --arch x86_64 -- -no-window -gpu swiftshader_indirect
+```
+
+On LineageOS 21 and newer, `emu_img_zip` writes
+`sdk-repo-linux-system-images.zip` under `out/target/product/<device>/` for
+use with Android Studio/AVD system image installs.
+
+### EC2 Build Host
+
+For remote builds, launch an Ubuntu x86_64 EC2 host with at least 64 GB RAM and
+roughly 700 GB of fast gp3 storage, then bootstrap Android build dependencies:
+
+```bash
+sudo ./scripts/bootstrap-android-build-host.sh
+```
+
+Copy the OpenPhone repo to the host and build the x86_64 emulator target:
+
+```bash
+OPENPHONE_SKIP_JAVA_CHECK=1 ./scripts/check.sh
+./scripts/sync.sh -j16
+./scripts/apply-patches.sh
+./scripts/build-emulator.sh --arch x86_64
+```
+
+The pre-sync scaffold check skips the standalone Java check because the full
+Android build provides the authoritative compiler/toolchain validation.
+The EC2 host is primarily a build host; it may not have the Android SDK
+Emulator binary or `/dev/kvm`. Copy
+`.worktree/android/out/target/product/emu64x/sdk-repo-linux-system-images.zip`
+back to a workstation with Android Studio/SDK Emulator to create and boot the
+AVD.
+
 Current generic-target status:
 
 - `OPENPHONE_BUILD_GOAL=droid ./scripts/build.sh openphone_arm64` has been

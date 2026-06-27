@@ -129,7 +129,12 @@ required=(
   overlay/vendor/openphone/config/openphone_policy.json
   overlay/vendor/openphone/products/openphone_common.mk
   overlay/vendor/openphone/products/openphone_arm64.mk
+  overlay/vendor/openphone/products/openphone_sdk_phone_arm64.mk
+  overlay/vendor/openphone/products/openphone_sdk_phone_x86_64.mk
   overlay/vendor/openphone/products/openphone_tegu.mk
+  scripts/bootstrap-android-build-host.sh
+  scripts/build-emulator.sh
+  scripts/run-emulator.sh
   overlay/packages/apps/OpenPhoneAssistant/Android.bp
   overlay/packages/apps/OpenPhoneAssistant/AndroidManifest.xml
   overlay/packages/apps/OpenPhoneAssistant/LICENSE

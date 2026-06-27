@@ -1,0 +1,38 @@
+From 4a3ddc8625d6f54b6a272b37684d2278e919b7c1 Mon Sep 17 00:00:00 2001
+From: OpenPhone <dev@openphone.local>
+Date: Fri, 26 Jun 2026 15:10:00 -0700
+Subject: [PATCH] OpenPhone: keep repo manifest cache under out
+
+Android's build runs source actions under a read-only guard. The Lineage build
+manifest rule invokes repo from inside that guard; repo may create a Git config
+JSON cache next to the user Git config. On clean build hosts this lands under
+$HOME as .repo_.gitconfig.json, which is outside the rule output and can be
+blocked as a read-only write.
+
+Run the manifest invocation with HOME pointed at a rule-owned directory under
+PRODUCT_OUT so repo's cache stays in writable build output.
+---
+ build/tasks/build-manifest_xml.mk | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/build/tasks/build-manifest_xml.mk b/build/tasks/build-manifest_xml.mk
+index 54a6f1bb..79471e4e 100644
+--- a/build/tasks/build-manifest_xml.mk
++++ b/build/tasks/build-manifest_xml.mk
+@@ -16,9 +16,12 @@ ifdef MANIFEST_EXCLUDES
+ MANIFEST_EXCLUDES := |$(MANIFEST_EXCLUDES)
+ endif
+-
++
++BUILD_MANIFEST_REPO_HOME := $(PRODUCT_OUT)/obj/PACKAGING/build_manifest_intermediates/home
++
+ $(INSTALLED_BUILD_MANIFEST_XML_TARGET):
+-	mkdir -p $(dir $@)
+-	python3 .repo/repo/repo manifest -o - -r | grep -Ev "proprietary_$(MANIFEST_EXCLUDES)" > $@
++	mkdir -p $(dir $@)
++	mkdir -p $(BUILD_MANIFEST_REPO_HOME)
++	HOME=$(abspath $(BUILD_MANIFEST_REPO_HOME)) python3 .repo/repo/repo manifest -o - -r | grep -Ev "proprietary_$(MANIFEST_EXCLUDES)" > $@
+-
++
+ .PHONY: build-manifest.xml
+ build-manifest.xml: $(INSTALLED_BUILD_MANIFEST_XML_TARGET)
