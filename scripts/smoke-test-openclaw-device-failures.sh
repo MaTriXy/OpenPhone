@@ -23,7 +23,7 @@ Required:
 Covered:
   - gateway offline status
   - bad OpenClaw token/auth_failed status
-  - OpenClaw attention request emits chat.subscribe and openphone.attention.requested
+  - OpenClaw attention request emits chat.subscribe and stock agent.request
   - OpenClaw final chat fanout reaches the phone runtime callback
   - unknown OpenClaw command denial
   - user-approved confirmation result completes the original OpenClaw invoke
@@ -585,21 +585,28 @@ async def run_attention_path() -> None:
         prompt = f"OpenClaw attention smoke {RUN_ID}"
         request_openclaw_attention(prompt, source="chat")
         subscribe = await shim.wait_node_event("chat.subscribe", timeout=15)
-        attention = await shim.wait_node_event("openphone.attention.requested", timeout=15)
-        session_key = str(attention.get("sessionKey") or "")
+        agent_request = await shim.wait_node_event("agent.request", timeout=15)
+        session_key = str(agent_request.get("sessionKey") or "")
         if not session_key:
-            raise AssertionError(f"attention missing sessionKey: {attention}")
+            raise AssertionError(f"agent.request missing sessionKey: {agent_request}")
         if subscribe.get("sessionKey") != session_key:
             raise AssertionError(
-                f"subscribe session mismatch subscribe={subscribe} attention={attention}"
+                f"subscribe session mismatch subscribe={subscribe} request={agent_request}"
             )
-        if attention.get("text") != prompt:
-            raise AssertionError(f"attention text mismatch: {attention}")
-        if attention.get("source") != "chat":
-            raise AssertionError(f"attention source mismatch: {attention}")
-        if attention.get("include_screen") is not False:
-            raise AssertionError(f"attention include_screen mismatch: {attention}")
-        print("[ok] attention emitted chat.subscribe and openphone.attention.requested")
+        message = str(agent_request.get("message") or "")
+        if prompt not in message:
+            raise AssertionError(f"agent.request message mismatch: {agent_request}")
+        if "OpenPhone request context:" not in message:
+            raise AssertionError(f"agent.request missing OpenPhone context: {agent_request}")
+        if "OpenPhone device-control instructions:" not in message:
+            raise AssertionError(f"agent.request missing OpenPhone instructions: {agent_request}")
+        if agent_request.get("deliver") is not False:
+            raise AssertionError(f"agent.request deliver mismatch: {agent_request}")
+        if agent_request.get("thinking") != "low":
+            raise AssertionError(f"agent.request thinking mismatch: {agent_request}")
+        if agent_request.get("attachments") not in (None, []):
+            raise AssertionError(f"agent.request unexpected attachments: {agent_request}")
+        print("[ok] attention emitted chat.subscribe and stock agent.request")
 
         await shim.send_event("agent", {
             "sessionKey": session_key,

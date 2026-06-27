@@ -188,22 +188,177 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
             eventContext.put("displayName", mSettings.label)
                     .put("platform", "Android")
                     .put("deviceFamily", "OpenPhone");
-            payload.put("version", 1)
-                    .put("attention_id", cleanAttentionId)
-                    .put("phone_session_id", cleanPhoneSessionId)
+            payload.put("message", buildAgentRequestMessage(cleanPhoneSessionId,
+                            cleanAttentionId, cleanSource(source), message,
+                            cleanAutonomy(autonomy), includeScreen, eventContext))
                     .put("sessionKey", sessionKey)
-                    .put("source", cleanSource(source))
-                    .put("autonomy", cleanAutonomy(autonomy))
-                    .put("text", message)
-                    .put("include_screen", includeScreen)
-                    .put("created_at_ms", System.currentTimeMillis())
-                    .put("context", eventContext);
+                    .put("thinking", "low")
+                    .put("deliver", false)
+                    .put("key", cleanAttentionId);
+            JSONArray attachments = agentRequestAttachments(cleanAttentionId, eventContext);
+            if (attachments.length() > 0) {
+                payload.put("attachments", attachments);
+            }
         } catch (JSONException ignored) {
             return "";
         }
         sendRpc("node.event", buildNodeEventParams("chat.subscribe", subscribe));
-        sendRpc("node.event", buildNodeEventParams("openphone.attention.requested", payload));
+        sendRpc("node.event", buildNodeEventParams("agent.request", payload));
         return sessionKey;
+    }
+
+    private String buildAgentRequestMessage(String phoneSessionId, String attentionId,
+            String source, String text, String autonomy, boolean includeScreen,
+            JSONObject context) throws JSONException {
+        String nodeId = principal();
+        JSONObject requestContext = new JSONObject()
+                .put("nodeId", nodeId)
+                .put("phoneSessionId", phoneSessionId)
+                .put("attentionId", attentionId)
+                .put("source", source)
+                .put("autonomy", autonomy)
+                .put("includeScreen", includeScreen)
+                .put("displayName", mSettings.label)
+                .put("platform", "Android")
+                .put("deviceFamily", "OpenPhone");
+        String contextJson = compactJson(redactedOpenPhoneContext(context), 4000);
+        if (!contextJson.isEmpty()) {
+            requestContext.put("contextJson", contextJson);
+        }
+        String screenPreflight = compactJson(redactedScreenPreflight(context), 6000);
+        StringBuilder out = new StringBuilder();
+        out.append(text.trim())
+                .append("\n\nOpenPhone request context:\n")
+                .append(requestContext.toString());
+        if (!screenPreflight.isEmpty()) {
+            out.append("\n\nOpenPhone screen preflight observation:\n")
+                    .append(screenPreflight);
+        }
+        out.append("\n\nOpenPhone device-control instructions:\n")
+                .append("- The user is asking from a live OpenPhone Android node. ")
+                .append("Target node: ").append(nodeId).append(".\n")
+                .append("- If an OpenPhone screen preflight observation is present, ")
+                .append("use it as the current phone screen context before using ")
+                .append("workspace/bootstrap context.\n")
+                .append("- If an OpenPhone screenshot is attached, treat it as the ")
+                .append("rendered phone screen and use accessibility metadata as ")
+                .append("supporting context.\n")
+                .append("- Use the nodes tool to inspect or control this phone. ")
+                .append("Do not say you cannot see the phone when a relevant node ")
+                .append("tool is available.\n")
+                .append("- To read the current screen, invoke node ")
+                .append(nodeId)
+                .append(" with command openphone.screen.get and params ")
+                .append("{\"include_screenshot\":true,\"include_activity\":true,")
+                .append("\"include_ui_tree\":true,\"reason\":")
+                .append("\"answer the OpenPhone user from the current phone screen\"}.\n")
+                .append("- For phone actions, invoke the matching OpenPhone command, ")
+                .append("for example openphone.url.open, openphone.app.open, ")
+                .append("openphone.ui.tap, openphone.ui.type_text, or notifications.open.\n")
+                .append("- Mutating phone actions may require local confirmation on ")
+                .append("the Android device; wait for the tool result and report ")
+                .append("whether it was approved, denied, or completed.");
+        if (includeScreen) {
+            out.append("\n- This request asked to include the screen. Before answering ")
+                    .append("screen/app/UI questions, read the phone screen with ")
+                    .append("openphone.screen.get if the attached/preflight context is ")
+                    .append("missing or stale.");
+        }
+        return truncate(out.toString(), 18000);
+    }
+
+    private static JSONArray agentRequestAttachments(String attentionId, JSONObject context)
+            throws JSONException {
+        JSONArray attachments = new JSONArray();
+        JSONObject screenshot = screenshotFromContext(context);
+        if (screenshot == null) {
+            return attachments;
+        }
+        String data = screenshot.optString("data", "");
+        String encoding = screenshot.optString("encoding", "base64");
+        if (data.isEmpty() || !"base64".equalsIgnoreCase(encoding)) {
+            return attachments;
+        }
+        String mimeType = screenshot.optString("mime_type", "image/jpeg");
+        if (!mimeType.toLowerCase(Locale.US).startsWith("image/")) {
+            return attachments;
+        }
+        String extension = mimeType.toLowerCase(Locale.US).contains("png") ? "png" : "jpg";
+        String cleanAttentionId = attentionId == null || attentionId.trim().isEmpty()
+                ? "screen" : attentionId.trim().replaceAll("[^A-Za-z0-9_.-]", "-");
+        attachments.put(new JSONObject()
+                .put("type", "image")
+                .put("mimeType", mimeType)
+                .put("fileName", "openphone-" + cleanAttentionId + "." + extension)
+                .put("content", data));
+        return attachments;
+    }
+
+    private static JSONObject screenshotFromContext(JSONObject context) {
+        if (context == null) {
+            return null;
+        }
+        JSONObject preflight = context.optJSONObject("screen_preflight");
+        return preflight == null ? null : preflight.optJSONObject("screenshot");
+    }
+
+    private static JSONObject redactedOpenPhoneContext(JSONObject context) {
+        if (context == null) {
+            return new JSONObject();
+        }
+        try {
+            JSONObject copy = new JSONObject(context.toString());
+            redactScreenshotBytes(copy.optJSONObject("screen_preflight"));
+            return copy;
+        } catch (JSONException e) {
+            return new JSONObject();
+        }
+    }
+
+    private static JSONObject redactedScreenPreflight(JSONObject context) {
+        if (context == null) {
+            return new JSONObject();
+        }
+        JSONObject preflight = context.optJSONObject("screen_preflight");
+        if (preflight == null) {
+            return new JSONObject();
+        }
+        try {
+            JSONObject copy = new JSONObject(preflight.toString());
+            redactScreenshotBytes(copy);
+            return copy;
+        } catch (JSONException e) {
+            return new JSONObject();
+        }
+    }
+
+    private static void redactScreenshotBytes(JSONObject preflight) throws JSONException {
+        if (preflight == null) {
+            return;
+        }
+        JSONObject screenshot = preflight.optJSONObject("screenshot");
+        if (screenshot == null) {
+            return;
+        }
+        String data = screenshot.optString("data", "");
+        if (!data.isEmpty()) {
+            screenshot.put("data", "[base64 chars=" + data.length() + "]");
+        }
+    }
+
+    private static String compactJson(JSONObject object, int maxChars) {
+        if (object == null || object.length() == 0) {
+            return "";
+        }
+        return truncate(object.toString(), maxChars);
+    }
+
+    private static String truncate(String value, int maxChars) {
+        String clean = value == null ? "" : value.trim();
+        if (clean.length() <= maxChars) {
+            return clean;
+        }
+        return clean.substring(0, Math.max(0, maxChars - 3)).trim() + "...";
     }
 
     private void handleMessage(String raw) {
