@@ -351,15 +351,13 @@ private fun statusColor(status: String): Color =
 private fun runtimeTitle(name: String): String =
     when (name.lowercase()) {
         "openclaw" -> "OpenClaw"
-        "hermes" -> "Hermes"
         else -> name.replaceFirstChar { it.uppercase() }
     }
 
 private fun runtimeDisplayName(name: String): String =
     when (name.lowercase()) {
-        "builtin", "local" -> "Local Phone Runtime"
+        "builtin", "local" -> "Phone"
         "openclaw" -> "OpenClaw"
-        "hermes" -> "Hermes"
         "auto" -> "Auto"
         else -> name.ifBlank { "unknown" }
     }

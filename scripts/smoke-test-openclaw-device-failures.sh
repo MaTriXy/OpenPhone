@@ -107,11 +107,6 @@ SETTINGS_KEYS = [
     "openphone_external_openclaw_token",
     "openphone_external_openclaw_device_id",
     "openphone_external_openclaw_label",
-    "openphone_external_hermes_enabled",
-    "openphone_external_hermes_url",
-    "openphone_external_hermes_token",
-    "openphone_external_hermes_device_id",
-    "openphone_external_hermes_label",
 ]
 
 
@@ -160,7 +155,6 @@ def configure_openclaw(url: str, token: str = "openphone-device-failure-token") 
     setting_put("openphone_external_openclaw_token", token)
     setting_put("openphone_external_openclaw_device_id", "openphone-device-failure-smoke")
     setting_put("openphone_external_openclaw_label", "OpenPhone Failure Smoke")
-    setting_put("openphone_external_hermes_enabled", "0")
 
 
 def reload_external() -> None:

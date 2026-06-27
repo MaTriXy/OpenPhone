@@ -2776,8 +2776,7 @@ public class AssistantActivityBackend extends ComponentActivity {
             status.put("volume_runtime", AssistantBrainConfig.loadVolumeMode(this));
             status.put("background_runtime", AssistantBrainConfig.loadBackgroundMode(this));
             status.put("configured", new JSONArray()
-                    .put(runtimeSettingsJson(config.openClaw))
-                    .put(runtimeSettingsJson(config.hermes)));
+                    .put(runtimeSettingsJson(config.openClaw)));
             if (!status.has("updated_at_ms")) {
                 status.put("updated_at_ms", System.currentTimeMillis());
             }

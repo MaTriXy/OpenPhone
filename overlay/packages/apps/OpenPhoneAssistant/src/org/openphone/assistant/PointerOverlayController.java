@@ -1221,10 +1221,6 @@ public final class PointerOverlayController {
             addRuntimeCard("🦞 OpenClaw",
                     endpointLabel(config.openClaw.url), AssistantBrainConfig.OPENCLAW, config);
         }
-        if (config.globallyEnabled && config.hermes.configured()) {
-            addRuntimeCard(config.hermes.label,
-                    endpointLabel(config.hermes.url), AssistantBrainConfig.HERMES, config);
-        }
     }
 
     private void addRuntimeCard(String title, String endpoint, String runtime,
@@ -1352,8 +1348,6 @@ public final class PointerOverlayController {
         StringBuilder body = new StringBuilder();
         appendRuntimeEnvironmentLine(body, config.openClaw, "🦞",
                 AssistantBrainConfig.OPENCLAW, config);
-        appendRuntimeEnvironmentLine(body, config.hermes, "Hermes",
-                AssistantBrainConfig.HERMES, config);
         appendLocalRuntimeLine(body, config);
         if (body.length() == 0) {
             body.append("No runtimes configured");
@@ -1471,9 +1465,6 @@ public final class PointerOverlayController {
         String clean = normalizeRuntime(runtime);
         if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
             return "OpenClaw";
-        }
-        if (AssistantBrainConfig.HERMES.equals(clean)) {
-            return "Hermes";
         }
         if (AssistantBrainConfig.BUILTIN.equals(clean) || "local".equals(clean)) {
             return "Phone";
@@ -2380,9 +2371,6 @@ public final class PointerOverlayController {
         String clean = normalizeRuntime(runtime);
         if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
             return OPENCLAW_ACCENT;
-        }
-        if (AssistantBrainConfig.HERMES.equals(clean)) {
-            return 0xff9ab8ff;
         }
         return OPENPHONE_ACCENT;
     }

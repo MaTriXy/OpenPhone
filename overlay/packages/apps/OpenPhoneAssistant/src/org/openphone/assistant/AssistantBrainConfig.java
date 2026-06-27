@@ -13,7 +13,6 @@ public final class AssistantBrainConfig {
     public static final String KEY_BACKGROUND_RUNTIME = "openphone_background_runtime";
     public static final String BUILTIN = "builtin";
     public static final String OPENCLAW = "openclaw";
-    public static final String HERMES = "hermes";
     public static final String AUTO = "auto";
 
     private AssistantBrainConfig() {
@@ -61,7 +60,7 @@ public final class AssistantBrainConfig {
 
     public static String cleanMode(String mode) {
         String clean = mode == null ? "" : mode.trim().toLowerCase(Locale.US);
-        if (BUILTIN.equals(clean) || OPENCLAW.equals(clean) || HERMES.equals(clean)) {
+        if (BUILTIN.equals(clean) || OPENCLAW.equals(clean)) {
             return clean;
         }
         return AUTO;
@@ -74,9 +73,6 @@ public final class AssistantBrainConfig {
         }
         if (OPENCLAW.equals(clean)) {
             return "OpenClaw";
-        }
-        if (HERMES.equals(clean)) {
-            return "Hermes";
         }
         return "Auto";
     }
@@ -101,14 +97,8 @@ public final class AssistantBrainConfig {
         if (OPENCLAW.equals(mode)) {
             return OPENCLAW;
         }
-        if (HERMES.equals(mode)) {
-            return HERMES;
-        }
         if (config != null && config.globallyEnabled && config.openClaw.configured()) {
             return OPENCLAW;
-        }
-        if (config != null && config.globallyEnabled && config.hermes.configured()) {
-            return HERMES;
         }
         return BUILTIN;
     }

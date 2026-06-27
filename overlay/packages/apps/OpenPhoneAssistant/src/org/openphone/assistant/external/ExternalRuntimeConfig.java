@@ -12,25 +12,16 @@ public final class ExternalRuntimeConfig {
     private static final String KEY_OPENCLAW_DEVICE_ID = "openphone_external_openclaw_device_id";
     private static final String KEY_OPENCLAW_LABEL = "openphone_external_openclaw_label";
 
-    private static final String KEY_HERMES_ENABLED = "openphone_external_hermes_enabled";
-    private static final String KEY_HERMES_URL = "openphone_external_hermes_url";
-    private static final String KEY_HERMES_TOKEN = "openphone_external_hermes_token";
-    private static final String KEY_HERMES_DEVICE_ID = "openphone_external_hermes_device_id";
-    private static final String KEY_HERMES_LABEL = "openphone_external_hermes_label";
-
     public final boolean globallyEnabled;
     public final RuntimeSettings openClaw;
-    public final RuntimeSettings hermes;
 
-    private ExternalRuntimeConfig(boolean globallyEnabled, RuntimeSettings openClaw,
-            RuntimeSettings hermes) {
+    private ExternalRuntimeConfig(boolean globallyEnabled, RuntimeSettings openClaw) {
         this.globallyEnabled = globallyEnabled;
         this.openClaw = openClaw;
-        this.hermes = hermes;
     }
 
     public boolean anyEnabled() {
-        return globallyEnabled && (openClaw.enabled || hermes.enabled);
+        return globallyEnabled && openClaw.enabled;
     }
 
     public static ExternalRuntimeConfig load(Context context) {
@@ -41,13 +32,7 @@ public final class ExternalRuntimeConfig {
                         secureString(context, KEY_OPENCLAW_URL),
                         secureString(context, KEY_OPENCLAW_TOKEN),
                         secureString(context, KEY_OPENCLAW_DEVICE_ID),
-                        secureString(context, KEY_OPENCLAW_LABEL)),
-                new RuntimeSettings("hermes",
-                        secureBool(context, KEY_HERMES_ENABLED, false),
-                        secureString(context, KEY_HERMES_URL),
-                        secureString(context, KEY_HERMES_TOKEN),
-                        secureString(context, KEY_HERMES_DEVICE_ID),
-                        secureString(context, KEY_HERMES_LABEL)));
+                        secureString(context, KEY_OPENCLAW_LABEL)));
     }
 
     private static boolean secureBool(Context context, String key, boolean fallback) {

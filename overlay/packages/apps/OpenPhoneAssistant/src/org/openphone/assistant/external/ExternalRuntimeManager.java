@@ -55,9 +55,6 @@ public final class ExternalRuntimeManager implements ExternalConfirmationCallbac
                         }
                     }));
         }
-        if (config.hermes.configured()) {
-            mAdapters.add(new HermesRuntimeAdapter(mContext, config.hermes, mToolBridge));
-        }
         if (mAdapters.isEmpty()) {
             mStatus = "not_configured";
             return;
