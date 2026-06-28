@@ -109,12 +109,12 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
     }
 
-    static void deliverRuntimeMessage(final String runtime, final String sessionKey,
+    static boolean deliverRuntimeMessage(final String runtime, final String sessionKey,
             final String message, final boolean terminal) {
         AssistantActivityBackend target = sActiveControlRunner != null
                 ? sActiveControlRunner : sForegroundActivity;
         if (target == null) {
-            return;
+            return false;
         }
         target.runOnUiThread(new Runnable() {
             @Override
@@ -122,6 +122,7 @@ public class AssistantActivityBackend extends ComponentActivity {
                 target.handleRuntimeMessage(runtime, sessionKey, message, terminal);
             }
         });
+        return true;
     }
 
     private static final String TAG = "OpenPhoneAssistant";

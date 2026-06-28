@@ -186,13 +186,33 @@ Live OpenClaw validation has also progressed:
   directory.
 - The OpenPhone OpenClaw plugin was installed into that OpenClaw profile.
 - The Pixel paired as an OpenClaw node.
+- The OpenPhone node command surface was approved through OpenClaw's generic
+  node-pairing flow.
 - OpenClaw could invoke `openphone.screen.get` for metadata-only screen reads.
-- OpenClaw could invoke `openphone.screen.get` with screenshot capture.
+- OpenClaw could invoke `openphone.screen.get` with screenshot capture and
+  receive live Android screen/accessibility context from the Pixel.
 - Mutating tool calls correctly required local phone confirmation and timed out
   when not approved.
 - Phone-to-OpenClaw `agent.request` reached a real OpenClaw agent/model run.
+- Phone-to-OpenClaw final message fanout reached Android on the scoped OpenClaw
+  agent session key.
+- Phone-to-OpenClaw `volume_voice` requests now reach OpenClaw, receive a
+  terminal text reply on Android, and speak through the service-level Android
+  TTS fallback when no activity is foregrounded.
 
-Known live-runtime gap:
+Known live-runtime setup note:
+
+- OpenClaw node-command approval requests expire after roughly five minutes.
+- If the phone connects and the operator does not approve the node command
+  surface before that TTL, OpenClaw can still show the device as paired and
+  connected while `node.list` reports `commands: []` and `approvalState:
+  "unapproved"`.
+- Reconnect the phone runtime, or refresh the generic `node.pair.request`, then
+  approve it with an operator session that has `operator.pairing`.
+- This is OpenClaw's generic node trust model working as designed, not an
+  OpenPhone-specific command declaration failure.
+
+Resolved live-runtime compatibility issue:
 
 - OpenPhone currently sends `chat.subscribe` plus `agent.request` with
   `deliver:false`.
@@ -217,13 +237,30 @@ Current validated fixes:
   session keys so live OpenClaw agent/chat fanout can reach Android.
 - EC2 rebuilt `OpenPhoneAssistant` for `openphone_tegu-bp4a-userdebug`.
 - The rebuilt APK was pushed to the USB-connected Pixel and hash-verified:
-  `21e7d991523b9dda455d143519ca826d5bf2588f84690f96b0a89b37ad70e405`.
+  `872d4663fd825ae61b414bfce3fd7632ed92f748d861e252501340eb3c2b6cee`.
 - OpenClaw-compatible device smoke passed with scoped `chat.subscribe`, stock
   `agent.request`, no forced thinking value, final fanout, unknown-command
   rejection, observe-only mutation denial, confirmation deny/approve,
   idempotency replay, and timeout.
 - Live OpenClaw proof now delivers terminal runtime messages back to Android on
   the `agent:main:openphone:<node>:<phone-session>` fanout key.
+- Live OpenClaw proof now exposes approved OpenPhone commands in `node.list`
+  and successfully invokes `openphone.screen.get` against the connected Pixel.
+- Final APK live screen proof: OpenClaw `node.invoke` returned
+  `screen.captured.screenshot_jpeg_base64`, `capture_mode:
+  screenshot_jpeg_base64`, 20 visible text entries, 6 interactive elements, and
+  37,228 screenshot base64 characters from the Pixel.
+- Runtime voice replies now have a service-level Android TTS fallback keyed by
+  phone session id. If a volume/island voice request routes to a remote runtime
+  and the UI activity is no longer alive when the terminal reply arrives, the
+  assistant service can still speak the reply once.
+- Final APK live voice proof: Android logged `runtime attention sent
+  runtime=openclaw source=volume_voice`, received `terminal=true` for the
+  scoped OpenClaw session, then logged `runtime service TTS speaking ... chars=16`.
+- The OpenClaw adapter preserves voice route sources such as `volume_voice` and
+  adds an OpenClaw-scoped voice instruction so voice-originated phone requests
+  return speech text instead of the OpenClaw `NO_REPLY` sentinel unless the user
+  explicitly asks for silence.
 - OpenClaw command mapping, connect command advertisement, permissions, and
   OpenClaw-specific parameter normalization are isolated in
   `OpenClawCommandRegistry`, with protocol validation still checking Android

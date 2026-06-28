@@ -7,6 +7,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.openphone.OpenPhoneAgentManager;
 import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -54,6 +55,7 @@ public final class OpenPhoneAssistantService extends Service {
             "org.openphone.assistant.extra.RUNTIME_ATTENTION_AUTONOMY";
     public static final String EXTRA_RUNTIME_ATTENTION_INCLUDE_SCREEN =
             "org.openphone.assistant.extra.RUNTIME_ATTENTION_INCLUDE_SCREEN";
+    private static final int MAX_PENDING_RUNTIME_VOICE_REPLIES = 16;
     private static volatile String sLatestRuntimeStatusJson =
             "{\"status\":\"disabled\",\"manager_status\":\"not_created\"}";
 
@@ -62,6 +64,9 @@ public final class OpenPhoneAssistantService extends Service {
     private RuntimeManager mRuntimeManager;
     private String mNotificationTaskId;
     private boolean mIslandHiddenByActivity;
+    private TextToSpeech mRuntimeReplyTts;
+    private boolean mRuntimeReplyTtsReady;
+    private final Set<String> mPendingRuntimeVoicePhoneSessions = new LinkedHashSet<>();
 
     private final PolicyEngine mPolicyEngine = new PolicyEngine();
     private final AuditLog mAuditLog = new AuditLog(TAG);
@@ -236,6 +241,7 @@ public final class OpenPhoneAssistantService extends Service {
         if (mRuntimeManager != null) {
             mRuntimeManager.stop();
         }
+        shutdownRuntimeReplyTts();
         OpenPhoneNotificationController.cancel(this);
         super.onDestroy();
     }
@@ -320,6 +326,7 @@ public final class OpenPhoneAssistantService extends Service {
         JSONObject parsed = parseObject(result);
         if (parsed.optBoolean("ok", false)) {
             Log.i(TAG, "runtime attention sent runtime=" + runtime + " source=" + source);
+            rememberRuntimeVoiceReply(parsed, source);
             if (mPointerOverlayController != null && !mIslandHiddenByActivity) {
                 mPointerOverlayController.setIslandState("thinking",
                         runtimeLabel(runtime) + " is working on it.");
@@ -537,8 +544,117 @@ public final class OpenPhoneAssistantService extends Service {
         } else if (mPointerOverlayController != null && !mIslandHiddenByActivity) {
             mPointerOverlayController.setIslandState("thinking", clean);
         }
-        AssistantActivityBackend.deliverRuntimeMessage(runtime, sessionKey, clean,
+        boolean delivered = AssistantActivityBackend.deliverRuntimeMessage(runtime, sessionKey, clean,
                 terminal);
+        if (terminal && !delivered && consumeRuntimeVoiceReply(sessionKey)
+                && !isSystemFailureReply(clean)) {
+            Log.i(TAG, "runtime service TTS speaking session=" + sessionKey
+                    + " chars=" + clean.length());
+            speakRuntimeReply(clean);
+        }
+    }
+
+    private void rememberRuntimeVoiceReply(JSONObject result, String source) {
+        if (!isVoiceSource(source)) {
+            return;
+        }
+        String phoneSessionId = result == null ? "" : result.optString("phone_session_id", "");
+        String clean = phoneSessionId == null ? "" : phoneSessionId.trim();
+        if (clean.isEmpty()) {
+            return;
+        }
+        synchronized (mPendingRuntimeVoicePhoneSessions) {
+            mPendingRuntimeVoicePhoneSessions.add(clean);
+            while (mPendingRuntimeVoicePhoneSessions.size() > MAX_PENDING_RUNTIME_VOICE_REPLIES) {
+                java.util.Iterator<String> iterator = mPendingRuntimeVoicePhoneSessions.iterator();
+                if (!iterator.hasNext()) {
+                    break;
+                }
+                iterator.next();
+                iterator.remove();
+            }
+        }
+    }
+
+    private boolean consumeRuntimeVoiceReply(String sessionKey) {
+        String cleanSessionKey = sessionKey == null ? "" : sessionKey.trim();
+        if (cleanSessionKey.isEmpty()) {
+            return false;
+        }
+        synchronized (mPendingRuntimeVoicePhoneSessions) {
+            java.util.Iterator<String> iterator = mPendingRuntimeVoicePhoneSessions.iterator();
+            while (iterator.hasNext()) {
+                String phoneSessionId = iterator.next();
+                if (cleanSessionKey.contains(phoneSessionId)) {
+                    iterator.remove();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void speakRuntimeReply(String reply) {
+        final String utterance = speechText(reply);
+        if (utterance.isEmpty()) {
+            return;
+        }
+        if (mRuntimeReplyTts == null) {
+            mRuntimeReplyTtsReady = false;
+            mRuntimeReplyTts = new TextToSpeech(this, status -> {
+                mRuntimeReplyTtsReady = status == TextToSpeech.SUCCESS;
+                if (mRuntimeReplyTtsReady && mRuntimeReplyTts != null) {
+                    mRuntimeReplyTts.speak(utterance, TextToSpeech.QUEUE_FLUSH,
+                            null, "openphone-runtime-service-reply");
+                } else {
+                    Log.w(TAG, "runtime service TTS unavailable status=" + status);
+                }
+            });
+            return;
+        }
+        if (!mRuntimeReplyTtsReady) {
+            Log.w(TAG, "runtime service TTS not ready");
+            return;
+        }
+        mRuntimeReplyTts.speak(utterance, TextToSpeech.QUEUE_FLUSH,
+                null, "openphone-runtime-service-reply");
+    }
+
+    private static String speechText(String reply) {
+        String clean = reply == null ? "" : reply.replace('\n', ' ').replace('\r', ' ').trim();
+        if (clean.length() <= 700) {
+            return clean;
+        }
+        return clean.substring(0, 697).trim() + "...";
+    }
+
+    private void shutdownRuntimeReplyTts() {
+        TextToSpeech tts = mRuntimeReplyTts;
+        mRuntimeReplyTts = null;
+        mRuntimeReplyTtsReady = false;
+        if (tts != null) {
+            try {
+                tts.stop();
+                tts.shutdown();
+            } catch (RuntimeException e) {
+                Log.w(TAG, "runtime service TTS shutdown failed", e);
+            }
+        }
+    }
+
+    private static boolean isVoiceSource(String source) {
+        String clean = source == null ? "" : source.trim().toLowerCase(Locale.US);
+        return clean.contains("voice");
+    }
+
+    private static boolean isSystemFailureReply(String reply) {
+        if (reply == null) {
+            return false;
+        }
+        return reply.startsWith("Message routing failed:")
+                || reply.startsWith("Message routing timed out.")
+                || reply.startsWith("I couldn't hear the task.")
+                || reply.startsWith("I didn't catch that.");
     }
 
     private void stopNotificationTask() {
