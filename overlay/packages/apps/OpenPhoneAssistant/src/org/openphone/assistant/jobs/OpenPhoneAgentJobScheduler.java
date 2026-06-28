@@ -92,9 +92,11 @@ public final class OpenPhoneAgentJobScheduler {
             scheduleNext(context, store);
             return;
         }
-        if (AssistantBrainConfig.OPENCLAW.equals(AssistantBrainConfig.routeBackgroundRuntime(
-                context, RuntimeConfig.load(context)))) {
-            sendBackgroundJobToOpenClaw(context, store, job);
+        RuntimeConfig runtimeConfig = RuntimeConfig.load(context);
+        String backgroundRuntime = AssistantBrainConfig.routeBackgroundRuntime(
+                context, runtimeConfig);
+        if (!AssistantBrainConfig.BUILTIN.equals(backgroundRuntime)) {
+            sendBackgroundJobToRuntime(context, store, job, backgroundRuntime, runtimeConfig);
             scheduleNext(context, store);
             return;
         }
@@ -165,13 +167,19 @@ public final class OpenPhoneAgentJobScheduler {
         return ToolCatalog.get().isStateChangingTool(toolName);
     }
 
-    private static void sendBackgroundJobToOpenClaw(Context context, AgentJobStore store,
-            AgentJobRecord job) {
+    private static void sendBackgroundJobToRuntime(Context context, AgentJobStore store,
+            AgentJobRecord job, String runtime, RuntimeConfig config) {
+        String cleanRuntime = runtime == null ? "" : runtime.trim().toLowerCase(java.util.Locale.US);
+        if (cleanRuntime.isEmpty() || !config.configured(cleanRuntime)) {
+            failJob(context, store, job,
+                    "runtime_background_dispatch_unavailable:" + cleanRuntime);
+            return;
+        }
         try {
             Intent intent = new Intent(context, OpenPhoneAssistantService.class);
             intent.setAction(OpenPhoneAssistantService.ACTION_REQUEST_RUNTIME_ATTENTION);
             intent.putExtra(OpenPhoneAssistantService.EXTRA_RUNTIME_ATTENTION_RUNTIME,
-                    AssistantBrainConfig.OPENCLAW);
+                    cleanRuntime);
             intent.putExtra(OpenPhoneAssistantService.EXTRA_RUNTIME_ATTENTION_TEXT,
                     job.prompt + "\n\nBackground job payload JSON:\n"
                             + (job.payloadJson == null ? "{}" : job.payloadJson));
@@ -182,15 +190,16 @@ public final class OpenPhoneAgentJobScheduler {
             intent.putExtra(OpenPhoneAssistantService.EXTRA_RUNTIME_ATTENTION_INCLUDE_SCREEN,
                     true);
             context.startService(intent);
-            store.markDispatched(job.id, "runtime_attention.sent:openclaw",
+            store.markDispatched(job.id, "runtime_attention.sent:" + cleanRuntime,
                     System.currentTimeMillis());
             if (shouldNotify(job)) {
                 OpenPhoneNotificationController.showAgentJobFinished(context, job,
-                        "OpenClaw accepted this background job.");
+                        AssistantBrainConfig.label(cleanRuntime)
+                                + " accepted this background job.");
             }
         } catch (RuntimeException e) {
             failJob(context, store, job,
-                    "openclaw_background_dispatch_failed:"
+                    "runtime_background_dispatch_failed:" + cleanRuntime + ":"
                             + e.getClass().getSimpleName());
         }
     }

@@ -2111,11 +2111,8 @@ public class AssistantActivityBackend extends ComponentActivity {
         if (AssistantBrainConfig.BUILTIN.equals(route)) {
             return false;
         }
-        if (!AssistantBrainConfig.OPENCLAW.equals(route)) {
-            return false;
-        }
         String runtimeLabel = runtimeLabel(route);
-        if (!config.globallyEnabled || !config.openClaw.configured()) {
+        if (!config.configured(route)) {
             appendConversation("You", message);
             setCurrentGoalText("");
             cancelChatRun();
@@ -2162,14 +2159,7 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private String routeRuntimeForSource(String source, RuntimeConfig config) {
-        String clean = source == null ? "" : source.trim().toLowerCase(Locale.US);
-        if (clean.startsWith("volume")) {
-            return AssistantBrainConfig.routeVolumeRuntime(this, config);
-        }
-        if (clean.startsWith("watcher") || clean.startsWith("background")) {
-            return AssistantBrainConfig.routeBackgroundRuntime(this, config);
-        }
-        return AssistantBrainConfig.routeRuntime(this, config);
+        return AssistantBrainConfig.routeRuntimeForSource(this, source, config);
     }
 
     private static boolean isVoiceRouteSource(String source) {

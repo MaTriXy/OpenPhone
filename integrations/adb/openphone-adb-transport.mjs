@@ -12,14 +12,19 @@ export class OpenPhoneAdbTransport {
   }
 
   runtimeList() {
+    const status = this.runtimeStatus();
+    const openClawEnabled = truthySetting(status.openclaw_enabled);
+    const openClawUrl = String(status.openclaw_url ?? "").trim();
     return {
       runtimes: [
         { name: "builtin", label: "Phone", local: true, configured: true },
         {
           name: "openclaw",
-          label: "OpenClaw",
+          label: status.openclaw_label || "OpenClaw",
           local: false,
-          configured: false,
+          enabled: openClawEnabled,
+          configured: openClawEnabled && openClawUrl.length > 0,
+          url: openClawUrl,
         },
       ],
     };
@@ -285,6 +290,11 @@ function missing(name) {
       message: `${name} is required`,
     },
   };
+}
+
+function truthySetting(value) {
+  const clean = String(value ?? "").trim().toLowerCase();
+  return clean === "1" || clean === "true" || clean === "yes";
 }
 
 function adbInputText(text) {

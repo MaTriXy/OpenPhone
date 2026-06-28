@@ -217,10 +217,11 @@ Current validated fixes:
   session keys so live OpenClaw agent/chat fanout can reach Android.
 - EC2 rebuilt `OpenPhoneAssistant` for `openphone_tegu-bp4a-userdebug`.
 - The rebuilt APK was pushed to the USB-connected Pixel and hash-verified:
-  `3d4bdbcba109cffb40fa4b1385df4431fa40aae9a2790f0437626b0ea92f93fe`.
+  `21e7d991523b9dda455d143519ca826d5bf2588f84690f96b0a89b37ad70e405`.
 - OpenClaw-compatible device smoke passed with scoped `chat.subscribe`, stock
   `agent.request`, no forced thinking value, final fanout, unknown-command
-  rejection, confirmation deny/approve, idempotency replay, and timeout.
+  rejection, observe-only mutation denial, confirmation deny/approve,
+  idempotency replay, and timeout.
 - Live OpenClaw proof now delivers terminal runtime messages back to Android on
   the `agent:main:openphone:<node>:<phone-session>` fanout key.
 

@@ -8,7 +8,7 @@ the authority for local capabilities, confirmations, and audit.
 - Remote runtimes can request tools only through `RuntimeToolBridge`.
 - Tool grants come from the OpenPhone manifest and runtime adapter mapping.
 - Mutating commands require Android confirmation unless the session explicitly
-  uses `trusted_actions`.
+  uses `trusted_actions`; high-risk commands still require confirmation.
 - Idempotency is scoped by runtime, session, tool, params digest, and key so one
   approval cannot approve a different request.
 - OpenClaw device signing seeds are wrapped with AndroidKeyStore before being

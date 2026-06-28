@@ -49,6 +49,21 @@ function captureIo() {
   const capture = captureIo();
   const code = await main([
     "runtime",
+    "list",
+    "--dry-run",
+    "--json",
+  ], capture.io);
+  assert.equal(code, 0);
+  const parsed = JSON.parse(capture.stdout());
+  assert.ok(parsed.runtimes.some((runtime) => runtime.name === "builtin"
+    && runtime.configured === true));
+  assert.ok(parsed.runtimes.some((runtime) => runtime.name === "openclaw"));
+}
+
+{
+  const capture = captureIo();
+  const code = await main([
+    "runtime",
     "select",
     "--chat",
     "openclaw",

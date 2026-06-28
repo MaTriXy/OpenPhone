@@ -16,8 +16,9 @@ import org.openphone.assistant.agent.ActionExecution;
 import org.openphone.assistant.agent.AgentOrchestrator;
 import org.openphone.assistant.agent.ScreenUnderstanding;
 import org.openphone.assistant.agent.TaskRegistry;
-import org.openphone.assistant.runtime.RuntimeManager;
 import org.openphone.assistant.runtime.RuntimeCallback;
+import org.openphone.assistant.runtime.RuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeManager;
 import org.openphone.assistant.model.ModelEndpointConfig;
 import org.openphone.assistant.model.OpenAiResponsesAgentAdapter;
 import org.openphone.assistant.jobs.OpenPhoneAgentJobScheduler;
@@ -302,12 +303,11 @@ public final class OpenPhoneAssistantService extends Service {
         } else if (shouldReloadRuntimeManagerForAttention(mRuntimeManager.statusJson())) {
             reloadRuntimeManager();
         }
-        String runtime = cleanRuntime(intent == null ? "" :
-                intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_RUNTIME));
         String text = cleanExtra(intent == null ? "" :
                 intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_TEXT), "");
         String source = cleanExtra(intent == null ? "" :
                 intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_SOURCE), "chat");
+        String runtime = runtimeForAttention(intent, source);
         String autonomy = cleanExtra(intent == null ? "" :
                 intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_AUTONOMY), "ask_before_action");
         boolean includeScreen = intent != null
@@ -506,9 +506,18 @@ public final class OpenPhoneAssistantService extends Service {
         return clean.isEmpty() ? fallback : clean;
     }
 
+    private String runtimeForAttention(Intent intent, String source) {
+        String requested = cleanRuntime(intent == null ? "" :
+                intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_RUNTIME));
+        if (!requested.isEmpty()) {
+            return requested;
+        }
+        return AssistantBrainConfig.routeRuntimeForSource(this, source, RuntimeConfig.load(this));
+    }
+
     private static String cleanRuntime(String runtime) {
         String clean = runtime == null ? "" : runtime.trim().toLowerCase(Locale.US);
-        return clean.isEmpty() ? AssistantBrainConfig.OPENCLAW : clean;
+        return clean;
     }
 
     private static String runtimeLabel(String runtime) {

@@ -31,8 +31,9 @@ boundary; remote runtimes own agent reasoning.
 
 - `observe_only`: read-only tools may run; mutating tools are denied.
 - `ask_before_action`: mutating tools require Android confirmation.
-- `trusted_actions`: mutating tools may run without OpenPhone confirmation, but
-  OS/app confirmations may still appear.
+- `trusted_actions`: low/medium-risk mutating tools may run without OpenPhone
+  confirmation, but high-risk tools and OS/app confirmations still require
+  confirmation.
 
 If a runtime tool call omits autonomy, OpenPhone inherits the phone execution
 session's autonomy. If no session is available, it falls back to

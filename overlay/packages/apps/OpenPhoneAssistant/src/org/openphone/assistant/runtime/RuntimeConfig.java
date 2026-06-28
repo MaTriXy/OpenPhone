@@ -32,6 +32,19 @@ public final class RuntimeConfig {
         return globallyEnabled && openClaw.enabled;
     }
 
+    public boolean configured(String runtime) {
+        RuntimeSettings settings = settingsFor(runtime);
+        return globallyEnabled && settings != null && settings.configured();
+    }
+
+    public RuntimeSettings settingsFor(String runtime) {
+        String clean = runtime == null ? "" : runtime.trim().toLowerCase(java.util.Locale.US);
+        if ("openclaw".equals(clean)) {
+            return openClaw;
+        }
+        return null;
+    }
+
     public static RuntimeConfig load(Context context) {
         boolean global = secureBool(context, KEY_GLOBAL_ENABLED,
                 secureBool(context, LEGACY_KEY_GLOBAL_ENABLED, false));

@@ -90,6 +90,18 @@ public final class AssistantBrainConfig {
         return routeSelectedRuntime(loadBackgroundMode(context), config);
     }
 
+    public static String routeRuntimeForSource(Context context, String source,
+            RuntimeConfig config) {
+        String clean = source == null ? "" : source.trim().toLowerCase(Locale.US);
+        if (clean.startsWith("volume")) {
+            return routeVolumeRuntime(context, config);
+        }
+        if (clean.startsWith("watcher") || clean.startsWith("background")) {
+            return routeBackgroundRuntime(context, config);
+        }
+        return routeRuntime(context, config);
+    }
+
     private static String routeSelectedRuntime(String mode, RuntimeConfig config) {
         if (BUILTIN.equals(mode)) {
             return BUILTIN;

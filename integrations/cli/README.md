@@ -10,7 +10,7 @@ Examples:
 ```sh
 node integrations/cli/src/index.mjs runtime status
 node integrations/cli/src/index.mjs runtime select --chat openclaw --volume phone
-node integrations/cli/src/index.mjs runtime configure openclaw --url ws://127.0.0.1:8787 --enable
+node integrations/cli/src/index.mjs runtime configure openclaw --url ws://127.0.0.1:8787
 node integrations/cli/src/index.mjs tool list
 node integrations/cli/src/index.mjs tool invoke openphone.screen.get '{"include_screenshot":false}'
 node integrations/cli/src/index.mjs mcp serve
