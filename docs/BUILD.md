@@ -125,39 +125,53 @@ building the full product graph.
 
 ## Emulator Build
 
-OpenPhone provides LineageOS SDK phone products for emulator validation:
+OpenPhone provides LineageOS SDK phone products for the first runnable OS test
+path:
 
 ```text
 openphone_sdk_phone_x86_64-bp4a-eng
 openphone_sdk_phone_arm64-bp4a-eng
 ```
 
-Use `x86_64` on x86_64 Linux build hosts, including EC2. Use `arm64` on Apple
-Silicon hosts. The `eng` variant is the default because ADB is enabled without
+Choose the image architecture for the workstation that will run the emulator
+UI: `arm64` for Apple Silicon and `x86_64` for Intel/x86_64 workstations. A
+Linux Android build host, including EC2, can be used to produce the portable
+image zip. The `eng` variant is the default because ADB is enabled without
 first completing emulator-side developer settings.
 
-Build the emulator image:
+Build the ARM64 emulator image:
+
+```bash
+./scripts/build-emulator.sh --arch arm64
+```
+
+Build the x86_64 image instead when the local emulator workstation is x86_64:
 
 ```bash
 ./scripts/build-emulator.sh --arch x86_64
 ```
 
-By default this builds `droid emu_img_zip`. To only build the runnable image:
+By default this builds `droid emu_img_zip`. To only build the runnable Android
+image from the same product:
 
 ```bash
-OPENPHONE_BUILD_GOAL=droid ./scripts/build-emulator.sh --arch x86_64
+OPENPHONE_BUILD_GOAL=droid ./scripts/build-emulator.sh --arch arm64
 ```
 
 After the image is built, run it from the same Android tree:
 
 ```bash
-./scripts/run-emulator.sh --arch x86_64
+./scripts/run-emulator.sh --arch arm64
 ```
 
 This requires the Android SDK Emulator binary to be installed and available as
 `emulator` in `PATH`. The portable artifact is
 `out/target/product/<device>/sdk-repo-linux-system-images.zip`, which can be
 copied to a workstation and installed into Android Studio/AVD.
+
+The full local install, manual AVD fallback for custom `android-36.1` images,
+visible UI launch, `scrcpy` mirror, and post-boot verification commands are in
+[EMULATOR.md](EMULATOR.md).
 
 For a headless remote host, pass emulator options after `--`:
 

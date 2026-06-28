@@ -13,8 +13,19 @@ Run:
 node integrations/mcp-server/src/index.mjs
 ```
 
-Set `ANDROID_SERIAL` to target a specific USB-connected phone. Set
+Set `ANDROID_SERIAL` to target a specific ADB device or emulator. Set
 `OPENPHONE_DRY_RUN=1` for parser/protocol tests without ADB.
+
+The same ADB transport works with the OpenPhone SDK phone emulator:
+
+```sh
+ANDROID_SERIAL=emulator-5584 \
+ADB="$ANDROID_HOME/platform-tools/adb" \
+node integrations/mcp-server/src/index.mjs
+```
+
+See [../../docs/EMULATOR.md](../../docs/EMULATOR.md) for the AVD setup and
+emulator smoke commands.
 
 Boundary:
 

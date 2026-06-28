@@ -21,6 +21,8 @@ build, architecture, release, device, and policy docs.
   Hermes adapter shape on the same runtime protocol.
 - [MCP Bridge](runtime/mcp-bridge.md) - manifest-backed MCP and CLI access to
   OpenPhone tools.
+- [Emulator First Test Path](EMULATOR.md) - build the SDK phone image, install
+  a local AVD, view the emulator UI, and smoke CLI/MCP/OpenClaw integrations.
 - [Build](BUILD.md) - Android repo sync, patch application, generic build, and
   Pixel 9a build commands.
 - [Testing](TESTING.md) - repository checks, physical device smoke tests,

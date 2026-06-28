@@ -42,6 +42,18 @@ reviewable integration point.
 
 ## Validation
 
-The device smoke uses an OpenClaw-compatible shim for deterministic protocol and
-failure-mode checks. Before release, run an end-to-end proof against a real
-OpenClaw runtime with this plugin installed.
+The live smoke script runs against a booted OpenPhone Android target and a real
+OpenClaw gateway with the OpenPhone plugin installed:
+
+```sh
+ANDROID_SERIAL=emulator-5584 \
+OPENPHONE_OPENCLAW_TOKEN="$OPENCLAW_GATEWAY_TOKEN" \
+scripts/smoke-test-openclaw-runtime.sh
+```
+
+The OpenPhone SDK phone emulator is a valid target for this smoke. It proves
+that Android connects to OpenClaw as an OpenPhone node, the plugin exposes the
+approved command surface, and OpenClaw can invoke `openphone.screen.get`.
+
+Physical Pixel 9a validation is still required for hardware buttons, radio,
+camera, fingerprint, recovery/OTA, and release acceptance.
