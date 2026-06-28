@@ -190,10 +190,8 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
             cleanAttentionId = "attn-" + UUID.randomUUID();
         }
         String sessionKey = "openphone:" + principal() + ":" + cleanPhoneSessionId;
-        JSONObject subscribe = new JSONObject();
         JSONObject payload = new JSONObject();
         try {
-            subscribe.put("sessionKey", sessionKey);
             JSONObject eventContext = context == null
                     ? new JSONObject() : RuntimeToolRequest.copy(context);
             eventContext.put("displayName", displayName)
@@ -203,7 +201,6 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
                             cleanAttentionId, cleanSource(source), message,
                             cleanAutonomy(autonomy), includeScreen, eventContext))
                     .put("sessionKey", sessionKey)
-                    .put("thinking", "low")
                     .put("deliver", false)
                     .put("key", cleanAttentionId);
             JSONArray attachments = agentRequestAttachments(cleanAttentionId, eventContext);
@@ -213,9 +210,39 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
         } catch (JSONException ignored) {
             return "";
         }
-        sendRpc("node.event", buildNodeEventParams("chat.subscribe", subscribe));
+        subscribeToSessionFanout(sessionKey);
         sendRpc("node.event", buildNodeEventParams("agent.request", payload));
         return sessionKey;
+    }
+
+    private void subscribeToSessionFanout(String sessionKey) {
+        String cleanSessionKey = sessionKey == null ? "" : sessionKey.trim();
+        if (cleanSessionKey.isEmpty()) {
+            return;
+        }
+        sendSessionSubscribe(cleanSessionKey);
+        String scopedKey = defaultAgentScopedSessionKey(cleanSessionKey);
+        if (!scopedKey.equals(cleanSessionKey)) {
+            sendSessionSubscribe(scopedKey);
+        }
+    }
+
+    private void sendSessionSubscribe(String sessionKey) {
+        try {
+            JSONObject payload = new JSONObject().put("sessionKey", sessionKey);
+            sendRpc("node.event", buildNodeEventParams("chat.subscribe", payload));
+        } catch (JSONException ignored) {
+        }
+    }
+
+    private static String defaultAgentScopedSessionKey(String sessionKey) {
+        String clean = sessionKey == null ? "" : sessionKey.trim();
+        String lower = clean.toLowerCase(Locale.US);
+        if (clean.isEmpty() || lower.startsWith("agent:")
+                || "global".equals(lower) || "unknown".equals(lower)) {
+            return clean;
+        }
+        return "agent:main:" + clean;
     }
 
     private String buildAgentRequestMessage(String phoneSessionId, String attentionId,

@@ -608,13 +608,22 @@ async def run_attention_path() -> None:
         prompt = f"OpenClaw attention smoke {RUN_ID}"
         request_openclaw_attention(prompt, source="chat")
         subscribe = await shim.wait_node_event("chat.subscribe", timeout=15)
+        scoped_subscribe = await shim.wait_node_event("chat.subscribe", timeout=15)
         agent_request = await shim.wait_node_event("agent.request", timeout=15)
         session_key = str(agent_request.get("sessionKey") or "")
         if not session_key:
             raise AssertionError(f"agent.request missing sessionKey: {agent_request}")
-        if subscribe.get("sessionKey") != session_key:
+        subscribe_keys = {
+            str(subscribe.get("sessionKey") or ""),
+            str(scoped_subscribe.get("sessionKey") or ""),
+        }
+        expected_subscribe_keys = {session_key}
+        if not session_key.lower().startswith(("agent:", "global", "unknown")):
+            expected_subscribe_keys.add(f"agent:main:{session_key}")
+        if not expected_subscribe_keys.issubset(subscribe_keys):
             raise AssertionError(
-                f"subscribe session mismatch subscribe={subscribe} request={agent_request}"
+                f"subscribe session mismatch subscribes={subscribe_keys} "
+                f"expected={expected_subscribe_keys} request={agent_request}"
             )
         message = str(agent_request.get("message") or "")
         if prompt not in message:
@@ -625,11 +634,11 @@ async def run_attention_path() -> None:
             raise AssertionError(f"agent.request missing OpenPhone instructions: {agent_request}")
         if agent_request.get("deliver") is not False:
             raise AssertionError(f"agent.request deliver mismatch: {agent_request}")
-        if agent_request.get("thinking") != "low":
-            raise AssertionError(f"agent.request thinking mismatch: {agent_request}")
+        if "thinking" in agent_request:
+            raise AssertionError(f"agent.request should not force thinking: {agent_request}")
         if agent_request.get("attachments") not in (None, []):
             raise AssertionError(f"agent.request unexpected attachments: {agent_request}")
-        print("[ok] attention emitted chat.subscribe and stock agent.request")
+        print("[ok] attention emitted scoped chat.subscribe and stock agent.request")
 
         await shim.send_event("agent", {
             "sessionKey": session_key,
