@@ -1,5 +1,14 @@
 # Testing
 
+## Test Layout
+
+- `tests/` contains repo-level contract tests.
+- `scripts/check*.sh` are CI and local validation entrypoints.
+- `scripts/smoke-test-*.sh` are external-environment smoke harnesses for a
+  phone, model broker, or OpenClaw gateway.
+- `schemas/` contains JSON Schema contract definitions used by tests and
+  validators.
+
 ## Local Scaffold Check
 
 Run this before attempting a full Android build:

@@ -11,6 +11,6 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node tests/protocol-contract.mjs"
+    "test": "node ../../tests/integrations/runtime-mcp-contract.mjs"
   }
 }

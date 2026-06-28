@@ -39,11 +39,11 @@ build, architecture, release, device, and policy docs.
 - [0.0.1 Release Notes](releases/0.0.1.md)
 - [Changelog](releases/CHANGELOG.md)
 
-## Schemas And Protocols
+## Contract Schemas And Protocols
 
-Machine-readable runtime contracts live in [../schemas](../schemas). They are
-used by repository checks and validators for action requests, model tools,
-screen context, audit events, trajectories, OTA feeds, and agent eval reports.
+Machine-readable JSON Schema contracts live in [../schemas](../schemas). They
+define payload shapes for action requests, model tools, screen context, audit
+events, trajectories, OTA feeds, and agent eval reports.
 The Runtime Agent Protocol command/event/capability manifests live in
 [../runtime/protocol](../runtime/protocol).
 

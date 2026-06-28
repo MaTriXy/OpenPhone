@@ -106,11 +106,13 @@ required=(
   integrations/cli/README.md
   integrations/cli/package.json
   integrations/cli/src/index.mjs
-  integrations/cli/tests/cli-contract.mjs
+  tests/README.md
+  tests/integrations/runtime-cli-contract.mjs
+  tests/integrations/runtime-mcp-contract.mjs
+  tests/integrations/openclaw-plugin-policy-contract.mjs
   integrations/mcp-server/README.md
   integrations/mcp-server/package.json
   integrations/mcp-server/src/index.mjs
-  integrations/mcp-server/tests/protocol-contract.mjs
   integrations/openclaw-plugin/README.md
   integrations/openclaw-plugin/dist/index.d.ts
   integrations/openclaw-plugin/dist/index.js
@@ -118,7 +120,6 @@ required=(
   integrations/openclaw-plugin/package.json
   integrations/openclaw-plugin/src/index.ts
   integrations/openclaw-plugin/src/openclaw-plugin-sdk.d.ts
-  integrations/openclaw-plugin/tests/policy-contract.mjs
   integrations/openclaw-plugin/tsconfig.json
   overlay/vendor/openphone/AndroidProducts.mk
   overlay/vendor/openphone/config/openphone_capabilities.json

@@ -11,6 +11,6 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node tests/cli-contract.mjs"
+    "test": "node ../../tests/integrations/runtime-cli-contract.mjs"
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { main } from "../src/index.mjs";
+import { main } from "../../integrations/cli/src/index.mjs";
 
 function captureIo() {
   let stdout = "";

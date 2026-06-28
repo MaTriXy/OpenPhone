@@ -1,7 +1,8 @@
-# Schemas
+# Contract Schemas
 
-This directory contains machine-readable JSON schemas for OpenPhone runtime
-contracts.
+This directory contains machine-readable JSON Schema files for OpenPhone
+contracts. These are not database schemas. They are payload contracts for data
+that crosses process, tool, audit, eval, runtime, and release boundaries.
 
 They define the shapes that the assistant, framework patches, validators,
 release tooling, and eval tooling must agree on:

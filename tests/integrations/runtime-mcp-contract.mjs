@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { handleRequest } from "../src/index.mjs";
+import { handleRequest } from "../../integrations/mcp-server/src/index.mjs";
 
 const calls = [];
 const fakeTransport = {

@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node tests/policy-contract.mjs"
+    "test": "node ../../tests/integrations/openclaw-plugin-policy-contract.mjs"
   },
   "peerDependencies": {
     "openclaw": ">=2026.6.10"

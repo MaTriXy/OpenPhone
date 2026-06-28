@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const pluginRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const pluginRoot = path.join(repoRoot, "integrations/openclaw-plugin");
 const distPath = path.join(pluginRoot, "dist/index.js");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openphone-openclaw-plugin-"));
 
