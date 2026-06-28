@@ -15,9 +15,9 @@ const actionRegistryPath = path.join(
 );
 const pluginSourcePath = path.join(root, "integrations/openclaw-plugin/src/index.ts");
 const pluginDistPath = path.join(root, "integrations/openclaw-plugin/dist/index.js");
-const androidAdapterPath = path.join(
+const androidCommandRegistryPath = path.join(
   root,
-  "overlay/packages/apps/OpenPhoneAssistant/src/org/openphone/assistant/runtime/adapters/openclaw/OpenClawRuntimeAdapter.java",
+  "overlay/packages/apps/OpenPhoneAssistant/src/org/openphone/assistant/runtime/adapters/openclaw/OpenClawCommandRegistry.java",
 );
 
 function fail(message) {
@@ -49,9 +49,9 @@ function extractQuotedStringsInArray(source, name) {
 }
 
 function extractAndroidCommands(source) {
-  return [...source.matchAll(/mCommandToTool\.put\("([^"]+)",\s*"([^"]+)"\);/gu)].map(
-    (item) => ({ command: item[1], tool: item[2] }),
-  );
+  return [
+    ...source.matchAll(/(?:mCommandToTool|commandToTool)\.put\("([^"]+)",\s*"([^"]+)"\);/gu),
+  ].map((item) => ({ command: item[1], tool: item[2] }));
 }
 
 function extractPluginCommandBuckets(source, label) {
@@ -185,7 +185,7 @@ for (const entry of manifestEntries) {
   }
 }
 
-const androidSource = fs.readFileSync(androidAdapterPath, "utf8");
+const androidSource = fs.readFileSync(androidCommandRegistryPath, "utf8");
 const androidMappings = extractAndroidCommands(androidSource);
 const androidByCommand = new Map(androidMappings.map((entry) => [entry.command, entry.tool]));
 for (const entry of manifestEntries) {

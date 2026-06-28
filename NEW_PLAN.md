@@ -224,6 +224,12 @@ Current validated fixes:
   idempotency replay, and timeout.
 - Live OpenClaw proof now delivers terminal runtime messages back to Android on
   the `agent:main:openphone:<node>:<phone-session>` fanout key.
+- OpenClaw command mapping, connect command advertisement, permissions, and
+  OpenClaw-specific parameter normalization are isolated in
+  `OpenClawCommandRegistry`, with protocol validation still checking Android
+  mappings against `runtime/protocol/openphone-commands.json`.
+- OpenClaw JSON string/object fallback parsing is isolated in `OpenClawJson`,
+  reducing scattered schema-drift handling inside the runtime adapter.
 
 ## Product Model
 
@@ -656,15 +662,15 @@ Split large classes where it pays off:
 - `OpenClawRuntimeAdapter`: lifecycle only.
 - `OpenClawProtocolMapper`: OpenClaw frame/event mapping.
 - `OpenClawMessageParser`: runtime message extraction.
-- `OpenClawNodeCommandMapper`: command mapping from manifest.
+- `OpenClawCommandRegistry`: command mapping from manifest.
 - `OpenClawDeviceIdentity`: node identity/auth.
 - `RuntimeConfirmationBroker`: confirmation lifecycle.
 
 Centralize schema helpers:
 
-- `JsonFields.pickString(...)`
-- `JsonFields.pickObject(...)`
-- `JsonFields.pickArray(...)`
+- `OpenClawJson.firstString(...)`
+- `OpenClawJson.firstStringFromSources(...)`
+- `OpenClawJson.parseObject(...)`
 
 Reduce silent failures:
 

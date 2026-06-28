@@ -33,7 +33,7 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
     private final RuntimeToolBridge mToolBridge;
     private final OpenClawDeviceIdentity mDeviceIdentity;
     private final RuntimeCallback mCallback;
-    private final Map<String, String> mCommandToTool = new LinkedHashMap<>();
+    private final OpenClawCommandRegistry mCommands = OpenClawCommandRegistry.createDefault();
     private final Map<String, String> mPendingInvokeNodeIds =
             new LinkedHashMap<String, String>(16, 0.75f, true);
     private final Map<String, String> mSeenRuntimeMessages =
@@ -67,7 +67,6 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
         mToolBridge = toolBridge;
         mCallback = callback;
         mDeviceIdentity = new OpenClawDeviceIdentity(context);
-        registerCommands();
     }
 
     @Override
@@ -424,7 +423,7 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
             String event = frame.optString("event", "");
             JSONObject payload = frame.optJSONObject("payload");
             if (payload == null) {
-                payload = parseObject(frame.optString("payloadJSON", "{}"));
+                payload = OpenClawJson.parseObject(frame.optString("payloadJSON", "{}"));
             }
             if ("connect.challenge".equals(event)) {
                 mConnectNonce = payload.optString("nonce", "");
@@ -475,7 +474,7 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
         }
         String text = extractMessageText(payload);
         if ("error".equals(state)) {
-            String errorText = firstNonEmpty(payload.optString("errorMessage", ""),
+            String errorText = OpenClawJson.firstNonEmpty(payload.optString("errorMessage", ""),
                     payload.optString("error", ""), text);
             text = errorText.isEmpty() ? "OpenClaw returned an error."
                     : openClawErrorForUser(errorText);
@@ -539,13 +538,8 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
     }
 
     private static String agentText(JSONObject payload, JSONObject data) {
-        String text = firstNonEmpty(
-                data == null ? "" : data.optString("text", ""),
-                data == null ? "" : data.optString("message", ""),
-                data == null ? "" : data.optString("deltaText", ""),
-                payload == null ? "" : payload.optString("text", ""),
-                payload == null ? "" : payload.optString("message", ""),
-                payload == null ? "" : payload.optString("deltaText", ""));
+        String text = OpenClawJson.firstStringFromSources(
+                new JSONObject[] { data, payload }, "text", "message", "deltaText");
         return text.trim();
     }
 
@@ -587,11 +581,8 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
     private static String extractMessageText(JSONObject payload) {
         JSONObject message = payload.optJSONObject("message");
         if (message == null) {
-            String direct = firstNonEmpty(
-                    payload.optString("text", ""),
-                    payload.optString("deltaText", ""),
-                    payload.optString("errorMessage", ""),
-                    payload.optString("error", ""));
+            String direct = OpenClawJson.firstString(payload,
+                    "text", "deltaText", "errorMessage", "error");
             return direct.trim();
         }
         String direct = message.optString("text", "").trim();
@@ -624,26 +615,20 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
         if (payload == null) {
             return "";
         }
-        String sessionKey = firstNonEmpty(payload.optString("sessionKey", ""),
-                payload.optString("session_key", ""));
+        String sessionKey = OpenClawJson.firstString(payload, "sessionKey", "session_key");
         if (!sessionKey.isEmpty()) {
             return sessionKey;
         }
         JSONObject session = payload.optJSONObject("session");
         if (session != null) {
-            return firstNonEmpty(session.optString("sessionKey", ""),
-                    session.optString("key", ""));
+            return OpenClawJson.firstString(session, "sessionKey", "key");
         }
         return "";
     }
 
     private static String lifecycleError(JSONObject payload, JSONObject data) {
-        return firstNonEmpty(
-                data == null ? "" : data.optString("error", ""),
-                data == null ? "" : data.optString("errorMessage", ""),
-                data == null ? "" : data.optString("message", ""),
-                payload == null ? "" : payload.optString("error", ""),
-                payload == null ? "" : payload.optString("errorMessage", ""));
+        return OpenClawJson.firstStringFromSources(
+                new JSONObject[] { data, payload }, "error", "errorMessage", "message");
     }
 
     private static String openClawErrorForUser(String error) {
@@ -663,28 +648,15 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
         return "OpenClaw could not complete the request: " + clean;
     }
 
-    private static String firstNonEmpty(String... values) {
-        if (values == null) {
-            return "";
-        }
-        for (String value : values) {
-            String clean = value == null ? "" : value.trim();
-            if (!clean.isEmpty()) {
-                return clean;
-            }
-        }
-        return "";
-    }
-
     private void handleInvoke(JSONObject payload) {
         String invokeId = payload.optString("id", "");
         String nodeId = payload.optString("nodeId", "");
         String command = payload.optString("command", "");
         JSONObject params = payload.optJSONObject("params");
         if (params == null) {
-            params = parseObject(payload.optString("paramsJSON", "{}"));
+            params = OpenClawJson.parseObject(payload.optString("paramsJSON", "{}"));
         }
-        String tool = mCommandToTool.get(command);
+        String tool = mCommands.toolFor(command);
         RuntimeToolResult result;
         if (tool == null || tool.isEmpty()) {
             result = RuntimeToolResult.denied(invokeId, "unknown_command",
@@ -702,7 +674,7 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
                     phoneSessionId,
                     new RuntimeIdentity("openclaw", mSettings.label, principal()),
                     tool,
-                    mapParams(command, tool, params),
+                    mCommands.mapParams(command, tool, params),
                     params.optString("reason", "OpenClaw command " + command),
                     params.optString("autonomy", ""),
                     idempotencyKey.isEmpty() ? invokeId : idempotencyKey,
@@ -713,7 +685,7 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
             return;
         }
         takePendingInvokeNodeId(invokeId);
-        if ("canvas.snapshot".equals(command)) {
+        if (mCommands.isCanvasSnapshot(command)) {
             sendCanvasSnapshotResult(invokeId, nodeId, result);
         } else {
             sendInvokeResult(invokeId, nodeId, result);
@@ -774,74 +746,32 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
     }
 
     private String runtimeSessionId(JSONObject payload, JSONObject params) {
-        String sessionKey = payload == null ? "" : payload.optString("sessionKey", "");
-        if (sessionKey.isEmpty() && params != null) {
-            sessionKey = params.optString("sessionKey", "");
-        }
-        if (sessionKey.isEmpty() && params != null) {
-            sessionKey = params.optString("session_key", "");
-        }
+        String sessionKey = OpenClawJson.firstString(payload, params,
+                "sessionKey", "session_key");
         if (!sessionKey.isEmpty()) {
             return sessionKey;
         }
-        String phoneSessionId = payload == null ? "" : payload.optString("phone_session_id", "");
-        if (phoneSessionId.isEmpty() && params != null) {
-            phoneSessionId = params.optString("phone_session_id", "");
-        }
-        if (phoneSessionId.isEmpty() && params != null) {
-            phoneSessionId = params.optString("phoneSessionId", "");
-        }
+        String phoneSessionId = OpenClawJson.firstString(payload, params,
+                "phone_session_id", "phoneSessionId");
         if (!phoneSessionId.isEmpty()) {
             return "openphone:" + principal() + ":" + phoneSessionId;
         }
-        String runId = payload == null ? "" : payload.optString("runId", "");
-        if (runId.isEmpty() && params != null) {
-            runId = params.optString("runId", "");
-        }
+        String runId = OpenClawJson.firstString(payload, params, "runId");
         if (!runId.isEmpty()) {
             return "openclaw-run:" + runId;
         }
-        String nodeId = payload == null ? "" : payload.optString("nodeId", "");
+        String nodeId = OpenClawJson.firstString(payload, "nodeId");
         return nodeId.isEmpty() ? "node" : nodeId;
     }
 
     private String phoneSessionId(JSONObject payload, JSONObject params,
             String runtimeSessionId) {
-        String phoneSessionId = payload == null ? "" : payload.optString("phone_session_id", "");
-        if (phoneSessionId.isEmpty() && params != null) {
-            phoneSessionId = params.optString("phone_session_id", "");
-        }
-        if (phoneSessionId.isEmpty() && params != null) {
-            phoneSessionId = params.optString("phoneSessionId", "");
-        }
+        String phoneSessionId = OpenClawJson.firstString(payload, params,
+                "phone_session_id", "phoneSessionId");
         if (!phoneSessionId.isEmpty()) {
             return phoneSessionId;
         }
         return PhoneSessionStore.extractPhoneSessionId(runtimeSessionId);
-    }
-
-    private JSONObject mapParams(String command, String tool, JSONObject params) {
-        JSONObject mapped = RuntimeToolRequest.copy(params);
-        try {
-            if ("device.apps".equals(command) && !mapped.has("query")) {
-                mapped.put("query", params.optString("query", ""));
-            }
-            if ("openphone.screen.get".equals(command)) {
-                mapped.put("include_screenshot", params.has("include_screenshot")
-                        ? params.optBoolean("include_screenshot", true) : true);
-                mapped.put("include_activity", params.optBoolean("include_activity", true));
-                mapped.put("include_ui_tree", params.optBoolean("include_ui_tree", true));
-            }
-            if ("canvas.snapshot".equals(command)) {
-                mapped.put("include_screenshot", true);
-                mapped.put("include_activity", params.optBoolean("include_activity", true));
-                mapped.put("include_ui_tree", params.optBoolean("include_ui_tree", false));
-            }
-            mapped.put("_openclaw_command", command);
-            mapped.put("_openphone_tool", tool);
-        } catch (JSONException ignored) {
-        }
-        return mapped;
     }
 
     private void sendCanvasSnapshotResult(String invokeId, String nodeId,
@@ -935,8 +865,8 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
                     .put("role", role)
                     .put("scopes", scopes)
                     .put("caps", capabilities())
-                    .put("commands", commands())
-                    .put("permissions", permissions())
+                    .put("commands", mCommands.commands())
+                    .put("permissions", mCommands.permissions())
                     .put("locale", Locale.getDefault().toLanguageTag())
                     .put("userAgent", "openphone-assistant/0.1")
                     .put("device", mDeviceIdentity.signedDevice(clientId, clientMode, role,
@@ -1030,25 +960,6 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
                 .put("openphone.ui");
     }
 
-    private JSONArray commands() {
-        JSONArray commands = new JSONArray();
-        for (String command : mCommandToTool.keySet()) {
-            commands.put(command);
-        }
-        return commands;
-    }
-
-    private JSONObject permissions() {
-        JSONObject permissions = new JSONObject();
-        for (String command : mCommandToTool.keySet()) {
-            try {
-                permissions.put(command, true);
-            } catch (JSONException ignored) {
-            }
-        }
-        return permissions;
-    }
-
     private JSONArray connectScopes() {
         if (mSettings.token == null || mSettings.token.isEmpty()) {
             return mDeviceIdentity.storedDeviceTokenScopes();
@@ -1083,7 +994,7 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
         if (payload != null) {
             return payload;
         }
-        return parseObject(frame.optString("payloadJSON", "{}"));
+        return OpenClawJson.parseObject(frame.optString("payloadJSON", "{}"));
     }
 
     private void persistDeviceTokens(JSONObject payload) {
@@ -1125,66 +1036,6 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
         return message.isEmpty() ? "auth_failed" : "auth_failed:" + message;
     }
 
-    private void registerCommands() {
-        mCommandToTool.put("openphone.device.status", "phone_context");
-        mCommandToTool.put("device.status", "phone_context");
-        mCommandToTool.put("device.info", "phone_context");
-        mCommandToTool.put("openphone.apps.search", "apps_search");
-        mCommandToTool.put("device.apps", "apps_search");
-        mCommandToTool.put("openphone.notifications.list", "notifications_list");
-        mCommandToTool.put("notifications.list", "notifications_list");
-        mCommandToTool.put("openphone.notifications.search", "notifications_search");
-        mCommandToTool.put("notifications.search", "notifications_search");
-        mCommandToTool.put("openphone.contacts.search", "contacts_search");
-        mCommandToTool.put("contacts.search", "contacts_search");
-        mCommandToTool.put("openphone.calendar.search", "calendar_search");
-        mCommandToTool.put("calendar.events", "calendar_search");
-        mCommandToTool.put("openphone.messages.search", "messages_search");
-        mCommandToTool.put("sms.search", "messages_search");
-        mCommandToTool.put("openphone.calls.search", "calls_search");
-        mCommandToTool.put("callLog.search", "calls_search");
-        mCommandToTool.put("openphone.screen.get", "get_screen");
-        mCommandToTool.put("canvas.snapshot", "get_screen");
-        mCommandToTool.put("openphone.screen.understand_local",
-                "local_screen_understanding");
-        mCommandToTool.put("openphone.local.screen_understanding",
-                "local_screen_understanding");
-        mCommandToTool.put("openphone.jobs.list", "background_job_list");
-        mCommandToTool.put("openphone.notifications.open", "notifications_open");
-        mCommandToTool.put("notifications.open", "notifications_open");
-        mCommandToTool.put("openphone.calendar.add", "calendar_create_event");
-        mCommandToTool.put("calendar.add", "calendar_create_event");
-        mCommandToTool.put("openphone.calendar.update", "calendar_update_event");
-        mCommandToTool.put("calendar.update", "calendar_update_event");
-        mCommandToTool.put("openphone.calendar.delete", "calendar_delete_event");
-        mCommandToTool.put("calendar.delete", "calendar_delete_event");
-        mCommandToTool.put("openphone.messages.draft", "messages_draft");
-        mCommandToTool.put("sms.draft", "messages_draft");
-        mCommandToTool.put("openphone.messages.send", "messages_send");
-        mCommandToTool.put("sms.send", "messages_send");
-        mCommandToTool.put("openphone.calls.place", "calls_place");
-        mCommandToTool.put("calls.place", "calls_place");
-        mCommandToTool.put("openphone.memory.search", "memory_search");
-        mCommandToTool.put("openphone.memory.save", "memory_save");
-        mCommandToTool.put("openphone.watchers.list", "watcher_list");
-        mCommandToTool.put("openphone.watchers.create", "watcher_create");
-        mCommandToTool.put("openphone.watchers.stop", "watcher_stop");
-        mCommandToTool.put("openphone.app.open", "open_app");
-        mCommandToTool.put("openphone.url.open", "open_url");
-        mCommandToTool.put("openphone.ui.tap", "tap");
-        mCommandToTool.put("openphone.ui.tap_element", "tap_element");
-        mCommandToTool.put("openphone.ui.long_press", "long_press");
-        mCommandToTool.put("openphone.ui.long_press_element", "long_press_element");
-        mCommandToTool.put("openphone.ui.swipe", "swipe");
-        mCommandToTool.put("openphone.ui.type_text", "type_text");
-        mCommandToTool.put("openphone.input.press_key", "press_key");
-        mCommandToTool.put("openphone.clipboard.set", "set_clipboard");
-        mCommandToTool.put("openphone.clipboard.paste", "paste");
-        mCommandToTool.put("openphone.share.text", "share_text");
-        mCommandToTool.put("openphone.jobs.create", "background_job_create");
-        mCommandToTool.put("openphone.jobs.stop", "background_job_stop");
-    }
-
     private static String cleanSource(String source) {
         String clean = source == null ? "" : source.trim().toLowerCase(Locale.US);
         if ("classic_voice".equals(clean) || "voice".equals(clean)) {
@@ -1206,14 +1057,6 @@ public final class OpenClawRuntimeAdapter implements RuntimeAdapter {
             return "observe_only";
         }
         return "ask_before_action";
-    }
-
-    private static JSONObject parseObject(String raw) {
-        try {
-            return new JSONObject(raw == null || raw.trim().isEmpty() ? "{}" : raw);
-        } catch (JSONException e) {
-            return new JSONObject();
-        }
     }
 
 }
