@@ -10,7 +10,7 @@ const distPath = path.join(pluginRoot, "dist/index.js");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openphone-openclaw-plugin-"));
 
 function fail(message) {
-  console.error(`openclaw-plugin policy smoke: ${message}`);
+  console.error(`openclaw-plugin policy contract: ${message}`);
   process.exit(1);
 }
 

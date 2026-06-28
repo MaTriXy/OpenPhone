@@ -14,6 +14,21 @@ It validates:
 - Shell scripts parse with `bash -n`.
 - XML files parse when `xmllint` is available.
 - JSON config and schema files parse when `python3` is available.
+- Runtime protocol manifests validate.
+- OpenClaw plugin policy, CLI, and MCP protocol smoke tests pass.
+- OpenPhone Assistant Java sources compile against the configured Android SDK.
+
+For only the runtime protocol and developer integration checks:
+
+```bash
+./scripts/check-runtime-protocol.sh
+```
+
+That check covers the manifest-backed command/event/capability protocol, the
+OpenClaw plugin policy contract, the CLI contract, and the MCP protocol
+contract. Live
+OpenClaw validation is separate because it requires a USB-connected phone and a
+running OpenClaw gateway.
 
 ## Android Build Check
 

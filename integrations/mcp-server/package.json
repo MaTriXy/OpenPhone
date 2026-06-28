@@ -11,6 +11,6 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node tests/protocol-smoke.mjs"
+    "test": "node tests/protocol-contract.mjs"
   }
 }

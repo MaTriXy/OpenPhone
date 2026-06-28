@@ -9,6 +9,18 @@ build, architecture, release, device, and policy docs.
   and current implementation boundaries.
 - [Agent Runtime V1](AGENT_RUNTIME_V1.md) - background job model, scheduling,
   safety posture, and migration path for durable agent work.
+- [Runtime Agent Protocol](runtime/runtime-agent-protocol.md) - generic
+  Phone/OpenClaw/Hermes runtime boundary, sessions, tool requests, and
+  autonomy.
+- [Runtime Security Model](runtime/security-model.md) - remote runtime trust
+  boundaries, confirmation requirements, identity storage, and prompt/context
+  safety.
+- [OpenClaw Integration](runtime/openclaw-integration.md) - Android adapter,
+  OpenClaw plugin boundary, and validation path.
+- [Hermes Integration](runtime/hermes-integration.md) - expected future
+  Hermes adapter shape on the same runtime protocol.
+- [MCP Bridge](runtime/mcp-bridge.md) - manifest-backed MCP and CLI access to
+  OpenPhone tools.
 - [Build](BUILD.md) - Android repo sync, patch application, generic build, and
   Pixel 9a build commands.
 - [Testing](TESTING.md) - repository checks, physical device smoke tests,
@@ -27,11 +39,13 @@ build, architecture, release, device, and policy docs.
 - [0.0.1 Release Notes](releases/0.0.1.md)
 - [Changelog](releases/CHANGELOG.md)
 
-## Schemas
+## Schemas And Protocols
 
 Machine-readable runtime contracts live in [../schemas](../schemas). They are
 used by repository checks and validators for action requests, model tools,
 screen context, audit events, trajectories, OTA feeds, and agent eval reports.
+The Runtime Agent Protocol command/event/capability manifests live in
+[../runtime/protocol](../runtime/protocol).
 
 ## Licensing
 

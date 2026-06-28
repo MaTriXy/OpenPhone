@@ -11,6 +11,6 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node tests/cli-smoke.mjs"
+    "test": "node tests/cli-contract.mjs"
   }
 }

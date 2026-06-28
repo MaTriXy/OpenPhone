@@ -17,6 +17,11 @@ required=(
   docs/DEVICE_SUPPORT.md
   docs/GMS.md
   docs/LICENSING.md
+  docs/runtime/hermes-integration.md
+  docs/runtime/mcp-bridge.md
+  docs/runtime/openclaw-integration.md
+  docs/runtime/runtime-agent-protocol.md
+  docs/runtime/security-model.md
   docs/legal/README.md
   docs/legal/COMMERCIAL.md
   docs/legal/LICENSE.noncommercial
@@ -69,6 +74,9 @@ required=(
   scripts/push-assistant-apk.sh
   scripts/run-assistant-task.sh
   scripts/pull-latest-trajectory.sh
+  scripts/check-runtime-protocol.sh
+  scripts/smoke-test-openclaw-device-failures.sh
+  scripts/smoke-test-openclaw-runtime.sh
   scripts/setup-model-broker-tls.sh
   scripts/sign-release-ota.sh
   scripts/validate-release-artifacts.sh
@@ -88,6 +96,30 @@ required=(
   services/model-broker/deploy/openphone-model-broker.service
   services/model-broker/openphone_model_broker.py
   services/model-broker/providers.example.json
+  runtime/protocol/openphone-capabilities.json
+  runtime/protocol/openphone-commands.json
+  runtime/protocol/openphone-events.json
+  runtime/protocol/openphone-runtime-tools.mjs
+  runtime/protocol/openphone-runtime.schema.json
+  runtime/protocol/validate-runtime-protocol.mjs
+  integrations/adb/openphone-adb-transport.mjs
+  integrations/cli/README.md
+  integrations/cli/package.json
+  integrations/cli/src/index.mjs
+  integrations/cli/tests/cli-contract.mjs
+  integrations/mcp-server/README.md
+  integrations/mcp-server/package.json
+  integrations/mcp-server/src/index.mjs
+  integrations/mcp-server/tests/protocol-contract.mjs
+  integrations/openclaw-plugin/README.md
+  integrations/openclaw-plugin/dist/index.d.ts
+  integrations/openclaw-plugin/dist/index.js
+  integrations/openclaw-plugin/openclaw.plugin.json
+  integrations/openclaw-plugin/package.json
+  integrations/openclaw-plugin/src/index.ts
+  integrations/openclaw-plugin/src/openclaw-plugin-sdk.d.ts
+  integrations/openclaw-plugin/tests/policy-contract.mjs
+  integrations/openclaw-plugin/tsconfig.json
   overlay/vendor/openphone/AndroidProducts.mk
   overlay/vendor/openphone/config/openphone_capabilities.json
   overlay/vendor/openphone/config/openphone_action_registry.json
@@ -850,6 +882,7 @@ if grep -R "SPDX-license-identifier-Apache-2.0" \
   exit 1
 fi
 
+"$root/scripts/check-runtime-protocol.sh"
 "$root/scripts/check-assistant-java.sh"
 
 printf 'OpenPhone repo checks passed.\n'
