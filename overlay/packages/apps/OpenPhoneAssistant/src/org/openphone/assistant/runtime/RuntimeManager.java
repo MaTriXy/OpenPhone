@@ -322,16 +322,10 @@ public final class RuntimeManager implements RuntimeConfirmationCallback {
     }
 
     private static String cleanRuntime(String runtime) {
-        return runtime == null ? "" : runtime.trim().toLowerCase(java.util.Locale.US);
+        return RuntimeRegistry.normalize(runtime);
     }
 
     private static String runtimeLabel(String runtime) {
-        if ("openclaw".equals(runtime)) {
-            return "OpenClaw";
-        }
-        if ("builtin".equals(runtime) || "phone".equals(runtime) || "local".equals(runtime)) {
-            return "Phone";
-        }
-        return runtime == null || runtime.trim().isEmpty() ? "Runtime" : runtime;
+        return RuntimeRegistry.label(runtime);
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context;
 import android.provider.Settings;
 
 import org.openphone.assistant.runtime.RuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeRegistry;
 
 import java.util.Locale;
 
@@ -11,9 +12,9 @@ public final class AssistantBrainConfig {
     public static final String KEY_ASSISTANT_BRAIN = "openphone_assistant_brain";
     public static final String KEY_VOLUME_RUNTIME = "openphone_volume_runtime";
     public static final String KEY_BACKGROUND_RUNTIME = "openphone_background_runtime";
-    public static final String BUILTIN = "builtin";
-    public static final String OPENCLAW = "openclaw";
-    public static final String AUTO = "auto";
+    public static final String BUILTIN = RuntimeRegistry.BUILTIN;
+    public static final String OPENCLAW = RuntimeRegistry.OPENCLAW;
+    public static final String AUTO = RuntimeRegistry.AUTO;
 
     private AssistantBrainConfig() {
     }
@@ -59,22 +60,11 @@ public final class AssistantBrainConfig {
     }
 
     public static String cleanMode(String mode) {
-        String clean = mode == null ? "" : mode.trim().toLowerCase(Locale.US);
-        if (BUILTIN.equals(clean) || OPENCLAW.equals(clean)) {
-            return clean;
-        }
-        return AUTO;
+        return RuntimeRegistry.cleanSelection(mode);
     }
 
     public static String label(String mode) {
-        String clean = cleanMode(mode);
-        if (BUILTIN.equals(clean)) {
-            return "Phone";
-        }
-        if (OPENCLAW.equals(clean)) {
-            return "OpenClaw";
-        }
-        return "Auto";
+        return RuntimeRegistry.label(mode);
     }
 
     public static String routeRuntime(Context context, RuntimeConfig config) {
@@ -106,11 +96,14 @@ public final class AssistantBrainConfig {
         if (BUILTIN.equals(mode)) {
             return BUILTIN;
         }
-        if (OPENCLAW.equals(mode)) {
-            return OPENCLAW;
+        if (!AUTO.equals(mode)) {
+            return RuntimeRegistry.normalize(mode);
         }
-        if (config != null && config.globallyEnabled && config.openClaw.configured()) {
-            return OPENCLAW;
+        if (config != null) {
+            String runtime = config.firstConfiguredRuntime();
+            if (!runtime.isEmpty()) {
+                return runtime;
+            }
         }
         return BUILTIN;
     }

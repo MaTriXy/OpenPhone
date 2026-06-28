@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import org.openphone.assistant.runtime.RuntimeRegistry
 import org.openphone.assistant.state.AssistantViewModel
 import org.openphone.assistant.state.RuntimeAdapterUiState
 import org.openphone.assistant.state.RuntimesUiState
@@ -348,18 +349,10 @@ private fun statusColor(status: String): Color =
     }
 
 private fun runtimeTitle(name: String): String =
-    when (name.lowercase()) {
-        "openclaw" -> "OpenClaw"
-        else -> name.replaceFirstChar { it.uppercase() }
-    }
+    RuntimeRegistry.label(name)
 
 private fun runtimeDisplayName(name: String): String =
-    when (name.lowercase()) {
-        "builtin", "local" -> "Phone"
-        "openclaw" -> "OpenClaw"
-        "auto" -> "Auto"
-        else -> name.ifBlank { "unknown" }
-    }
+    RuntimeRegistry.label(name.ifBlank { "unknown" })
 
 private fun ageText(updatedAtMillis: Long): String {
     val elapsedSeconds = ((System.currentTimeMillis() - updatedAtMillis) / 1000L).coerceAtLeast(0L)

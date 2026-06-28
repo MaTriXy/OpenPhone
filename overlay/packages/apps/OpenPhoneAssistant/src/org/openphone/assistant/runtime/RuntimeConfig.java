@@ -29,7 +29,15 @@ public final class RuntimeConfig {
     }
 
     public boolean anyEnabled() {
-        return globallyEnabled && openClaw.enabled;
+        if (!globallyEnabled) {
+            return false;
+        }
+        for (RuntimeSettings settings : remoteSettings()) {
+            if (settings.enabled) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean configured(String runtime) {
@@ -38,18 +46,36 @@ public final class RuntimeConfig {
     }
 
     public RuntimeSettings settingsFor(String runtime) {
-        String clean = runtime == null ? "" : runtime.trim().toLowerCase(java.util.Locale.US);
-        if ("openclaw".equals(clean)) {
-            return openClaw;
+        String clean = RuntimeRegistry.normalize(runtime);
+        for (RuntimeSettings settings : remoteSettings()) {
+            if (settings.runtime.equals(clean)) {
+                return settings;
+            }
         }
         return null;
+    }
+
+    public RuntimeSettings[] remoteSettings() {
+        return new RuntimeSettings[] { openClaw };
+    }
+
+    public String firstConfiguredRuntime() {
+        if (!globallyEnabled) {
+            return "";
+        }
+        for (RuntimeSettings settings : remoteSettings()) {
+            if (settings.configured()) {
+                return settings.runtime;
+            }
+        }
+        return "";
     }
 
     public static RuntimeConfig load(Context context) {
         boolean global = secureBool(context, KEY_GLOBAL_ENABLED,
                 secureBool(context, LEGACY_KEY_GLOBAL_ENABLED, false));
         return new RuntimeConfig(global,
-                new RuntimeSettings("openclaw",
+                new RuntimeSettings(RuntimeRegistry.OPENCLAW,
                         secureBool(context, KEY_OPENCLAW_ENABLED,
                                 secureBool(context, LEGACY_KEY_OPENCLAW_ENABLED, false)),
                         secureString(context, KEY_OPENCLAW_URL,
@@ -91,12 +117,13 @@ public final class RuntimeConfig {
 
         RuntimeSettings(String runtime, boolean enabled, String url, String token,
                 String deviceId, String label) {
-            this.runtime = runtime;
+            this.runtime = RuntimeRegistry.normalize(runtime);
             this.enabled = enabled;
             this.url = url;
             this.token = token;
             this.deviceId = deviceId;
-            this.label = label == null || label.isEmpty() ? runtime : label;
+            this.label = label == null || label.isEmpty()
+                    ? RuntimeRegistry.label(runtime) : label;
         }
 
         public boolean configured() {

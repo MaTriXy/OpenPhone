@@ -30,6 +30,7 @@ import org.openphone.assistant.agent.TrajectoryRecorder;
 import org.openphone.assistant.actions.ActionRegistry;
 import org.openphone.assistant.context.ContextIndexStore;
 import org.openphone.assistant.runtime.RuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeRegistry;
 import org.openphone.assistant.model.LocalHeuristicModelAdapter;
 import org.openphone.assistant.model.GeminiLiveVoiceSession;
 import org.openphone.assistant.model.ModelEndpointConfig;
@@ -607,8 +608,10 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private String volumeChordPrompt() {
-        if (AssistantBrainConfig.OPENCLAW.equals(selectedVolumeRuntime())) {
-            return "Hold or double-click to speak to OpenClaw.";
+        String runtime = selectedVolumeRuntime();
+        if (!AssistantBrainConfig.BUILTIN.equals(runtime)) {
+            return "Hold or double-click to speak to "
+                    + RuntimeRegistry.label(runtime) + ".";
         }
         return "Hold for classic, double-click for " + liveVoiceLabel() + ".";
     }
@@ -1293,7 +1296,7 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     private void startVolumeVoiceAgent(boolean holdToRecord) {
         mIslandVoiceLaunch = true;
-        boolean forceClassic = AssistantBrainConfig.OPENCLAW.equals(selectedVolumeRuntime());
+        boolean forceClassic = !RuntimeRegistry.isBuiltin(selectedVolumeRuntime());
         startVoiceAgent(holdToRecord, forceClassic, "volume_voice");
     }
 
@@ -2168,15 +2171,7 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private static String runtimeLabel(String runtime) {
-        String clean = runtime == null ? "" : runtime.trim().toLowerCase(Locale.US);
-        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
-            return "OpenClaw";
-        }
-        if (AssistantBrainConfig.BUILTIN.equals(clean) || "phone".equals(clean)
-                || "local".equals(clean)) {
-            return "Phone";
-        }
-        return clean.isEmpty() ? "Runtime" : clean;
+        return RuntimeRegistry.label(runtime);
     }
 
     private String runtimeAutonomyMode() {
@@ -2857,8 +2852,11 @@ public class AssistantActivityBackend extends ComponentActivity {
             status.put("effective_chat_runtime", AssistantBrainConfig.routeRuntime(this, config));
             status.put("volume_runtime", AssistantBrainConfig.loadVolumeMode(this));
             status.put("background_runtime", AssistantBrainConfig.loadBackgroundMode(this));
-            status.put("configured", new JSONArray()
-                    .put(runtimeSettingsJson(config.openClaw)));
+            JSONArray configured = new JSONArray();
+            for (RuntimeConfig.RuntimeSettings settings : config.remoteSettings()) {
+                configured.put(runtimeSettingsJson(settings));
+            }
+            status.put("configured", configured);
             if (!status.has("updated_at_ms")) {
                 status.put("updated_at_ms", System.currentTimeMillis());
             }

@@ -19,6 +19,7 @@ import org.openphone.assistant.agent.TaskRegistry;
 import org.openphone.assistant.runtime.RuntimeCallback;
 import org.openphone.assistant.runtime.RuntimeConfig;
 import org.openphone.assistant.runtime.RuntimeManager;
+import org.openphone.assistant.runtime.RuntimeRegistry;
 import org.openphone.assistant.model.ModelEndpointConfig;
 import org.openphone.assistant.model.OpenAiResponsesAgentAdapter;
 import org.openphone.assistant.jobs.OpenPhoneAgentJobScheduler;
@@ -516,20 +517,11 @@ public final class OpenPhoneAssistantService extends Service {
     }
 
     private static String cleanRuntime(String runtime) {
-        String clean = runtime == null ? "" : runtime.trim().toLowerCase(Locale.US);
-        return clean;
+        return RuntimeRegistry.normalize(runtime);
     }
 
     private static String runtimeLabel(String runtime) {
-        String clean = runtime == null ? "" : runtime.trim().toLowerCase(Locale.US);
-        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
-            return "OpenClaw";
-        }
-        if (AssistantBrainConfig.BUILTIN.equals(clean) || "phone".equals(clean)
-                || "local".equals(clean)) {
-            return "Phone";
-        }
-        return clean.isEmpty() ? "Runtime" : clean;
+        return RuntimeRegistry.label(runtime);
     }
 
     private void handleRuntimeMessage(String runtime, String sessionKey, String message,

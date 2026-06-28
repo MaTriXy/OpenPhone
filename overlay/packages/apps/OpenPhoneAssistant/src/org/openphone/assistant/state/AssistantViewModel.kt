@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import org.json.JSONArray
 import org.json.JSONObject
+import org.openphone.assistant.runtime.RuntimeRegistry
 
 class AssistantViewModel(
     private val chatHistoryStore: ChatHistoryStore? = null,
@@ -197,7 +198,10 @@ class AssistantViewModel(
             }
         }
         adapters += configuredByName.values.filter {
-            it.name == "openclaw" || it.enabled || it.configured || runtimeNamesWithStatus.contains(it.name)
+            RuntimeRegistry.isKnownRemoteRuntime(it.name) ||
+                it.enabled ||
+                it.configured ||
+                runtimeNamesWithStatus.contains(it.name)
         }
 
         return RuntimesUiState(
@@ -209,7 +213,10 @@ class AssistantViewModel(
             backgroundRuntime = root.optString("background_runtime", "builtin"),
             updatedAtMillis = root.optLong("updated_at_ms", 0L),
             lastAction = lastAction,
-            adapters = adapters.sortedWith(compareBy<RuntimeAdapterUiState> { it.name != "openclaw" }.thenBy { it.name }),
+            adapters = adapters.sortedWith(
+                compareBy<RuntimeAdapterUiState> { RuntimeRegistry.sortRank(it.name) }
+                    .thenBy { it.name },
+            ),
         )
     }
 
