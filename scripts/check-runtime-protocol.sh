@@ -12,5 +12,6 @@ node --check "$root/integrations/mcp-server/src/index.mjs"
 node "$root/tests/integrations/openclaw-plugin-policy-contract.mjs"
 node "$root/tests/integrations/runtime-cli-contract.mjs"
 node "$root/tests/integrations/runtime-mcp-contract.mjs"
+node "$root/tests/integrations/runtime-package-contract.mjs"
 
 printf 'Runtime protocol checks passed.\n'

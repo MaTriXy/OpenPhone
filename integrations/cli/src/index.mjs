@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
-import { OpenPhoneAdbTransport } from "../../adb/openphone-adb-transport.mjs";
+import { OpenPhoneAdbTransport } from "../adb/openphone-adb-transport.mjs";
 import {
   loadCommands,
   mcpTools,
   parseJsonObject,
   resolveCommand,
-} from "../../../runtime/protocol/openphone-runtime-tools.mjs";
+} from "../runtime/protocol/openphone-runtime-tools.mjs";
 
 const commands = loadCommands();
 
@@ -30,7 +30,7 @@ export async function main(argv = process.argv.slice(2), io = process) {
     } else if (group === "tool") {
       result = await toolCommand(command, rest, transport);
     } else if (group === "mcp" && command === "serve") {
-      const { serve } = await import("../../mcp-server/src/index.mjs");
+      const { serve } = await importRuntimeMcpServer();
       await serve({ transport });
       return 0;
     } else {
@@ -45,6 +45,17 @@ export async function main(argv = process.argv.slice(2), io = process) {
       io.stderr.write(`error: ${error.message}\n`);
     }
     return 1;
+  }
+}
+
+async function importRuntimeMcpServer() {
+  try {
+    return await import("@openphone/runtime-mcp-server");
+  } catch (error) {
+    if (error?.code !== "ERR_MODULE_NOT_FOUND") {
+      throw error;
+    }
+    return import("../../mcp-server/src/index.mjs");
   }
 }
 

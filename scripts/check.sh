@@ -110,6 +110,7 @@ required=(
   tests/integrations/runtime-cli-contract.mjs
   tests/integrations/runtime-mcp-contract.mjs
   tests/integrations/openclaw-plugin-policy-contract.mjs
+  tests/integrations/runtime-package-contract.mjs
   integrations/mcp-server/README.md
   integrations/mcp-server/package.json
   integrations/mcp-server/src/index.mjs
