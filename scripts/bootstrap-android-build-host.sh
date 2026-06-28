@@ -2,6 +2,28 @@
 
 set -euo pipefail
 
+usage() {
+  cat <<'USAGE'
+Usage: scripts/bootstrap-android-build-host.sh
+
+Installs Ubuntu packages and tools required for Android build hosts.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    usage >&2
+    printf 'error: unknown argument: %s\n' "$1" >&2
+    exit 1
+    ;;
+esac
+
 if [[ "$(id -u)" -ne 0 ]]; then
   exec sudo -E bash "$0" "$@"
 fi
@@ -58,7 +80,10 @@ chmod 0755 /usr/local/bin/repo
 
 git lfs install --system
 
-install -d -m 0775 -o ubuntu -g ubuntu /opt/openphone-build
+install -d -m 0775 /opt/openphone-build
+if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+  chown "$SUDO_UID:$SUDO_GID" /opt/openphone-build
+fi
 
 if command -v timedatectl >/dev/null 2>&1; then
   timedatectl set-timezone UTC || true

@@ -35,9 +35,8 @@ For only the runtime protocol and developer integration checks:
 
 That check covers the manifest-backed command/event/capability protocol, the
 OpenClaw plugin policy contract, the CLI contract, and the MCP protocol
-contract. Live
-Live OpenClaw validation is separate because it requires an ADB-connected
-OpenPhone target and a running OpenClaw gateway.
+contract. Live OpenClaw validation is separate because it requires an
+ADB-connected OpenPhone target and a running OpenClaw gateway.
 
 ## Android Build Check
 
