@@ -86,7 +86,8 @@ public final class RuntimeManager implements RuntimeConfirmationCallback {
         try {
             return new JSONObject()
                     .put("status", aggregateStatus)
-                    .put("manager_status", mStatus)
+                    .put("manager_status", aggregateStatus)
+                    .put("lifecycle_status", mStatus)
                     .put("updated_at_ms", System.currentTimeMillis())
                     .put("adapters", adapters)
                     .toString();
