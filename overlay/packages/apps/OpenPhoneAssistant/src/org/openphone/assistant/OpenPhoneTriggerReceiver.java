@@ -16,6 +16,9 @@ public final class OpenPhoneTriggerReceiver extends BroadcastReceiver {
         }
         Intent service = new Intent(context, OpenPhoneAssistantService.class);
         service.setAction(action);
+        if (intent != null && intent.getExtras() != null) {
+            service.putExtras(intent.getExtras());
+        }
         context.startService(service);
     }
 }

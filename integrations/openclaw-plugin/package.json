@@ -1,0 +1,46 @@
+{
+  "name": "@openphone/openclaw-plugin",
+  "version": "0.1.0",
+  "description": "OpenPhone Android node integration for OpenClaw.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node ../../tests/integrations/openclaw-plugin-policy-contract.mjs"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.6.10"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "openclaw": ">=2026.6.10",
+    "typescript": "^5.9.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "install": {
+      "npmSpec": "@openphone/openclaw-plugin",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.6.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.6.10"
+    },
+    "release": {
+      "publishToClawHub": true,
+      "publishToNpm": true
+    }
+  }
+}

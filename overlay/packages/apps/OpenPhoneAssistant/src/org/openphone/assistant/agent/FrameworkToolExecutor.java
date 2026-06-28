@@ -156,6 +156,8 @@ public final class FrameworkToolExecutor {
                     return backgroundJobStop(arguments);
                 case "get_screen":
                     return getScreen(taskId, arguments);
+                case "local_screen_understanding":
+                    return localScreenUnderstanding(taskId, arguments);
                 case "watch_screen":
                     return watchScreen(taskId, arguments);
                 case "open_app":
@@ -2440,6 +2442,64 @@ public final class FrameworkToolExecutor {
         return enrichScreenResult(screen, arguments, uiTree);
     }
 
+    private String localScreenUnderstanding(String taskId, JSONObject arguments)
+            throws JSONException {
+        int maxVisibleText = Math.max(0, Math.min(arguments.optInt("max_visible_text", 40), 80));
+        int maxElements = Math.max(0,
+                Math.min(arguments.optInt("max_interactive_elements", 60), 120));
+        long timeoutMs = Math.max(250L, Math.min(arguments.optLong("timeout_ms", 2500L), 5000L));
+        long startedAtMs = System.currentTimeMillis();
+        JSONObject screenArgs = new JSONObject()
+                .put("include_screenshot", false)
+                .put("include_activity", true)
+                .put("include_ui_tree", true)
+                .put("timeout_ms", timeoutMs)
+                .put("reason", arguments.optString("reason", ""));
+        JSONObject screen = parseObject(getScreen(taskId, screenArgs));
+        JSONObject context = screen.optJSONObject("context");
+        JSONObject uiTree = screen.optJSONObject("ui_tree");
+        JSONArray visibleText = firstArray(screen.optJSONArray("visible_text"),
+                uiTree == null ? null : uiTree.optJSONArray("visible_text"),
+                context == null ? null : context.optJSONArray("visible_text"));
+        JSONArray elements = firstArray(screen.optJSONArray("interactive_elements"),
+                uiTree == null ? null : uiTree.optJSONArray("interactive_elements"),
+                context == null ? null : context.optJSONArray("interactive_elements"));
+        JSONArray riskFlags = firstArray(screen.optJSONArray("risk_flags"),
+                uiTree == null ? null : uiTree.optJSONArray("risk_flags"),
+                context == null ? null : context.optJSONArray("risk_flags"));
+        JSONObject result = new JSONObject()
+                .put("status", "local_screen_understanding.ok")
+                .put("source_status", screen.optString("status", ""))
+                .put("foreground_app", firstNonEmpty(
+                        screen.optString("foreground_app", ""),
+                        context == null ? "" : context.optString("foreground_app", ""),
+                        uiTree == null ? "" : uiTree.optString("foreground_app", "")))
+                .put("activity", firstNonEmpty(
+                        screen.optString("activity", ""),
+                        context == null ? "" : context.optString("activity", ""),
+                        uiTree == null ? "" : uiTree.optString("activity", "")))
+                .put("visible_text", limitedArray(visibleText, maxVisibleText))
+                .put("interactive_elements", limitedArray(elements, maxElements))
+                .put("risk_flags", riskFlags == null ? new JSONArray() : riskFlags)
+                .put("screen_capture_included", false)
+                .put("truncated", new JSONObject()
+                        .put("visible_text", visibleText != null
+                                && visibleText.length() > maxVisibleText)
+                        .put("interactive_elements", elements != null
+                                && elements.length() > maxElements))
+                .put("limits", new JSONObject()
+                        .put("max_visible_text", maxVisibleText)
+                        .put("max_interactive_elements", maxElements)
+                        .put("timeout_ms", timeoutMs))
+                .put("compute", new JSONObject()
+                        .put("tool", "local_screen_understanding")
+                        .put("local", true)
+                        .put("bounded", true)
+                        .put("elapsed_ms", Math.max(0L,
+                                System.currentTimeMillis() - startedAtMs)));
+        return result.toString();
+    }
+
     private String watchScreen(String taskId, JSONObject arguments) throws JSONException {
         long durationMs = Math.max(500, Math.min(arguments.optLong("duration_ms", 1500), 5000));
         int fps = Math.max(1, Math.min(arguments.optInt("fps", 1), 5));
@@ -2482,6 +2542,55 @@ public final class FrameworkToolExecutor {
 
     private static boolean nonEmptyArray(JSONArray array) {
         return array != null && array.length() > 0;
+    }
+
+    private static JSONArray firstArray(JSONArray first, JSONArray second, JSONArray third) {
+        if (nonEmptyArray(first)) {
+            return first;
+        }
+        if (nonEmptyArray(second)) {
+            return second;
+        }
+        return third;
+    }
+
+    private static JSONArray limitedArray(JSONArray source, int limit) {
+        JSONArray output = new JSONArray();
+        if (source == null || limit <= 0) {
+            return output;
+        }
+        for (int i = 0; i < source.length() && output.length() < limit; i++) {
+            Object value = source.opt(i);
+            if (value != null) {
+                output.put(value);
+            }
+        }
+        return output;
+    }
+
+    private static String firstNonEmpty(String first, String second, String third) {
+        if (first != null && !first.trim().isEmpty()) {
+            return first;
+        }
+        if (second != null && !second.trim().isEmpty()) {
+            return second;
+        }
+        return third == null ? "" : third;
+    }
+
+    private static JSONObject parseObject(String raw) {
+        try {
+            return new JSONObject(raw == null || raw.trim().isEmpty() ? "{}" : raw);
+        } catch (JSONException e) {
+            JSONObject object = new JSONObject();
+            try {
+                object.put("status", "error")
+                        .put("reason", "json_parse_failed")
+                        .put("raw", raw == null ? "" : raw);
+            } catch (JSONException ignored) {
+            }
+            return object;
+        }
     }
 
     private static JSONObject accessibilitySnapshot() throws JSONException {

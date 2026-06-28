@@ -1,0 +1,14 @@
+{
+  "id": "openphone-android",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "name": "OpenPhone Android",
+  "description": "OpenPhone Android node command policy for OpenClaw.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

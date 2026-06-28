@@ -9,6 +9,9 @@ need_cmd git
 [[ -d "$OPENPHONE_ANDROID_DIR/.repo" ]] || die "Android tree not initialized: $OPENPHONE_ANDROID_DIR"
 
 info "copying OpenPhone overlay into Android tree"
+rm -rf \
+  "$OPENPHONE_ANDROID_DIR/packages/apps/OpenPhoneAssistant" \
+  "$OPENPHONE_ANDROID_DIR/vendor/openphone"
 cp -R "$OPENPHONE_ROOT/overlay/." "$OPENPHONE_ANDROID_DIR/"
 
 shopt -s nullglob
@@ -30,7 +33,27 @@ for patch_dir in "$OPENPHONE_ROOT"/patches/*; do
   (
     cd "$target_dir"
     for patch in "${patches[@]}"; do
-      subject="$(sed -n 's/^Subject: \[PATCH[^]]*\] //p' "$patch" | head -1)"
+      subject="$(
+        awk '
+          /^Subject: / {
+            capture = 1
+            s = $0
+            sub(/^Subject: /, "", s)
+            sub(/^\[PATCH[^]]*\] /, "", s)
+            next
+          }
+          capture && /^[ \t]/ {
+            line = $0
+            sub(/^[ \t]+/, "", line)
+            s = s " " line
+            next
+          }
+          capture {
+            print s
+            exit
+          }
+        ' "$patch"
+      )"
       if [[ -n "$subject" ]]; then
         log_subjects="$(mktemp)"
         git log --format=%s -n 200 > "$log_subjects"
@@ -42,7 +65,14 @@ for patch_dir in "$OPENPHONE_ROOT"/patches/*; do
         rm -f "$log_subjects"
       fi
       info "git am $(basename "$patch")"
-      git am "$patch"
+      if ! git am "$patch"; then
+        git am --abort >/dev/null 2>&1 || true
+        info "git apply --recount $(basename "$patch")"
+        git apply --recount "$patch"
+        git add -A
+        git -c user.name="OpenPhone" -c user.email="openphone@example.invalid" \
+          commit -m "$subject"
+      fi
     done
   )
 done

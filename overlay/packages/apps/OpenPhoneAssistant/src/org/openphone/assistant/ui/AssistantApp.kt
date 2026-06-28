@@ -15,12 +15,14 @@ import org.openphone.assistant.state.AssistantUiState
 import org.openphone.assistant.state.AssistantViewModel
 import org.openphone.assistant.ui.advanced.AdvancedScreen
 import org.openphone.assistant.ui.chat.ChatScreen
+import org.openphone.assistant.ui.runtimes.RuntimesScreen
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun AssistantApp(
     state: AssistantUiState,
     onShowAdvanced: () -> Unit,
+    onShowRuntimes: () -> Unit,
     onShowChat: () -> Unit,
     onNewChat: () -> Unit,
     onOpenChat: (String) -> Unit,
@@ -36,6 +38,11 @@ fun AssistantApp(
     onRunAgent: () -> Unit,
     onStopAgent: () -> Unit,
     onRefresh: () -> Unit,
+    onRefreshRuntimes: () -> Unit,
+    onReloadRuntimes: () -> Unit,
+    onSelectChatRuntime: (String) -> Unit,
+    onSelectVolumeRuntime: (String) -> Unit,
+    onSelectBackgroundRuntime: (String) -> Unit,
     onReadScreen: () -> Unit,
     onReadScreenshot: () -> Unit,
     onExecuteBack: () -> Unit,
@@ -54,7 +61,7 @@ fun AssistantApp(
     AnimatedContent(
         targetState = state.route,
         transitionSpec = {
-            val forward = targetState == AssistantRoute.Advanced
+            val forward = targetState != AssistantRoute.Chat
             val enterOffset: (Int) -> Int = { width -> if (forward) width / 5 else -width / 5 }
             val exitOffset: (Int) -> Int = { width -> if (forward) -width / 5 else width / 5 }
             (fadeIn() + slideInHorizontally(initialOffsetX = enterOffset))
@@ -67,6 +74,7 @@ fun AssistantApp(
                 state = state.chat,
                 pending = state.pending,
                 onShowAdvanced = onShowAdvanced,
+                onShowRuntimes = onShowRuntimes,
                 onNewChat = onNewChat,
                 onOpenChat = onOpenChat,
                 onOpenMemories = onOpenMemories,
@@ -102,6 +110,15 @@ fun AssistantApp(
                 onDeveloperGoalChange = onDeveloperGoalChange,
                 onRawActionJsonChange = onRawActionJsonChange,
             )
+            AssistantRoute.Runtimes -> RuntimesScreen(
+                state = state.runtimes,
+                onBack = onShowChat,
+                onRefresh = onRefreshRuntimes,
+                onReconnect = onReloadRuntimes,
+                onSelectChatRuntime = onSelectChatRuntime,
+                onSelectVolumeRuntime = onSelectVolumeRuntime,
+                onSelectBackgroundRuntime = onSelectBackgroundRuntime,
+            )
         }
     }
 }
@@ -113,6 +130,7 @@ private fun AssistantAppPreview() {
         AssistantApp(
             state = AssistantViewModel.previewState(),
             onShowAdvanced = {},
+            onShowRuntimes = {},
             onShowChat = {},
             onNewChat = {},
             onOpenChat = {},
@@ -128,6 +146,11 @@ private fun AssistantAppPreview() {
             onRunAgent = {},
             onStopAgent = {},
             onRefresh = {},
+            onRefreshRuntimes = {},
+            onReloadRuntimes = {},
+            onSelectChatRuntime = {},
+            onSelectVolumeRuntime = {},
+            onSelectBackgroundRuntime = {},
             onReadScreen = {},
             onReadScreenshot = {},
             onExecuteBack = {},

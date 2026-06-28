@@ -169,6 +169,18 @@ public final class AgentJobStore {
         });
     }
 
+    public synchronized boolean markDispatched(long id, String result, long nowMillis) {
+        return updateJob(id, job -> {
+            job.put("status", "dispatched")
+                    .put("updated_at", nowMillis)
+                    .put("last_run_at", nowMillis)
+                    .put("running_at", 0L)
+                    .put("last_result", truncate(result))
+                    .put("next_run_at", 0L);
+            return true;
+        });
+    }
+
     public synchronized boolean markFailed(long id, String reason, long nextRunAtMillis,
             int failureCount, long failureAlertAtMillis, long nowMillis) {
         return updateJob(id, job -> {
@@ -365,7 +377,7 @@ public final class AgentJobStore {
             String status = job.optString("status", "");
             if (overflow > 0
                     && ("completed".equals(status) || "failed".equals(status)
-                    || "stopped".equals(status))) {
+                    || "stopped".equals(status) || "dispatched".equals(status))) {
                 overflow--;
                 continue;
             }

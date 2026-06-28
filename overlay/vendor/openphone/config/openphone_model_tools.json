@@ -200,6 +200,12 @@
       "requires_reason": true
     },
     {
+      "name": "local_screen_understanding",
+      "capability": "screen.read.visible",
+      "kind": "observe",
+      "requires_reason": true
+    },
+    {
       "name": "watch_screen",
       "capability": "screen.read.visible",
       "kind": "observe",

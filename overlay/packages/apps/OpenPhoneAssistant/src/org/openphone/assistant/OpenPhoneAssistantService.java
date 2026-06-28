@@ -7,6 +7,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.openphone.OpenPhoneAgentManager;
 import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -16,6 +17,10 @@ import org.openphone.assistant.agent.ActionExecution;
 import org.openphone.assistant.agent.AgentOrchestrator;
 import org.openphone.assistant.agent.ScreenUnderstanding;
 import org.openphone.assistant.agent.TaskRegistry;
+import org.openphone.assistant.runtime.RuntimeCallback;
+import org.openphone.assistant.runtime.RuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeManager;
+import org.openphone.assistant.runtime.RuntimeRegistry;
 import org.openphone.assistant.model.ModelEndpointConfig;
 import org.openphone.assistant.model.OpenAiResponsesAgentAdapter;
 import org.openphone.assistant.jobs.OpenPhoneAgentJobScheduler;
@@ -34,11 +39,34 @@ public final class OpenPhoneAssistantService extends Service {
             "org.openphone.assistant.action.HIDE_ISLAND";
     static final String ACTION_SHOW_MIC_ISLAND =
             "org.openphone.assistant.action.SHOW_MIC_ISLAND";
+    static final String ACTION_LOG_RUNTIME_STATUS =
+            "org.openphone.assistant.action.LOG_RUNTIME_STATUS";
+    static final String ACTION_RELOAD_RUNTIMES =
+            "org.openphone.assistant.action.RELOAD_RUNTIMES";
+    public static final String ACTION_REQUEST_RUNTIME_ATTENTION =
+            "org.openphone.assistant.action.REQUEST_RUNTIME_ATTENTION";
+    public static final String EXTRA_RUNTIME_ATTENTION_RUNTIME =
+            "org.openphone.assistant.extra.RUNTIME_ATTENTION_RUNTIME";
+    public static final String EXTRA_RUNTIME_ATTENTION_TEXT =
+            "org.openphone.assistant.extra.RUNTIME_ATTENTION_TEXT";
+    public static final String EXTRA_RUNTIME_ATTENTION_SOURCE =
+            "org.openphone.assistant.extra.RUNTIME_ATTENTION_SOURCE";
+    public static final String EXTRA_RUNTIME_ATTENTION_AUTONOMY =
+            "org.openphone.assistant.extra.RUNTIME_ATTENTION_AUTONOMY";
+    public static final String EXTRA_RUNTIME_ATTENTION_INCLUDE_SCREEN =
+            "org.openphone.assistant.extra.RUNTIME_ATTENTION_INCLUDE_SCREEN";
+    private static final int MAX_PENDING_RUNTIME_VOICE_REPLIES = 16;
+    private static volatile String sLatestRuntimeStatusJson =
+            "{\"status\":\"disabled\",\"manager_status\":\"not_created\"}";
 
     private OpenPhoneAgentManager mAgentManager;
     private PointerOverlayController mPointerOverlayController;
+    private RuntimeManager mRuntimeManager;
     private String mNotificationTaskId;
     private boolean mIslandHiddenByActivity;
+    private TextToSpeech mRuntimeReplyTts;
+    private boolean mRuntimeReplyTtsReady;
+    private final Set<String> mPendingRuntimeVoicePhoneSessions = new LinkedHashSet<>();
 
     private final PolicyEngine mPolicyEngine = new PolicyEngine();
     private final AuditLog mAuditLog = new AuditLog(TAG);
@@ -50,10 +78,11 @@ public final class OpenPhoneAssistantService extends Service {
     private final IOpenPhoneAssistant.Stub mBinder = new IOpenPhoneAssistant.Stub() {
         @Override
         public String getStatus() {
+            String runtimeStatus = "runtime=" + runtimeStatusJson();
             if (mAgentManager == null) {
-                return "assistant.ready framework.unavailable";
+                return "assistant.ready framework.unavailable " + runtimeStatus;
             }
-            return "assistant.ready " + mAgentManager.getServiceStatus();
+            return "assistant.ready " + mAgentManager.getServiceStatus() + " " + runtimeStatus;
         }
 
         @Override
@@ -127,6 +156,9 @@ public final class OpenPhoneAssistantService extends Service {
         });
         refreshIslandAutonomy();
         mAgentManager = getSystemService(OpenPhoneAgentManager.class);
+        mRuntimeManager = new RuntimeManager(this, mAgentManager);
+        configureRuntimeCallback();
+        mRuntimeManager.start();
         OpenPhoneNotificationListenerService.ensureEnabled(this);
         if (mAgentManager == null) {
             Log.w(TAG, "OpenPhone framework service is not available");
@@ -157,6 +189,19 @@ public final class OpenPhoneAssistantService extends Service {
             mPointerOverlayController.showMicButton();
             return START_STICKY;
         }
+        if (ACTION_LOG_RUNTIME_STATUS.equals(action)) {
+            Log.i(TAG, "runtime status " + runtimeStatusJson());
+            return START_STICKY;
+        }
+        if (ACTION_RELOAD_RUNTIMES.equals(action)) {
+            reloadRuntimeManager();
+            Log.i(TAG, "runtime reloaded " + runtimeStatusJson());
+            return START_STICKY;
+        }
+        if (ACTION_REQUEST_RUNTIME_ATTENTION.equals(action)) {
+            requestRuntimeAttention(intent);
+            return START_STICKY;
+        }
         if (OpenPhoneNotificationController.ACTION_START.equals(action)) {
             mIslandHiddenByActivity = false;
             mNotificationTaskId = startNotificationTask();
@@ -166,6 +211,12 @@ public final class OpenPhoneAssistantService extends Service {
         }
         if (OpenPhoneNotificationController.ACTION_STOP.equals(action)) {
             stopNotificationTask();
+            return START_STICKY;
+        }
+        if (OpenPhoneNotificationController.ACTION_EXTERNAL_APPROVE.equals(action)
+                || OpenPhoneNotificationController.ACTION_EXTERNAL_DENY.equals(action)) {
+            resolveRuntimeConfirmation(intent,
+                    OpenPhoneNotificationController.ACTION_EXTERNAL_APPROVE.equals(action));
             return START_STICKY;
         }
         if (!mIslandHiddenByActivity) {
@@ -187,6 +238,10 @@ public final class OpenPhoneAssistantService extends Service {
         if (mPointerOverlayController != null) {
             mPointerOverlayController.hide();
         }
+        if (mRuntimeManager != null) {
+            mRuntimeManager.stop();
+        }
+        shutdownRuntimeReplyTts();
         OpenPhoneNotificationController.cancel(this);
         super.onDestroy();
     }
@@ -214,6 +269,394 @@ public final class OpenPhoneAssistantService extends Service {
         return response.substring(firstQuote + 1, secondQuote);
     }
 
+    private String runtimeStatusJson() {
+        String status = mRuntimeManager == null
+                ? "{\"status\":\"disabled\",\"manager_status\":\"not_created\"}"
+                : mRuntimeManager.statusJson();
+        sLatestRuntimeStatusJson = status;
+        return status;
+    }
+
+    static String latestRuntimeStatusJson() {
+        return sLatestRuntimeStatusJson;
+    }
+
+    private void reloadRuntimeManager() {
+        if (mRuntimeManager == null) {
+            mRuntimeManager = new RuntimeManager(this, mAgentManager);
+        }
+        configureRuntimeCallback();
+        mRuntimeManager.start();
+    }
+
+    private void configureRuntimeCallback() {
+        if (mRuntimeManager == null) {
+            return;
+        }
+        mRuntimeManager.setRuntimeCallback(new RuntimeCallback() {
+            @Override
+            public void onRuntimeMessage(String runtime, String sessionKey, String message,
+                    boolean terminal) {
+                handleRuntimeMessage(runtime, sessionKey, message, terminal);
+            }
+        });
+    }
+
+    private void requestRuntimeAttention(Intent intent) {
+        if (mRuntimeManager == null) {
+            mRuntimeManager = new RuntimeManager(this, mAgentManager);
+            configureRuntimeCallback();
+            mRuntimeManager.start();
+        } else if (shouldReloadRuntimeManagerForAttention(mRuntimeManager.statusJson())) {
+            reloadRuntimeManager();
+        }
+        String text = cleanExtra(intent == null ? "" :
+                intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_TEXT), "");
+        String source = cleanExtra(intent == null ? "" :
+                intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_SOURCE), "chat");
+        String runtime = runtimeForAttention(intent, source);
+        String autonomy = cleanExtra(intent == null ? "" :
+                intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_AUTONOMY), "ask_before_action");
+        boolean includeScreen = intent != null
+                && intent.getBooleanExtra(EXTRA_RUNTIME_ATTENTION_INCLUDE_SCREEN, true);
+        JSONObject context = buildRuntimeAttentionContext(runtime, text, source, includeScreen);
+        String result = mRuntimeManager.requestRuntimeAttention(runtime, text, source,
+                autonomy, includeScreen, context);
+        sLatestRuntimeStatusJson = mRuntimeManager.statusJson();
+        JSONObject parsed = parseObject(result);
+        if (parsed.optBoolean("ok", false)) {
+            Log.i(TAG, "runtime attention sent runtime=" + runtime + " source=" + source);
+            rememberRuntimeVoiceReply(parsed, source);
+            if (mPointerOverlayController != null && !mIslandHiddenByActivity) {
+                mPointerOverlayController.setIslandState("thinking",
+                        runtimeLabel(runtime) + " is working on it.");
+            }
+            return;
+        }
+        String message = parsed.optString("message",
+                runtimeLabel(runtime) + " runtime is not available.");
+        Log.w(TAG, "runtime attention failed runtime=" + runtime + ": " + message);
+        handleRuntimeMessage(runtime, "", message, true);
+    }
+
+    private boolean shouldReloadRuntimeManagerForAttention(String statusJson) {
+        JSONObject status = parseObject(statusJson);
+        String statusText = status.optString("status", "");
+        String manager = status.optString("manager_status", "");
+        return isReloadableRuntimeState(statusText) || isReloadableRuntimeState(manager);
+    }
+
+    private static boolean isReloadableRuntimeState(String status) {
+        String clean = status == null ? "" : status.trim().toLowerCase(Locale.US);
+        return clean.isEmpty()
+                || "disabled".equals(clean)
+                || "not_configured".equals(clean)
+                || "stopped".equals(clean)
+                || "offline".equals(clean)
+                || "insecure_transport_denied".equals(clean)
+                || clean.startsWith("auth_failed")
+                || clean.startsWith("error");
+    }
+
+    private JSONObject buildRuntimeAttentionContext(String runtime, String text, String source,
+            boolean includeScreen) {
+        JSONObject context = new JSONObject();
+        try {
+            context.put("trigger", "openphone_assistant")
+                    .put("runtime", runtime)
+                    .put("source", source)
+                    .put("sentAtMs", System.currentTimeMillis());
+            if (includeScreen) {
+                context.put("screen_preflight", captureRuntimeAttentionScreen(runtime, text));
+            }
+        } catch (JSONException ignored) {
+        }
+        return context;
+    }
+
+    private JSONObject captureRuntimeAttentionScreen(String runtime, String prompt) {
+        JSONObject compact = new JSONObject();
+        if (mAgentManager == null) {
+            try {
+                compact.put("available", false).put("reason", "framework_unavailable");
+            } catch (JSONException ignored) {
+            }
+            return compact;
+        }
+        String taskId = null;
+        try {
+            String response = mAgentManager.startTask("{"
+                    + "\"goal\":\"" + jsonEscape(prompt) + "\","
+                    + "\"user_visible\":true,"
+                    + "\"background_allowed\":false,"
+                    + "\"approved_capabilities\":[\"screen.read.visible\",\"tasks.observe\"]"
+                    + "}");
+            taskId = parseString(response, "task_id");
+            if (taskId == null || taskId.isEmpty()) {
+                return compact.put("available", false).put("reason", "missing_task_id");
+            }
+            String screenJson = mAgentManager.getScreen(taskId,
+                    "{\"include_screenshot\":true,\"include_activity\":true,"
+                            + "\"include_ui_tree\":true,"
+                            + "\"max_dimension\":768,"
+                            + "\"quality\":70,"
+                            + "\"reason\":\"preflight context for runtime attention\"}");
+            JSONObject screen = parseObject(screenJson);
+            JSONObject context = screen.optJSONObject("context");
+            JSONObject screenshot = compactScreenshot(screen.optJSONObject("screenshot"));
+            compact.put("available", true)
+                    .put("state", screen.optString("state"))
+                    .put("capture_mode", screen.optString("capture_mode"))
+                    .put("source", screen.optString("source"))
+                    .put("visible_text", compactStringArray(
+                            firstArray(screen.optJSONArray("visible_text"),
+                                    context == null ? null : context.optJSONArray("visible_text")),
+                            30))
+                    .put("interactive_elements", compactElements(
+                            firstArray(screen.optJSONArray("interactive_elements"),
+                                    context == null ? null
+                                            : context.optJSONArray("interactive_elements")),
+                            10));
+            if (context != null) {
+                compact.put("foreground_app", context.optString("foreground_app"))
+                        .put("activity", context.optString("activity"))
+                        .put("screen_width", context.optInt("screen_width", 0))
+                        .put("screen_height", context.optInt("screen_height", 0))
+                        .put("risk_flags", compactStringArray(
+                                context.optJSONArray("risk_flags"), 12));
+            }
+            if (screenshot.length() > 0) {
+                compact.put("screenshot", screenshot);
+            }
+            Log.i(TAG, "runtime attention screen preflight runtime=" + runtime
+                    + " fields=" + compact.length());
+            return compact;
+        } catch (RuntimeException | JSONException e) {
+            Log.w(TAG, "runtime attention screen preflight failed", e);
+            try {
+                compact.put("available", false).put("reason", e.getClass().getSimpleName());
+            } catch (JSONException ignored) {
+            }
+            return compact;
+        } finally {
+            if (taskId != null && !taskId.isEmpty()) {
+                try {
+                    mAgentManager.stopTask(taskId,
+                            "{\"reason\":\"runtime_attention_preflight_complete\"}");
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+    }
+
+    private static JSONObject compactScreenshot(JSONObject screenshot) throws JSONException {
+        JSONObject compact = new JSONObject();
+        if (screenshot == null) {
+            return compact;
+        }
+        String data = screenshot.optString("data", "");
+        String encoding = screenshot.optString("encoding", "base64");
+        if (data.isEmpty() || !"base64".equalsIgnoreCase(encoding)) {
+            compact.put("included", false);
+            return compact;
+        }
+        compact.put("included", true)
+                .put("encoding", "base64")
+                .put("mime_type", screenshot.optString("mime_type", "image/jpeg"))
+                .put("width", screenshot.optInt("width", 0))
+                .put("height", screenshot.optInt("height", 0))
+                .put("data", data);
+        return compact;
+    }
+
+    private static JSONArray firstArray(JSONArray primary, JSONArray fallback) {
+        return primary != null && primary.length() > 0 ? primary : fallback;
+    }
+
+    private static JSONArray compactStringArray(JSONArray values, int limit) throws JSONException {
+        JSONArray compact = new JSONArray();
+        if (values == null) {
+            return compact;
+        }
+        int count = Math.min(values.length(), limit);
+        for (int index = 0; index < count; index++) {
+            String value = values.optString(index);
+            if (value != null && !value.trim().isEmpty()) {
+                compact.put(value.trim());
+            }
+        }
+        return compact;
+    }
+
+    private static JSONArray compactElements(JSONArray elements, int limit) throws JSONException {
+        JSONArray compact = new JSONArray();
+        if (elements == null) {
+            return compact;
+        }
+        int count = Math.min(elements.length(), limit);
+        for (int index = 0; index < count; index++) {
+            JSONObject element = elements.optJSONObject(index);
+            if (element == null) {
+                continue;
+            }
+            JSONObject item = new JSONObject()
+                    .put("id", element.optString("id"))
+                    .put("kind", element.optString("kind"))
+                    .put("label", element.optString("label"))
+                    .put("bounds", element.optJSONArray("bounds"));
+            compact.put(item);
+        }
+        return compact;
+    }
+
+    private static String cleanExtra(String value, String fallback) {
+        String clean = value == null ? "" : value.trim();
+        return clean.isEmpty() ? fallback : clean;
+    }
+
+    private String runtimeForAttention(Intent intent, String source) {
+        String requested = cleanRuntime(intent == null ? "" :
+                intent.getStringExtra(EXTRA_RUNTIME_ATTENTION_RUNTIME));
+        if (!requested.isEmpty()) {
+            return requested;
+        }
+        return AssistantBrainConfig.routeRuntimeForSource(this, source, RuntimeConfig.load(this));
+    }
+
+    private static String cleanRuntime(String runtime) {
+        return RuntimeRegistry.normalize(runtime);
+    }
+
+    private static String runtimeLabel(String runtime) {
+        return RuntimeRegistry.label(runtime);
+    }
+
+    private void handleRuntimeMessage(String runtime, String sessionKey, String message,
+            boolean terminal) {
+        String clean = message == null ? "" : message.trim();
+        if (clean.isEmpty()) {
+            return;
+        }
+        Log.i(TAG, "runtime message runtime=" + runtime
+                + " terminal=" + terminal + " session=" + sessionKey);
+        if (mPointerOverlayController != null && terminal) {
+            mPointerOverlayController.showReply(clean);
+        } else if (mPointerOverlayController != null && !mIslandHiddenByActivity) {
+            mPointerOverlayController.setIslandState("thinking", clean);
+        }
+        boolean delivered = AssistantActivityBackend.deliverRuntimeMessage(runtime, sessionKey, clean,
+                terminal);
+        if (terminal && !delivered && consumeRuntimeVoiceReply(sessionKey)
+                && !isSystemFailureReply(clean)) {
+            Log.i(TAG, "runtime service TTS speaking session=" + sessionKey
+                    + " chars=" + clean.length());
+            speakRuntimeReply(clean);
+        }
+    }
+
+    private void rememberRuntimeVoiceReply(JSONObject result, String source) {
+        if (!isVoiceSource(source)) {
+            return;
+        }
+        String phoneSessionId = result == null ? "" : result.optString("phone_session_id", "");
+        String clean = phoneSessionId == null ? "" : phoneSessionId.trim();
+        if (clean.isEmpty()) {
+            return;
+        }
+        synchronized (mPendingRuntimeVoicePhoneSessions) {
+            mPendingRuntimeVoicePhoneSessions.add(clean);
+            while (mPendingRuntimeVoicePhoneSessions.size() > MAX_PENDING_RUNTIME_VOICE_REPLIES) {
+                java.util.Iterator<String> iterator = mPendingRuntimeVoicePhoneSessions.iterator();
+                if (!iterator.hasNext()) {
+                    break;
+                }
+                iterator.next();
+                iterator.remove();
+            }
+        }
+    }
+
+    private boolean consumeRuntimeVoiceReply(String sessionKey) {
+        String cleanSessionKey = sessionKey == null ? "" : sessionKey.trim();
+        if (cleanSessionKey.isEmpty()) {
+            return false;
+        }
+        synchronized (mPendingRuntimeVoicePhoneSessions) {
+            java.util.Iterator<String> iterator = mPendingRuntimeVoicePhoneSessions.iterator();
+            while (iterator.hasNext()) {
+                String phoneSessionId = iterator.next();
+                if (cleanSessionKey.contains(phoneSessionId)) {
+                    iterator.remove();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void speakRuntimeReply(String reply) {
+        final String utterance = speechText(reply);
+        if (utterance.isEmpty()) {
+            return;
+        }
+        if (mRuntimeReplyTts == null) {
+            mRuntimeReplyTtsReady = false;
+            mRuntimeReplyTts = new TextToSpeech(this, status -> {
+                mRuntimeReplyTtsReady = status == TextToSpeech.SUCCESS;
+                if (mRuntimeReplyTtsReady && mRuntimeReplyTts != null) {
+                    mRuntimeReplyTts.speak(utterance, TextToSpeech.QUEUE_FLUSH,
+                            null, "openphone-runtime-service-reply");
+                } else {
+                    Log.w(TAG, "runtime service TTS unavailable status=" + status);
+                }
+            });
+            return;
+        }
+        if (!mRuntimeReplyTtsReady) {
+            Log.w(TAG, "runtime service TTS not ready");
+            return;
+        }
+        mRuntimeReplyTts.speak(utterance, TextToSpeech.QUEUE_FLUSH,
+                null, "openphone-runtime-service-reply");
+    }
+
+    private static String speechText(String reply) {
+        String clean = reply == null ? "" : reply.replace('\n', ' ').replace('\r', ' ').trim();
+        if (clean.length() <= 700) {
+            return clean;
+        }
+        return clean.substring(0, 697).trim() + "...";
+    }
+
+    private void shutdownRuntimeReplyTts() {
+        TextToSpeech tts = mRuntimeReplyTts;
+        mRuntimeReplyTts = null;
+        mRuntimeReplyTtsReady = false;
+        if (tts != null) {
+            try {
+                tts.stop();
+                tts.shutdown();
+            } catch (RuntimeException e) {
+                Log.w(TAG, "runtime service TTS shutdown failed", e);
+            }
+        }
+    }
+
+    private static boolean isVoiceSource(String source) {
+        String clean = source == null ? "" : source.trim().toLowerCase(Locale.US);
+        return clean.contains("voice");
+    }
+
+    private static boolean isSystemFailureReply(String reply) {
+        if (reply == null) {
+            return false;
+        }
+        return reply.startsWith("Message routing failed:")
+                || reply.startsWith("Message routing timed out.")
+                || reply.startsWith("I couldn't hear the task.")
+                || reply.startsWith("I didn't catch that.");
+    }
+
     private void stopNotificationTask() {
         try {
             if (mAgentManager != null && mNotificationTaskId != null) {
@@ -228,6 +671,30 @@ public final class OpenPhoneAssistantService extends Service {
             }
             OpenPhoneNotificationController.showReady(this);
         }
+    }
+
+    private void resolveRuntimeConfirmation(Intent intent, boolean approved) {
+        String confirmationId = intent == null ? "" : intent.getStringExtra(
+                OpenPhoneNotificationController.EXTRA_EXTERNAL_CONFIRMATION_ID);
+        if (mRuntimeManager == null || confirmationId == null
+                || confirmationId.trim().isEmpty()) {
+            Log.w(TAG, "runtime confirmation action missing manager or id");
+            return;
+        }
+        RuntimeManager manager = mRuntimeManager;
+        String trimmedId = confirmationId.trim();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String result = manager.resolveRuntimeConfirmation(trimmedId, approved);
+                    Log.i(TAG, "runtime confirmation resolved approved=" + approved
+                            + " id=" + trimmedId + " result=" + result);
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "runtime confirmation resolution failed id=" + trimmedId, e);
+                }
+            }
+        }, "OpenPhoneRuntimeConfirm").start();
     }
 
     private void refreshIslandAutonomy() {
@@ -412,6 +879,14 @@ public final class OpenPhoneAssistantService extends Service {
             return new JSONObject(json == null ? "{}" : json).optString(key, "");
         } catch (JSONException e) {
             return "";
+        }
+    }
+
+    private static JSONObject parseObject(String json) {
+        try {
+            return new JSONObject(json == null ? "{}" : json);
+        } catch (JSONException e) {
+            return new JSONObject();
         }
     }
 

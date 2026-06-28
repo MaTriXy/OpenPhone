@@ -14,6 +14,7 @@ object AssistantComposeHost {
     @JvmStatic
     fun createView(activity: AssistantActivityBackend): View {
         val viewModel = AssistantViewModel(ChatHistoryStore(activity))
+        viewModel.setRuntimesFromJson(activity.onComposeRuntimeStatusSnapshot())
         activity.setComposeStateCallbacks(object : AssistantActivityBackend.ComposeStateCallbacks {
             override fun setTaskStatus(text: String) {
                 viewModel.updateDeveloperState { it.copy(taskStatus = text) }
@@ -99,6 +100,75 @@ object AssistantComposeHost {
             }
         })
         return ComposeView(activity).apply {
+            fun refreshRuntimes(action: String) {
+                viewModel.setRuntimesFromJson(activity.onComposeRefreshRuntimes(), action)
+                postDelayed({
+                    viewModel.setRuntimesFromJson(activity.onComposeRuntimeStatusSnapshot(), action)
+                }, 800L)
+            }
+
+            fun reloadRuntimes() {
+                val action = "Reconnect requested"
+                viewModel.setRuntimesFromJson(activity.onComposeReloadRuntimes(), action)
+                postDelayed({
+                    viewModel.setRuntimesFromJson(activity.onComposeRefreshRuntimes(), action)
+                    postDelayed({
+                        viewModel.setRuntimesFromJson(activity.onComposeRuntimeStatusSnapshot(), action)
+                    }, 800L)
+                }, 1200L)
+            }
+
+            fun selectChatRuntime(mode: String) {
+                val label = when (mode) {
+                    "openclaw" -> "OpenClaw"
+                    else -> "Phone"
+                }
+                viewModel.setRuntimesFromJson(
+                    activity.onComposeSelectChatRuntime(mode),
+                    "Chat runtime set to $label",
+                )
+                postDelayed({
+                    viewModel.setRuntimesFromJson(
+                        activity.onComposeRuntimeStatusSnapshot(),
+                        "Chat runtime set to $label",
+                    )
+                }, 400L)
+            }
+
+            fun selectVolumeRuntime(mode: String) {
+                val label = when (mode) {
+                    "openclaw" -> "OpenClaw"
+                    else -> "Phone"
+                }
+                viewModel.setRuntimesFromJson(
+                    activity.onComposeSelectVolumeRuntime(mode),
+                    "Volume buttons set to $label",
+                )
+                postDelayed({
+                    viewModel.setRuntimesFromJson(
+                        activity.onComposeRuntimeStatusSnapshot(),
+                        "Volume buttons set to $label",
+                    )
+                }, 400L)
+            }
+
+            fun selectBackgroundRuntime(mode: String) {
+                val label = when (mode) {
+                    "openclaw" -> "OpenClaw"
+                    else -> "Phone"
+                }
+                viewModel.setRuntimesFromJson(
+                    activity.onComposeSelectBackgroundRuntime(mode),
+                    "Watchers/background set to $label",
+                )
+                postDelayed({
+                    viewModel.setRuntimesFromJson(
+                        activity.onComposeRuntimeStatusSnapshot(),
+                        "Watchers/background set to $label",
+                    )
+                }, 400L)
+            }
+
             setContent {
                 val state by viewModel.state.collectAsState()
                 OpenPhoneTheme {
@@ -107,6 +177,11 @@ object AssistantComposeHost {
                         onShowAdvanced = {
                             viewModel.showAdvanced()
                             activity.onComposeShowAdvanced()
+                        },
+                        onShowRuntimes = {
+                            viewModel.showRuntimes()
+                            activity.onComposeShowRuntimes()
+                            refreshRuntimes("Status refreshed")
                         },
                         onShowChat = {
                             viewModel.showChat()
@@ -140,6 +215,21 @@ object AssistantComposeHost {
                         onRunAgent = activity::onComposeRunAgent,
                         onStopAgent = activity::onComposeStop,
                         onRefresh = activity::onComposeRefresh,
+                        onRefreshRuntimes = {
+                            refreshRuntimes("Status refreshed")
+                        },
+                        onReloadRuntimes = {
+                            reloadRuntimes()
+                        },
+                        onSelectChatRuntime = {
+                            selectChatRuntime(it)
+                        },
+                        onSelectVolumeRuntime = {
+                            selectVolumeRuntime(it)
+                        },
+                        onSelectBackgroundRuntime = {
+                            selectBackgroundRuntime(it)
+                        },
                         onReadScreen = activity::onComposeReadScreen,
                         onReadScreenshot = activity::onComposeReadScreenshot,
                         onExecuteBack = activity::onComposeExecuteBack,

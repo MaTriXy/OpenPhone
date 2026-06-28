@@ -68,6 +68,7 @@ fun ChatScreen(
     state: ChatUiState,
     pending: PendingConfirmation?,
     onShowAdvanced: () -> Unit,
+    onShowRuntimes: () -> Unit,
     onNewChat: () -> Unit,
     onOpenChat: (String) -> Unit,
     onOpenMemories: () -> Unit,
@@ -108,6 +109,10 @@ fun ChatScreen(
                 onShowAdvanced = {
                     scope.launch { drawerState.close() }
                     onShowAdvanced()
+                },
+                onShowRuntimes = {
+                    scope.launch { drawerState.close() }
+                    onShowRuntimes()
                 },
                 onOpenChat = {
                     scope.launch { drawerState.close() }
@@ -220,6 +225,7 @@ private fun AssistantDrawer(
     history: List<ChatSessionSummary>,
     onNewChat: () -> Unit,
     onShowAdvanced: () -> Unit,
+    onShowRuntimes: () -> Unit,
     onOpenChat: (String) -> Unit,
     onOpenMemories: () -> Unit,
 ) {
@@ -244,6 +250,11 @@ private fun AssistantDrawer(
                 label = { Text("New Chat") },
                 selected = false,
                 onClick = onNewChat,
+            )
+            NavigationDrawerItem(
+                label = { Text("Runtimes") },
+                selected = false,
+                onClick = onShowRuntimes,
             )
             NavigationDrawerItem(
                 label = { Text("Settings") },
@@ -341,6 +352,7 @@ private fun ChatScreenPreview() {
             state = state.chat,
             pending = state.pending,
             onShowAdvanced = {},
+            onShowRuntimes = {},
             onNewChat = {},
             onOpenChat = {},
             onOpenMemories = {},

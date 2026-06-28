@@ -1973,6 +1973,51 @@
       "audit_event_type": "screen_context_read"
     },
     {
+      "name": "local.screen_understanding",
+      "description": "Run bounded local screen understanding on the phone without returning screenshot bytes.",
+      "model_tool": "local_screen_understanding",
+      "kind": "observe",
+      "input_schema_json": {
+        "type": "object",
+        "properties": {
+          "max_visible_text": {
+            "type": "integer",
+            "description": "Maximum visible text entries to return, capped by the phone."
+          },
+          "max_interactive_elements": {
+            "type": "integer",
+            "description": "Maximum interactive elements to return, capped by the phone."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Requested compute timeout in milliseconds, capped by the phone."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why local screen understanding is needed."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "output_schema_json": {
+        "type": "object"
+      },
+      "risk_class": "low",
+      "required_capabilities": [
+        "screen.read.visible"
+      ],
+      "authorization_policy": "task_grant",
+      "allowed_callers": [
+        "model",
+        "assistant_ui",
+        "system"
+      ],
+      "executor_service": "OpenPhoneAssistant.FrameworkToolExecutor",
+      "audit_event_type": "screen_context_read"
+    },
+    {
       "name": "screen.watch",
       "description": "Observe the current screen for a short duration.",
       "model_tool": "watch_screen",

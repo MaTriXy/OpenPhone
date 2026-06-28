@@ -31,6 +31,8 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.openphone.assistant.context.ContextIndexStore;
+import org.openphone.assistant.runtime.RuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeRegistry;
 import org.openphone.assistant.jobs.AgentJobRecord;
 import org.openphone.assistant.jobs.AgentJobStore;
 import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
@@ -94,6 +96,10 @@ public final class PointerOverlayController {
     private static final int STATUS_TAB_CHAT = 0;
     private static final int STATUS_TAB_WATCHERS = 1;
     private static final int STATUS_TAB_RUNS = 2;
+    private static final int STATUS_TAB_RUNTIME = 3;
+    private static final int OPENPHONE_ACCENT = 0xff72e0c4;
+    private static final int OPENCLAW_ACCENT = 0xffe43d20;
+    private static final int YOLO_ACCENT = 0xffffd166;
 
     private final Context mContext;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -119,6 +125,7 @@ public final class PointerOverlayController {
     private TextView mChatTabButton;
     private TextView mWatchersTabButton;
     private TextView mRunsTabButton;
+    private TextView mRuntimeTabButton;
     private ScrollView mIslandBodyScroll;
     private FrameLayout mIslandBodyFrame;
     private TextView mIslandBodyText;
@@ -220,6 +227,7 @@ public final class PointerOverlayController {
             mChatTabButton = null;
             mWatchersTabButton = null;
             mRunsTabButton = null;
+            mRuntimeTabButton = null;
             mIslandBodyScroll = null;
             mIslandBodyFrame = null;
             mIslandBodyText = null;
@@ -631,9 +639,11 @@ public final class PointerOverlayController {
         mChatTabButton = islandTabButton("Chat", STATUS_TAB_CHAT);
         mWatchersTabButton = islandTabButton("Watchers", STATUS_TAB_WATCHERS);
         mRunsTabButton = islandTabButton("Runs", STATUS_TAB_RUNS);
+        mRuntimeTabButton = islandTabButton("Runtime", STATUS_TAB_RUNTIME);
         addTabButton(mIslandTabRow, mChatTabButton, 10);
         addTabButton(mIslandTabRow, mWatchersTabButton, 10);
-        addTabButton(mIslandTabRow, mRunsTabButton, 0);
+        addTabButton(mIslandTabRow, mRunsTabButton, 10);
+        addTabButton(mIslandTabRow, mRuntimeTabButton, 0);
         LinearLayout.LayoutParams tabRowLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -883,12 +893,13 @@ public final class PointerOverlayController {
         mIslandTabRow = null;
         mChatTabButton = null;
         mWatchersTabButton = null;
-            mRunsTabButton = null;
-            mIslandBodyScroll = null;
-            mIslandBodyFrame = null;
-            mIslandBodyText = null;
-            mIslandChatColumn = null;
-            mIslandActionRow = null;
+        mRunsTabButton = null;
+        mRuntimeTabButton = null;
+        mIslandBodyScroll = null;
+        mIslandBodyFrame = null;
+        mIslandBodyText = null;
+        mIslandChatColumn = null;
+        mIslandActionRow = null;
         mApproveButton = null;
         mDenyButton = null;
         mActionLabel = null;
@@ -950,6 +961,7 @@ public final class PointerOverlayController {
         styleTabButton(mChatTabButton, mStatusTab == STATUS_TAB_CHAT);
         styleTabButton(mWatchersTabButton, mStatusTab == STATUS_TAB_WATCHERS);
         styleTabButton(mRunsTabButton, mStatusTab == STATUS_TAB_RUNS);
+        styleTabButton(mRuntimeTabButton, mStatusTab == STATUS_TAB_RUNTIME);
     }
 
     private static void styleTabButton(TextView button, boolean selected) {
@@ -984,10 +996,15 @@ public final class PointerOverlayController {
 
     private void updateBodyContentViews(IslandPresentation presentation) {
         boolean showChat = presentation.showTabs && mStatusTab == STATUS_TAB_CHAT;
+        boolean showRuntime = presentation.showTabs && mStatusTab == STATUS_TAB_RUNTIME;
         if (showChat) {
             mIslandBodyText.setVisibility(View.GONE);
             mIslandChatColumn.setVisibility(View.VISIBLE);
             populateChatColumn();
+        } else if (showRuntime) {
+            mIslandBodyText.setVisibility(View.GONE);
+            mIslandChatColumn.setVisibility(View.VISIBLE);
+            populateRuntimeColumn();
         } else {
             mIslandChatColumn.setVisibility(View.GONE);
             mIslandBodyText.setVisibility(View.VISIBLE);
@@ -1010,27 +1027,30 @@ public final class PointerOverlayController {
         if ("transcript".equals(mMode)) {
             String transcript = mTranscriptText == null ? "" : mTranscriptText;
             if (hasMultiLineTranscript()) {
-                return IslandPresentation.expanded("AI", transcript, false,
+                return IslandPresentation.expanded(runtimeExpandedTitle(), transcript, false,
                         REPLY_MAX_LINES);
             }
             return IslandPresentation.compact("You said", transcript, 0xfff4f7f8);
         }
         if ("reply".equals(mMode)) {
-            return IslandPresentation.expanded("AI",
+            return IslandPresentation.expanded(runtimeExpandedTitle(),
                     mReplyText == null ? "" : mReplyText, false, REPLY_MAX_LINES);
         }
         if ("thinking".equals(mMode)) {
             if (mInspectExpanded) {
-                return IslandPresentation.expanded("Thinking", detailOr("Thinking"), false, 4);
+                return IslandPresentation.expanded(runtimeThinkingTitle(),
+                        detailOr("Thinking"), false, 4);
             }
-            return IslandPresentation.compact("", thinkingDots(), 0xff9ab8ff);
+            return IslandPresentation.compact(runtimeThinkingGlyph(), thinkingDots(),
+                    runtimeAccentColor(0xff9ab8ff));
         }
         if ("realtime".equals(mMode)) {
             if (mInspectExpanded) {
-                return IslandPresentation.expanded("Realtime", detailOr("Live Realtime 2"),
-                        false, 4);
+                return IslandPresentation.expanded(runtimeRealtimeTitle(),
+                        detailOr("Live Realtime 2"), false, 4);
             }
-            return IslandPresentation.compact("⚡", thinkingDots(), 0xffffcc6c);
+            return IslandPresentation.compact(runtimeRealtimeGlyph(), thinkingDots(),
+                    runtimeAccentColor(0xffffcc6c));
         }
         if ("action_running".equals(mMode)) {
             if (mInspectExpanded) {
@@ -1055,24 +1075,28 @@ public final class PointerOverlayController {
             if (mInspectExpanded) {
                 return backgroundStatusPresentation();
             }
-            return IslandPresentation.compact(yoloPrefix() + "AI",
-                    mWatchingCount > 1 ? "◎ " + mWatchingCount : "◎", 0xff9ab8ff);
+            return IslandPresentation.compact(runtimeCompactTitle(),
+                    mWatchingCount > 1 ? "◎ " + mWatchingCount : "◎",
+                    runtimeAccentColor(0xff9ab8ff));
         }
         if (mInspectExpanded) {
             return backgroundStatusPresentation();
         }
-        return IslandPresentation.compact(yoloPrefix() + "AI", "◉", 0xff72e0c4);
+        return IslandPresentation.compact(runtimeCompactTitle(), "◉",
+                runtimeAccentColor(OPENPHONE_ACCENT));
     }
 
     private IslandPresentation backgroundStatusPresentation() {
         int watcherCount = Math.max(mWatchingCount, activeWatchers(50).size());
         boolean showStop = mStatusTab == STATUS_TAB_WATCHERS && watcherCount > 0;
-        return IslandPresentation.expandedStatus("AI", backgroundStatusBody(),
+        return IslandPresentation.expandedStatus(runtimeExpandedTitle(), backgroundStatusBody(),
                 true, showStop, 10);
     }
 
     private String backgroundStatusBody() {
         switch (mStatusTab) {
+            case STATUS_TAB_RUNTIME:
+                return runtimeStatusBody();
             case STATUS_TAB_WATCHERS:
                 return watchersStatusBody();
             case STATUS_TAB_RUNS:
@@ -1187,6 +1211,107 @@ public final class PointerOverlayController {
         mIslandChatColumn.addView(row, rowLp);
     }
 
+    private void populateRuntimeColumn() {
+        if (mIslandChatColumn == null) {
+            return;
+        }
+        mIslandChatColumn.removeAllViews();
+        RuntimeConfig config = RuntimeConfig.load(mContext);
+        addRuntimeCard(runtimeCardTitle(AssistantBrainConfig.BUILTIN,
+                RuntimeRegistry.label(AssistantBrainConfig.BUILTIN)), "",
+                AssistantBrainConfig.BUILTIN, config);
+        if (!config.globallyEnabled) {
+            return;
+        }
+        for (RuntimeConfig.RuntimeSettings settings : config.remoteSettings()) {
+            if (settings == null || !settings.configured()) {
+                continue;
+            }
+            addRuntimeCard(runtimeCardTitle(settings.runtime, settings.label),
+                    endpointLabel(settings.url), settings.runtime, config);
+        }
+    }
+
+    private void addRuntimeCard(String title, String endpoint, String runtime,
+            RuntimeConfig config) {
+        String surfaces = runtimeSurfaceLabels(runtime, config);
+        boolean selected = !surfaces.isEmpty();
+        LinearLayout card = new LinearLayout(mContext);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(20, 14, 20, 14);
+        card.setClickable(true);
+        card.setFocusable(true);
+        card.setBackground(runtimeCardBackground(runtime, selected));
+        card.setOnClickListener(v -> selectRuntime(runtime));
+
+        TextView titleView = new TextView(mContext);
+        titleView.setText(title);
+        titleView.setTextColor(selected ? runtimeSelectedTextColor(runtime) : 0xffffffff);
+        titleView.setTextSize(15);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setSingleLine(true);
+        titleView.setGravity(Gravity.START);
+        card.addView(titleView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        StringBuilder detail = new StringBuilder();
+        if (endpoint != null && !endpoint.isEmpty()) {
+            detail.append(endpoint);
+        }
+        String status = runtimeAdapterStatus(runtime);
+        if (!status.isEmpty()) {
+            if (detail.length() > 0) {
+                detail.append(" · ");
+            }
+            detail.append(status);
+        }
+        if (selected) {
+            if (detail.length() > 0) {
+                detail.append("\n");
+            }
+            detail.append(surfaces);
+        }
+        if (detail.length() > 0) {
+            TextView detailView = new TextView(mContext);
+            detailView.setText(detail.toString());
+            detailView.setTextColor(selected ? runtimeSelectedSecondaryTextColor(runtime)
+                    : 0xccffffff);
+            detailView.setTextSize(12);
+            detailView.setTypeface(Typeface.DEFAULT);
+            detailView.setLineSpacing(2f, 1.05f);
+            detailView.setGravity(Gravity.START);
+            detailView.setSingleLine(false);
+            LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            detailLp.topMargin = 4;
+            card.addView(detailView, detailLp);
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = 8;
+        mIslandChatColumn.addView(card, lp);
+    }
+
+    private void selectRuntime(String runtime) {
+        AssistantBrainConfig.persistMode(mContext, runtime);
+        AssistantBrainConfig.persistVolumeMode(mContext, runtime);
+        AssistantBrainConfig.persistBackgroundMode(mContext, runtime);
+        mStateDetail = runtimeLabel(runtime) + " selected";
+        if (!AssistantBrainConfig.BUILTIN.equals(runtime)) {
+            Intent reload = new Intent(mContext, OpenPhoneAssistantService.class);
+            reload.setAction(OpenPhoneAssistantService.ACTION_RELOAD_RUNTIMES);
+            try {
+                mContext.startService(reload);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        updateIslandViews();
+    }
+
     private String watchersStatusBody() {
         List<WatcherRecord> watchers = activeWatchers(5);
         int watcherCount = Math.max(mWatchingCount, watchers.size());
@@ -1225,6 +1350,129 @@ public final class PointerOverlayController {
                     job.type, job.status, job.nextRunAtMillis));
         }
         return body.toString();
+    }
+
+    private String runtimeStatusBody() {
+        RuntimeConfig config = RuntimeConfig.load(mContext);
+        StringBuilder body = new StringBuilder();
+        for (RuntimeConfig.RuntimeSettings settings : config.remoteSettings()) {
+            appendRuntimeEnvironmentLine(body, settings, config);
+        }
+        appendLocalRuntimeLine(body, config);
+        if (body.length() == 0) {
+            body.append("No runtimes configured");
+        }
+        return body.toString();
+    }
+
+    private void appendRuntimeEnvironmentLine(StringBuilder body,
+            RuntimeConfig.RuntimeSettings settings, RuntimeConfig config) {
+        if (settings == null || !config.globallyEnabled || !settings.configured()) {
+            return;
+        }
+        appendRuntimeLinePrefix(body);
+        body.append(runtimeCardTitle(settings.runtime, settings.label));
+        String endpoint = endpointLabel(settings.url);
+        if (!endpoint.isEmpty()) {
+            body.append(" IP ").append(endpoint);
+        }
+        String status = runtimeAdapterStatus(settings.runtime);
+        if (!status.isEmpty()) {
+            body.append(" · ").append(status);
+        }
+        String surfaces = runtimeSurfaceLabels(settings.runtime, config);
+        if (!surfaces.isEmpty()) {
+            body.append("\n").append(surfaces);
+        }
+    }
+
+    private void appendLocalRuntimeLine(StringBuilder body, RuntimeConfig config) {
+        String surfaces = runtimeSurfaceLabels(AssistantBrainConfig.BUILTIN, config);
+        appendRuntimeLinePrefix(body);
+        body.append("⚡ Phone");
+        if (!surfaces.isEmpty()) {
+            body.append("\n").append(surfaces);
+        }
+    }
+
+    private void appendRuntimeLinePrefix(StringBuilder body) {
+        if (body.length() > 0) {
+            body.append("\n\n");
+        }
+    }
+
+    private String runtimeSurfaceLabels(String runtime, RuntimeConfig config) {
+        StringBuilder surfaces = new StringBuilder();
+        appendSurfaceLabel(surfaces, "Chat", AssistantBrainConfig.routeRuntime(mContext, config),
+                runtime);
+        appendSurfaceLabel(surfaces, "Volume",
+                AssistantBrainConfig.routeVolumeRuntime(mContext, config), runtime);
+        appendSurfaceLabel(surfaces, "Background",
+                AssistantBrainConfig.routeBackgroundRuntime(mContext, config), runtime);
+        return surfaces.toString();
+    }
+
+    private void appendSurfaceLabel(StringBuilder surfaces, String label, String selected,
+            String runtime) {
+        if (!RuntimeRegistry.normalize(runtime).equals(RuntimeRegistry.normalize(selected))) {
+            return;
+        }
+        if (surfaces.length() > 0) {
+            surfaces.append(" · ");
+        }
+        surfaces.append(label);
+    }
+
+    private String runtimeAdapterStatus(String runtime) {
+        String statusJson = OpenPhoneAssistantService.latestRuntimeStatusJson();
+        try {
+            JSONObject status = new JSONObject(statusJson == null ? "{}" : statusJson);
+            JSONArray adapters = status.optJSONArray("adapters");
+            if (adapters == null || adapters.length() == 0) {
+                return "";
+            }
+            for (int i = 0; i < adapters.length(); i++) {
+                JSONObject adapter = adapters.optJSONObject(i);
+                if (adapter == null) {
+                    continue;
+                }
+                if (runtime.equals(normalizeRuntime(adapter.optString("name", "")))) {
+                    return adapter.optString("status", "unknown");
+                }
+            }
+            return "";
+        } catch (JSONException e) {
+            return "";
+        }
+    }
+
+    private static String endpointLabel(String url) {
+        String value = url == null ? "" : url.trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+        int scheme = value.indexOf("://");
+        if (scheme >= 0) {
+            value = value.substring(scheme + 3);
+        }
+        int slash = value.indexOf('/');
+        if (slash >= 0) {
+            value = value.substring(0, slash);
+        }
+        int at = value.lastIndexOf('@');
+        if (at >= 0) {
+            value = value.substring(at + 1);
+        }
+        return value;
+    }
+
+    private static String normalizeRuntime(String runtime) {
+        return RuntimeRegistry.normalize(runtime);
+    }
+
+    private static String runtimeLabel(String runtime) {
+        String label = RuntimeRegistry.label(runtime);
+        return label.isEmpty() ? "unknown" : label;
     }
 
     private List<WatcherRecord> activeWatchers(int limit) {
@@ -1722,7 +1970,63 @@ public final class PointerOverlayController {
     }
 
     private String yoloPrefix() {
-        return mYoloActive ? "⚡ " : "";
+        if (!mYoloActive || hasSelectedRemoteRuntime()) {
+            return "";
+        }
+        return "⚡ ";
+    }
+
+    private String runtimeCompactTitle() {
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? yoloPrefix() + "AI" : runtimeGlyph(runtime);
+    }
+
+    private String runtimeExpandedTitle() {
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "AI" : RuntimeRegistry.label(runtime);
+    }
+
+    private String runtimeThinkingTitle() {
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "Thinking" : RuntimeRegistry.label(runtime);
+    }
+
+    private String runtimeThinkingGlyph() {
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "" : runtimeGlyph(runtime);
+    }
+
+    private String runtimeRealtimeTitle() {
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "Realtime" : RuntimeRegistry.label(runtime);
+    }
+
+    private String runtimeRealtimeGlyph() {
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "⚡" : runtimeGlyph(runtime);
+    }
+
+    private int runtimeAccentColor(int localAccent) {
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? localAccent : runtimeAccent(runtime, localAccent);
+    }
+
+    private boolean hasSelectedRemoteRuntime() {
+        return !selectedRemoteRuntime().isEmpty();
+    }
+
+    private String selectedRemoteRuntime() {
+        RuntimeConfig config = RuntimeConfig.load(mContext);
+        String chat = AssistantBrainConfig.routeRuntime(mContext, config);
+        if (RuntimeRegistry.isRemoteRuntime(chat)) {
+            return chat;
+        }
+        String volume = AssistantBrainConfig.routeVolumeRuntime(mContext, config);
+        if (RuntimeRegistry.isRemoteRuntime(volume)) {
+            return volume;
+        }
+        String background = AssistantBrainConfig.routeBackgroundRuntime(mContext, config);
+        return RuntimeRegistry.isRemoteRuntime(background) ? background : "";
     }
 
     private String thinkingDots() {
@@ -2015,7 +2319,7 @@ public final class PointerOverlayController {
         }
     }
 
-    private static GradientDrawable chipBackground(boolean yoloActive, boolean attachedToPanel) {
+    private GradientDrawable chipBackground(boolean yoloActive, boolean attachedToPanel) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(0xff000000);
         float radius = ISLAND_HEIGHT / 2f;
@@ -2030,7 +2334,9 @@ public final class PointerOverlayController {
             drawable.setCornerRadius(radius);
         }
         if (yoloActive) {
-            drawable.setStroke(3, 0xffffd166);
+            String runtime = selectedRemoteRuntime();
+            drawable.setStroke(3, runtime.isEmpty()
+                    ? YOLO_ACCENT : runtimeAccent(runtime, YOLO_ACCENT));
         }
         return drawable;
     }
@@ -2038,7 +2344,7 @@ public final class PointerOverlayController {
     private static GradientDrawable cursorBackground() {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setShape(GradientDrawable.OVAL);
-        drawable.setColor(0xff72e0c4);
+        drawable.setColor(OPENPHONE_ACCENT);
         drawable.setStroke(4, 0xdd101418);
         return drawable;
     }
@@ -2069,6 +2375,63 @@ public final class PointerOverlayController {
             drawable.setStroke(1, 0x33ffffff);
         }
         return drawable;
+    }
+
+    private static GradientDrawable runtimeCardBackground(String runtime, boolean selected) {
+        GradientDrawable drawable = new GradientDrawable();
+        int accent = runtimeAccent(runtime, OPENPHONE_ACCENT);
+        drawable.setColor(selected ? accent : 0x1affffff);
+        drawable.setCornerRadius(30);
+        drawable.setStroke(selected ? 0 : 1, selected ? accent : 0x44ffffff);
+        return drawable;
+    }
+
+    private static String runtimeCardTitle(String runtime, String label) {
+        String cleanLabel = label == null || label.trim().isEmpty()
+                ? RuntimeRegistry.label(runtime) : label.trim();
+        return runtimeGlyph(runtime) + " " + cleanLabel;
+    }
+
+    private static String runtimeGlyph(String runtime) {
+        String clean = normalizeRuntime(runtime);
+        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
+            return "🦞";
+        }
+        if (RuntimeRegistry.HERMES.equals(clean)) {
+            return "H";
+        }
+        if (AssistantBrainConfig.BUILTIN.equals(clean)) {
+            return "⚡";
+        }
+        return "◉";
+    }
+
+    private static int runtimeAccent(String runtime, int fallback) {
+        String clean = normalizeRuntime(runtime);
+        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
+            return OPENCLAW_ACCENT;
+        }
+        if (RuntimeRegistry.HERMES.equals(clean)) {
+            return 0xff5b6ee1;
+        }
+        if (AssistantBrainConfig.BUILTIN.equals(clean)) {
+            return OPENPHONE_ACCENT;
+        }
+        return fallback;
+    }
+
+    private static int runtimeSelectedTextColor(String runtime) {
+        return runtimeAccentNeedsLightText(runtime) ? 0xffffffff : 0xff101418;
+    }
+
+    private static int runtimeSelectedSecondaryTextColor(String runtime) {
+        return runtimeAccentNeedsLightText(runtime) ? 0xeeffffff : 0xdd101418;
+    }
+
+    private static boolean runtimeAccentNeedsLightText(String runtime) {
+        String clean = normalizeRuntime(runtime);
+        return AssistantBrainConfig.OPENCLAW.equals(clean)
+                || RuntimeRegistry.HERMES.equals(clean);
     }
 
     private static GradientDrawable rippleBackground(boolean longPress) {

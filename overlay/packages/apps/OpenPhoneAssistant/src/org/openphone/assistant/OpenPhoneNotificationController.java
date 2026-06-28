@@ -22,13 +22,21 @@ public final class OpenPhoneNotificationController {
     private static final String COMMITMENT_CHANNEL_ID = "openphone_commitments";
     private static final String WATCHER_CHANNEL_ID = "openphone_watchers";
     private static final String AGENT_JOB_CHANNEL_ID = "openphone_agent_jobs";
+    private static final String RUNTIME_CHANNEL_ID = "openphone_runtimes";
     static final String ACTION_START = "org.openphone.assistant.action.START";
     static final String ACTION_STOP = "org.openphone.assistant.action.STOP";
     static final String ACTION_OPEN = "org.openphone.assistant.action.OPEN";
+    static final String ACTION_EXTERNAL_APPROVE =
+            "org.openphone.assistant.action.EXTERNAL_APPROVE";
+    static final String ACTION_EXTERNAL_DENY =
+            "org.openphone.assistant.action.EXTERNAL_DENY";
+    static final String EXTRA_EXTERNAL_CONFIRMATION_ID =
+            "org.openphone.assistant.extra.EXTERNAL_CONFIRMATION_ID";
     static final int NOTIFICATION_ID = 1001;
     private static final int COMMITMENT_NOTIFICATION_BASE_ID = 5000;
     private static final int WATCHER_NOTIFICATION_BASE_ID = 6000;
     private static final int AGENT_JOB_NOTIFICATION_BASE_ID = 7000;
+    private static final int RUNTIME_NOTIFICATION_BASE_ID = 8000;
 
     private OpenPhoneNotificationController() {}
 
@@ -221,6 +229,84 @@ public final class OpenPhoneNotificationController {
         manager.notify(agentJobNotificationId(job.id), builder.build());
     }
 
+    public static void showRuntimeMessage(Context context, String runtime,
+            String title, String text, String messageId) {
+        if (context == null) {
+            return;
+        }
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return;
+        }
+        ensureRuntimeChannel(manager);
+        String cleanRuntime = runtime == null || runtime.trim().isEmpty()
+                ? "Runtime" : runtime.trim();
+        String cleanTitle = title == null || title.trim().isEmpty()
+                ? cleanRuntime : title.trim();
+        String cleanText = text == null ? "" : text.trim();
+        Notification.Builder builder = new Notification.Builder(context)
+                .setSmallIcon(R.drawable.ic_openphone_tile)
+                .setContentTitle(cleanTitle)
+                .setContentText(cleanText)
+                .setStyle(new Notification.BigTextStyle().bigText(cleanText))
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
+                .setContentIntent(pendingBroadcast(context, ACTION_OPEN,
+                        runtimeRequestCode(messageId)));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setChannelId(RUNTIME_CHANNEL_ID);
+        }
+        manager.notify(runtimeNotificationId(messageId), builder.build());
+    }
+
+    public static void showRuntimeConfirmation(Context context, String confirmationId,
+            String runtime, String tool, String summary) {
+        if (context == null || confirmationId == null || confirmationId.trim().isEmpty()) {
+            return;
+        }
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return;
+        }
+        ensureRuntimeChannel(manager);
+        String cleanRuntime = runtime == null || runtime.trim().isEmpty()
+                ? "Runtime" : runtime.trim();
+        String cleanTool = tool == null || tool.trim().isEmpty() ? "OpenPhone action" : tool.trim();
+        String detail = summary == null || summary.trim().isEmpty()
+                ? cleanTool : summary.trim();
+        Notification.Builder builder = new Notification.Builder(context)
+                .setSmallIcon(R.drawable.ic_openphone_tile)
+                .setContentTitle(cleanRuntime + " requests " + cleanTool)
+                .setContentText(detail)
+                .setStyle(new Notification.BigTextStyle().bigText(detail))
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
+                .setContentIntent(pendingBroadcast(context, ACTION_OPEN,
+                        runtimeRequestCode(confirmationId)))
+                .addAction(new Notification.Action.Builder(
+                        R.drawable.ic_openphone_tile,
+                        "Approve",
+                        runtimeAction(context, ACTION_EXTERNAL_APPROVE,
+                                confirmationId, 1)).build())
+                .addAction(new Notification.Action.Builder(
+                        R.drawable.ic_openphone_tile,
+                        "Deny",
+                        runtimeAction(context, ACTION_EXTERNAL_DENY,
+                                confirmationId, 2)).build());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setChannelId(RUNTIME_CHANNEL_ID);
+        }
+        manager.notify(runtimeNotificationId(confirmationId), builder.build());
+    }
+
+    public static void cancelRuntimeConfirmation(Context context, String confirmationId) {
+        NotificationManager manager = context == null
+                ? null : context.getSystemService(NotificationManager.class);
+        if (manager != null) {
+            manager.cancel(runtimeNotificationId(confirmationId));
+        }
+    }
+
     private static void show(Context context, boolean active, String text) {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null) {
@@ -286,6 +372,19 @@ public final class OpenPhoneNotificationController {
                 intent, flags);
     }
 
+    private static PendingIntent runtimeAction(Context context, String action,
+            String confirmationId, int actionCode) {
+        Intent intent = new Intent(context, OpenPhoneTriggerReceiver.class);
+        intent.setAction(action);
+        intent.putExtra(EXTRA_EXTERNAL_CONFIRMATION_ID, confirmationId);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getBroadcast(context,
+                runtimeRequestCode(confirmationId) + actionCode, intent, flags);
+    }
+
     private static void ensureCommitmentChannel(Context context, NotificationManager manager) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -316,6 +415,16 @@ public final class OpenPhoneNotificationController {
         }
     }
 
+    private static void ensureRuntimeChannel(NotificationManager manager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    RUNTIME_CHANNEL_ID,
+                    "OpenPhone runtimes",
+                    NotificationManager.IMPORTANCE_DEFAULT);
+            manager.createNotificationChannel(channel);
+        }
+    }
+
     private static int notificationId(long commitmentId) {
         long bounded = Math.max(0L, Math.min(commitmentId, 999_999L));
         return COMMITMENT_NOTIFICATION_BASE_ID + (int) bounded;
@@ -331,6 +440,11 @@ public final class OpenPhoneNotificationController {
         return AGENT_JOB_NOTIFICATION_BASE_ID + (int) bounded;
     }
 
+    private static int runtimeNotificationId(String messageId) {
+        return RUNTIME_NOTIFICATION_BASE_ID
+                + Math.abs((messageId == null ? "" : messageId).hashCode() % 1000);
+    }
+
     private static int requestCode(long commitmentId, int actionCode) {
         long bounded = Math.max(0L, Math.min(commitmentId, 999_999L));
         return (int) (COMMITMENT_NOTIFICATION_BASE_ID + bounded * 10L + actionCode);
@@ -339,6 +453,11 @@ public final class OpenPhoneNotificationController {
     private static int jobRequestCode(long jobId, int actionCode) {
         long bounded = Math.max(0L, Math.min(jobId, 999_999L));
         return (int) (AGENT_JOB_NOTIFICATION_BASE_ID + bounded * 10L + actionCode);
+    }
+
+    private static int runtimeRequestCode(String messageId) {
+        return RUNTIME_NOTIFICATION_BASE_ID + 1000
+                + Math.abs((messageId == null ? "" : messageId).hashCode() % 1000);
     }
 
     private static String summarize(String text) {
