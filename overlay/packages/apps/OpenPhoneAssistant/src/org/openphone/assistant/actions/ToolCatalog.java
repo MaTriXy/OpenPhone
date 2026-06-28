@@ -73,6 +73,11 @@ public final class ToolCatalog {
         return action != null && "action".equals(action.kind);
     }
 
+    public String riskClassForTool(String toolName) {
+        ActionRegistry.ActionMetadata action = mRegistry.forTool(toolName);
+        return action == null ? "" : action.riskClass;
+    }
+
     /**
      * Actions that drive the visible UI or foreground app, where the agent
      * should re-observe the screen afterwards to verify progress.

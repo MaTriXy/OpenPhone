@@ -469,12 +469,36 @@ async def run_live_failure_modes() -> None:
         timeout_request_id = f"timeout-{RUN_ID}-1"
         timeout_key = f"openphone-device-failure-timeout-key-{RUN_ID}"
         timeout_session_key = f"openphone:device-failure-smoke:timeout-{RUN_ID}"
+        observe_only_request_id = f"observe-only-{RUN_ID}-1"
         if unknown.get("ok") is not False:
             raise AssertionError(f"unknown command was not rejected: {unknown}")
         error = unknown.get("error") if isinstance(unknown.get("error"), dict) else {}
         if error.get("code") != "unknown_command":
             raise AssertionError(f"unknown command error mismatch: {unknown}")
         print("[ok] unknown command rejected")
+
+        observe_only = await shim.invoke(
+            observe_only_request_id,
+            "openphone.url.open",
+            {
+                "url": "https://example.invalid/openphone-observe-only-smoke",
+                "reason": "OpenPhone device failure smoke observe-only denial",
+                "sessionKey": f"openphone:device-failure-smoke:observe-only-{RUN_ID}",
+                "autonomy": "observe_only",
+            },
+        )
+        observe_payload = payload_result(observe_only)
+        observe_error = (
+            observe_payload.get("error")
+            if isinstance(observe_payload.get("error"), dict)
+            else {}
+        )
+        if (
+            observe_payload.get("status") != "denied"
+            or observe_error.get("code") != "observe_only_mutation_denied"
+        ):
+            raise AssertionError(f"observe-only mutating command was not denied: {observe_only}")
+        print("[ok] observe-only mutation denied")
 
         await shim.send_invoke_request(
             deny_request_id,

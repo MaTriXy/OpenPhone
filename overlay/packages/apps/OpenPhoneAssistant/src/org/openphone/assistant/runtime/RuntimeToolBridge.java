@@ -15,14 +15,10 @@ import org.openphone.assistant.session.PhoneSessionStore;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -32,52 +28,6 @@ import java.util.concurrent.TimeUnit;
 public final class RuntimeToolBridge {
     private static final String TAG = "OpenPhoneRuntime";
     private static final int MAX_COMPLETED_IDEMPOTENCY_RESULTS = 128;
-
-    private static final Set<String> DEFAULT_READ_ONLY_TOOLS = Collections.unmodifiableSet(
-            new HashSet<String>(Arrays.asList(
-                    "phone_context",
-                    "apps_search",
-                    "notifications_list",
-                    "notifications_search",
-                    "calendar_search",
-                    "contacts_search",
-                    "messages_search",
-                    "calls_search",
-                    "memory_search",
-                    "commitment_search",
-                    "watcher_list",
-                    "background_job_list",
-                    "get_screen",
-                    "local_screen_understanding")));
-
-    private static final Set<String> DEFAULT_MUTATING_TOOLS = Collections.unmodifiableSet(
-            new HashSet<String>(Arrays.asList(
-                    "notifications_open",
-                    "calendar_create_event",
-                    "calendar_update_event",
-                    "calendar_delete_event",
-                    "messages_draft",
-                    "messages_send",
-                    "calls_place",
-                    "memory_save",
-                    "commitment_create",
-                    "commitment_update_status",
-                    "watcher_create",
-                    "watcher_stop",
-                    "background_job_create",
-                    "background_job_stop",
-                    "open_app",
-                    "open_url",
-                    "tap",
-                    "tap_element",
-                    "long_press",
-                    "long_press_element",
-                    "swipe",
-                    "type_text",
-                    "press_key",
-                    "set_clipboard",
-                    "paste",
-                    "share_text")));
 
     private final OpenPhoneAgentManager mAgentManager;
     private final FrameworkToolExecutor mToolExecutor;
@@ -165,18 +115,22 @@ public final class RuntimeToolBridge {
             logResult(request, validation);
             return validation;
         }
-        if (!isGrantedTool(request.tool())) {
+        ToolCatalog catalog = ToolCatalog.get();
+        if (!isGrantedTool(catalog, request.tool())) {
             JSONObject details = new JSONObject();
             try {
                 details.put("tool", request.tool())
                         .put("runtime", request.runtime())
-                        .put("policy", "runtime_default_deny");
+                        .put("policy", catalog.isLoaded()
+                                ? "runtime_registry_deny" : "runtime_registry_unavailable");
             } catch (JSONException ignored) {
             }
             RuntimeToolResult result = RuntimeToolResult.denied(
                     request.requestId(),
-                    "tool_not_granted",
-                    "Runtime requested a tool outside the default grants.",
+                    catalog.isLoaded() ? "tool_not_granted" : "tool_registry_unavailable",
+                    catalog.isLoaded()
+                            ? "Runtime requested a tool outside the runtime grants."
+                            : "OpenPhone tool registry is unavailable.",
                     details,
                     auditId);
             markSessionForResult(request, result);
@@ -190,12 +144,14 @@ public final class RuntimeToolBridge {
             return completed;
         }
         String autonomy = effectiveAutonomy(request);
-        if (isMutatingTool(request.tool()) && isObserveOnly(autonomy)) {
+        boolean mutating = isMutatingTool(catalog, request.tool());
+        if (mutating && isObserveOnly(autonomy)) {
             JSONObject details = new JSONObject();
             try {
                 details.put("tool", request.tool())
                         .put("runtime", request.runtime())
                         .put("autonomy", autonomy)
+                        .put("risk", catalog.riskClassForTool(request.tool()))
                         .put("policy", "observe_only_blocks_mutation");
             } catch (JSONException ignored) {
             }
@@ -209,7 +165,7 @@ public final class RuntimeToolBridge {
             logResult(request, result);
             return result;
         }
-        if (isMutatingTool(request.tool()) && !approvedMutation) {
+        if (mutating && !approvedMutation && requiresLocalConfirmation(catalog, request, autonomy)) {
             RuntimeToolResult result = createPendingConfirmation(request, auditId);
             markSessionForResult(request, result);
             logResult(request, result);
@@ -388,7 +344,11 @@ public final class RuntimeToolBridge {
                     "Runtime tool calls require a reason.", new JSONObject(), auditId);
         }
         ToolCatalog catalog = ToolCatalog.get();
-        if (catalog.isLoaded() && !catalog.isAllowedTool(request.tool())) {
+        if (!catalog.isLoaded()) {
+            return RuntimeToolResult.denied(request.requestId(), "tool_registry_unavailable",
+                    "OpenPhone tool registry is unavailable.", new JSONObject(), auditId);
+        }
+        if (!catalog.isAllowedTool(request.tool())) {
             JSONObject details = new JSONObject();
             try {
                 details.put("tool", request.tool());
@@ -613,12 +573,25 @@ public final class RuntimeToolBridge {
         markSession(request, result.ok() ? "completed" : "failed");
     }
 
-    private static boolean isGrantedTool(String tool) {
-        return DEFAULT_READ_ONLY_TOOLS.contains(tool) || isMutatingTool(tool);
+    private static boolean isGrantedTool(ToolCatalog catalog, String tool) {
+        return catalog != null && catalog.isLoaded() && catalog.isAllowedTool(tool);
     }
 
-    private static boolean isMutatingTool(String tool) {
-        return DEFAULT_MUTATING_TOOLS.contains(tool);
+    private static boolean isMutatingTool(ToolCatalog catalog, String tool) {
+        return catalog != null && catalog.isLoaded() && catalog.isStateChangingTool(tool);
+    }
+
+    private static boolean requiresLocalConfirmation(ToolCatalog catalog,
+            RuntimeToolRequest request, String autonomy) {
+        if (request == null || catalog == null) {
+            return true;
+        }
+        String cleanAutonomy = autonomy == null ? "" : autonomy.trim();
+        if (!"trusted_actions".equalsIgnoreCase(cleanAutonomy)
+                && !"yolo".equalsIgnoreCase(cleanAutonomy)) {
+            return true;
+        }
+        return "high".equalsIgnoreCase(catalog.riskClassForTool(request.tool()));
     }
 
     private static boolean isObserveOnly(String autonomy) {
@@ -675,11 +648,22 @@ public final class RuntimeToolBridge {
     }
 
     private static void logResult(RuntimeToolRequest request, RuntimeToolResult result) {
+        ToolCatalog catalog = ToolCatalog.get();
         Log.i(TAG, "audit event=runtime_tool"
-                + " runtime=" + request.runtime()
-                + " request=" + request.requestId()
-                + " tool=" + request.tool()
-                + " status=" + result.status()
-                + " caller=" + request.caller().principal());
+                + " runtime=" + logField(request.runtime())
+                + " session=" + logField(request.runtimeSessionId())
+                + " request=" + logField(request.requestId())
+                + " tool=" + logField(request.tool())
+                + " risk=" + logField(catalog.isLoaded()
+                        ? catalog.riskClassForTool(request.tool()) : "registry_unavailable")
+                + " mutating=" + (catalog.isLoaded()
+                        && catalog.isStateChangingTool(request.tool()))
+                + " autonomy=" + logField(request.autonomy())
+                + " status=" + logField(result.status())
+                + " caller=" + logField(request.caller().principal()));
+    }
+
+    private static String logField(String value) {
+        return truncate(value == null ? "" : value, 160).replace(' ', '_');
     }
 }

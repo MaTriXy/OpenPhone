@@ -9,6 +9,10 @@ const commandsPath = path.join(root, "runtime/protocol/openphone-commands.json")
 const eventsPath = path.join(root, "runtime/protocol/openphone-events.json");
 const capabilitiesPath = path.join(root, "runtime/protocol/openphone-capabilities.json");
 const schemaPath = path.join(root, "runtime/protocol/openphone-runtime.schema.json");
+const actionRegistryPath = path.join(
+  root,
+  "overlay/vendor/openphone/config/openphone_action_registry.json",
+);
 const pluginSourcePath = path.join(root, "integrations/openclaw-plugin/src/index.ts");
 const pluginDistPath = path.join(root, "integrations/openclaw-plugin/dist/index.js");
 const androidAdapterPath = path.join(
@@ -91,10 +95,23 @@ const capabilitySet = unique(capabilitiesManifest.capabilities.map((entry) => en
 
 const manifestEntries = manifest.commands;
 const manifestCommands = [];
+const actionRegistry = readJson(actionRegistryPath);
+if (actionRegistry.version !== 1 || !Array.isArray(actionRegistry.actions)) {
+  fail("openphone_action_registry.json must contain version=1 and actions[]");
+}
+const androidToolSet = unique(
+  actionRegistry.actions
+    .map((entry) => entry.model_tool)
+    .filter(Boolean),
+  "Android action-registry model tool",
+);
 for (const entry of manifestEntries) {
   if (!entry.name || !entry.android_tool || !entry.default_exposure || !entry.description
       || !entry.input_schema || !entry.output_schema) {
     fail(`manifest command is missing required fields: ${JSON.stringify(entry)}`);
+  }
+  if (!androidToolSet.has(entry.android_tool)) {
+    fail(`manifest command references missing Android tool: ${entry.name} -> ${entry.android_tool}`);
   }
   if (!capabilitySet.has(entry.capability)) {
     fail(`manifest command references missing capability: ${entry.name} -> ${entry.capability}`);
