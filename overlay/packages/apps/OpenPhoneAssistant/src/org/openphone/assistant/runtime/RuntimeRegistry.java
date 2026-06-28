@@ -45,6 +45,11 @@ public final class RuntimeRegistry {
         return OPENCLAW.equals(clean) || HERMES.equals(clean);
     }
 
+    public static boolean isRemoteRuntime(String runtime) {
+        String clean = normalize(runtime);
+        return !clean.isEmpty() && !BUILTIN.equals(clean) && !AUTO.equals(clean);
+    }
+
     public static String label(String runtime) {
         String clean = cleanSelection(runtime);
         if (BUILTIN.equals(clean)) {

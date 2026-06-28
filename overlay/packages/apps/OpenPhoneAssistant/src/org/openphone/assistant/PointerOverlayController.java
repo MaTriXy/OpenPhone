@@ -32,6 +32,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.openphone.assistant.context.ContextIndexStore;
 import org.openphone.assistant.runtime.RuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeRegistry;
 import org.openphone.assistant.jobs.AgentJobRecord;
 import org.openphone.assistant.jobs.AgentJobStore;
 import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
@@ -1216,10 +1217,18 @@ public final class PointerOverlayController {
         }
         mIslandChatColumn.removeAllViews();
         RuntimeConfig config = RuntimeConfig.load(mContext);
-        addRuntimeCard("⚡ Phone", "", AssistantBrainConfig.BUILTIN, config);
-        if (config.globallyEnabled && config.openClaw.configured()) {
-            addRuntimeCard("🦞 OpenClaw",
-                    endpointLabel(config.openClaw.url), AssistantBrainConfig.OPENCLAW, config);
+        addRuntimeCard(runtimeCardTitle(AssistantBrainConfig.BUILTIN,
+                RuntimeRegistry.label(AssistantBrainConfig.BUILTIN)), "",
+                AssistantBrainConfig.BUILTIN, config);
+        if (!config.globallyEnabled) {
+            return;
+        }
+        for (RuntimeConfig.RuntimeSettings settings : config.remoteSettings()) {
+            if (settings == null || !settings.configured()) {
+                continue;
+            }
+            addRuntimeCard(runtimeCardTitle(settings.runtime, settings.label),
+                    endpointLabel(settings.url), settings.runtime, config);
         }
     }
 
@@ -1346,8 +1355,9 @@ public final class PointerOverlayController {
     private String runtimeStatusBody() {
         RuntimeConfig config = RuntimeConfig.load(mContext);
         StringBuilder body = new StringBuilder();
-        appendRuntimeEnvironmentLine(body, config.openClaw, "🦞",
-                AssistantBrainConfig.OPENCLAW, config);
+        for (RuntimeConfig.RuntimeSettings settings : config.remoteSettings()) {
+            appendRuntimeEnvironmentLine(body, settings, config);
+        }
         appendLocalRuntimeLine(body, config);
         if (body.length() == 0) {
             body.append("No runtimes configured");
@@ -1356,22 +1366,21 @@ public final class PointerOverlayController {
     }
 
     private void appendRuntimeEnvironmentLine(StringBuilder body,
-            RuntimeConfig.RuntimeSettings settings, String mark, String runtime,
-            RuntimeConfig config) {
+            RuntimeConfig.RuntimeSettings settings, RuntimeConfig config) {
         if (settings == null || !config.globallyEnabled || !settings.configured()) {
             return;
         }
         appendRuntimeLinePrefix(body);
-        body.append(mark).append(" ").append(settings.label);
+        body.append(runtimeCardTitle(settings.runtime, settings.label));
         String endpoint = endpointLabel(settings.url);
         if (!endpoint.isEmpty()) {
             body.append(" IP ").append(endpoint);
         }
-        String status = runtimeAdapterStatus(runtime);
+        String status = runtimeAdapterStatus(settings.runtime);
         if (!status.isEmpty()) {
             body.append(" · ").append(status);
         }
-        String surfaces = runtimeSurfaceLabels(runtime, config);
+        String surfaces = runtimeSurfaceLabels(settings.runtime, config);
         if (!surfaces.isEmpty()) {
             body.append("\n").append(surfaces);
         }
@@ -1405,7 +1414,7 @@ public final class PointerOverlayController {
 
     private void appendSurfaceLabel(StringBuilder surfaces, String label, String selected,
             String runtime) {
-        if (!runtime.equals(selected)) {
+        if (!RuntimeRegistry.normalize(runtime).equals(RuntimeRegistry.normalize(selected))) {
             return;
         }
         if (surfaces.length() > 0) {
@@ -1458,21 +1467,12 @@ public final class PointerOverlayController {
     }
 
     private static String normalizeRuntime(String runtime) {
-        return runtime == null ? "" : runtime.trim().toLowerCase(java.util.Locale.US);
+        return RuntimeRegistry.normalize(runtime);
     }
 
     private static String runtimeLabel(String runtime) {
-        String clean = normalizeRuntime(runtime);
-        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
-            return "OpenClaw";
-        }
-        if (AssistantBrainConfig.BUILTIN.equals(clean) || "local".equals(clean)) {
-            return "Phone";
-        }
-        if (AssistantBrainConfig.AUTO.equals(clean)) {
-            return "Auto";
-        }
-        return clean.isEmpty() ? "unknown" : clean;
+        String label = RuntimeRegistry.label(runtime);
+        return label.isEmpty() ? "unknown" : label;
     }
 
     private List<WatcherRecord> activeWatchers(int limit) {
@@ -1970,46 +1970,63 @@ public final class PointerOverlayController {
     }
 
     private String yoloPrefix() {
-        if (!mYoloActive || isOpenClawSelected()) {
+        if (!mYoloActive || hasSelectedRemoteRuntime()) {
             return "";
         }
         return "⚡ ";
     }
 
     private String runtimeCompactTitle() {
-        return isOpenClawSelected() ? "🦞" : yoloPrefix() + "AI";
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? yoloPrefix() + "AI" : runtimeGlyph(runtime);
     }
 
     private String runtimeExpandedTitle() {
-        return isOpenClawSelected() ? "OpenClaw" : "AI";
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "AI" : RuntimeRegistry.label(runtime);
     }
 
     private String runtimeThinkingTitle() {
-        return isOpenClawSelected() ? "OpenClaw" : "Thinking";
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "Thinking" : RuntimeRegistry.label(runtime);
     }
 
     private String runtimeThinkingGlyph() {
-        return isOpenClawSelected() ? "🦞" : "";
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "" : runtimeGlyph(runtime);
     }
 
     private String runtimeRealtimeTitle() {
-        return isOpenClawSelected() ? "OpenClaw" : "Realtime";
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "Realtime" : RuntimeRegistry.label(runtime);
     }
 
     private String runtimeRealtimeGlyph() {
-        return isOpenClawSelected() ? "🦞" : "⚡";
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? "⚡" : runtimeGlyph(runtime);
     }
 
     private int runtimeAccentColor(int localAccent) {
-        return isOpenClawSelected() ? OPENCLAW_ACCENT : localAccent;
+        String runtime = selectedRemoteRuntime();
+        return runtime.isEmpty() ? localAccent : runtimeAccent(runtime, localAccent);
     }
 
-    private boolean isOpenClawSelected() {
-        return AssistantBrainConfig.OPENCLAW.equals(AssistantBrainConfig.loadMode(mContext))
-                || AssistantBrainConfig.OPENCLAW.equals(
-                        AssistantBrainConfig.loadVolumeMode(mContext))
-                || AssistantBrainConfig.OPENCLAW.equals(
-                        AssistantBrainConfig.loadBackgroundMode(mContext));
+    private boolean hasSelectedRemoteRuntime() {
+        return !selectedRemoteRuntime().isEmpty();
+    }
+
+    private String selectedRemoteRuntime() {
+        RuntimeConfig config = RuntimeConfig.load(mContext);
+        String chat = AssistantBrainConfig.routeRuntime(mContext, config);
+        if (RuntimeRegistry.isRemoteRuntime(chat)) {
+            return chat;
+        }
+        String volume = AssistantBrainConfig.routeVolumeRuntime(mContext, config);
+        if (RuntimeRegistry.isRemoteRuntime(volume)) {
+            return volume;
+        }
+        String background = AssistantBrainConfig.routeBackgroundRuntime(mContext, config);
+        return RuntimeRegistry.isRemoteRuntime(background) ? background : "";
     }
 
     private String thinkingDots() {
@@ -2317,7 +2334,9 @@ public final class PointerOverlayController {
             drawable.setCornerRadius(radius);
         }
         if (yoloActive) {
-            drawable.setStroke(3, isOpenClawSelected() ? OPENCLAW_ACCENT : YOLO_ACCENT);
+            String runtime = selectedRemoteRuntime();
+            drawable.setStroke(3, runtime.isEmpty()
+                    ? YOLO_ACCENT : runtimeAccent(runtime, YOLO_ACCENT));
         }
         return drawable;
     }
@@ -2360,35 +2379,59 @@ public final class PointerOverlayController {
 
     private static GradientDrawable runtimeCardBackground(String runtime, boolean selected) {
         GradientDrawable drawable = new GradientDrawable();
-        int accent = runtimeCardAccent(runtime);
+        int accent = runtimeAccent(runtime, OPENPHONE_ACCENT);
         drawable.setColor(selected ? accent : 0x1affffff);
         drawable.setCornerRadius(30);
         drawable.setStroke(selected ? 0 : 1, selected ? accent : 0x44ffffff);
         return drawable;
     }
 
-    private static int runtimeCardAccent(String runtime) {
+    private static String runtimeCardTitle(String runtime, String label) {
+        String cleanLabel = label == null || label.trim().isEmpty()
+                ? RuntimeRegistry.label(runtime) : label.trim();
+        return runtimeGlyph(runtime) + " " + cleanLabel;
+    }
+
+    private static String runtimeGlyph(String runtime) {
+        String clean = normalizeRuntime(runtime);
+        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
+            return "🦞";
+        }
+        if (RuntimeRegistry.HERMES.equals(clean)) {
+            return "H";
+        }
+        if (AssistantBrainConfig.BUILTIN.equals(clean)) {
+            return "⚡";
+        }
+        return "◉";
+    }
+
+    private static int runtimeAccent(String runtime, int fallback) {
         String clean = normalizeRuntime(runtime);
         if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
             return OPENCLAW_ACCENT;
         }
-        return OPENPHONE_ACCENT;
+        if (RuntimeRegistry.HERMES.equals(clean)) {
+            return 0xff5b6ee1;
+        }
+        if (AssistantBrainConfig.BUILTIN.equals(clean)) {
+            return OPENPHONE_ACCENT;
+        }
+        return fallback;
     }
 
     private static int runtimeSelectedTextColor(String runtime) {
-        String clean = normalizeRuntime(runtime);
-        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
-            return 0xffffffff;
-        }
-        return 0xff101418;
+        return runtimeAccentNeedsLightText(runtime) ? 0xffffffff : 0xff101418;
     }
 
     private static int runtimeSelectedSecondaryTextColor(String runtime) {
+        return runtimeAccentNeedsLightText(runtime) ? 0xeeffffff : 0xdd101418;
+    }
+
+    private static boolean runtimeAccentNeedsLightText(String runtime) {
         String clean = normalizeRuntime(runtime);
-        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
-            return 0xeeffffff;
-        }
-        return 0xdd101418;
+        return AssistantBrainConfig.OPENCLAW.equals(clean)
+                || RuntimeRegistry.HERMES.equals(clean);
     }
 
     private static GradientDrawable rippleBackground(boolean longPress) {
