@@ -101,7 +101,7 @@ object AssistantComposeHost {
         })
         return ComposeView(activity).apply {
             fun refreshRuntimes(action: String) {
-                viewModel.setRuntimesFromJson(activity.onComposeRefreshExternalRuntimes(), action)
+                viewModel.setRuntimesFromJson(activity.onComposeRefreshRuntimes(), action)
                 postDelayed({
                     viewModel.setRuntimesFromJson(activity.onComposeRuntimeStatusSnapshot(), action)
                 }, 800L)
@@ -109,9 +109,9 @@ object AssistantComposeHost {
 
             fun reloadRuntimes() {
                 val action = "Reconnect requested"
-                viewModel.setRuntimesFromJson(activity.onComposeReloadExternalRuntimes(), action)
+                viewModel.setRuntimesFromJson(activity.onComposeReloadRuntimes(), action)
                 postDelayed({
-                    viewModel.setRuntimesFromJson(activity.onComposeRefreshExternalRuntimes(), action)
+                    viewModel.setRuntimesFromJson(activity.onComposeRefreshRuntimes(), action)
                     postDelayed({
                         viewModel.setRuntimesFromJson(activity.onComposeRuntimeStatusSnapshot(), action)
                     }, 800L)
@@ -121,7 +121,7 @@ object AssistantComposeHost {
             fun selectChatRuntime(mode: String) {
                 val label = when (mode) {
                     "openclaw" -> "OpenClaw"
-                    else -> "Local Phone Runtime"
+                    else -> "Phone"
                 }
                 viewModel.setRuntimesFromJson(
                     activity.onComposeSelectChatRuntime(mode),
@@ -138,7 +138,7 @@ object AssistantComposeHost {
             fun selectVolumeRuntime(mode: String) {
                 val label = when (mode) {
                     "openclaw" -> "OpenClaw"
-                    else -> "Local Phone Runtime"
+                    else -> "Phone"
                 }
                 viewModel.setRuntimesFromJson(
                     activity.onComposeSelectVolumeRuntime(mode),
@@ -155,7 +155,7 @@ object AssistantComposeHost {
             fun selectBackgroundRuntime(mode: String) {
                 val label = when (mode) {
                     "openclaw" -> "OpenClaw"
-                    else -> "Local Phone Runtime"
+                    else -> "Phone"
                 }
                 viewModel.setRuntimesFromJson(
                     activity.onComposeSelectBackgroundRuntime(mode),

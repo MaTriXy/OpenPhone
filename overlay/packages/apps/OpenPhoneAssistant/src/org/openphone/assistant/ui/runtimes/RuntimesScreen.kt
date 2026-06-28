@@ -79,11 +79,10 @@ fun RuntimesScreen(
         ) {
             GlassSurface(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Default chat runtime", style = MaterialTheme.typography.titleMedium)
-                    KeyValueLine("Selected for chat", runtimeDisplayName(state.chatRuntime))
-                    KeyValueLine("Effective chat route", runtimeDisplayName(state.effectiveChatRuntime))
-                    KeyValueLine("Volume buttons", "${runtimeDisplayName(state.volumeRuntime)} (V1)")
-                    KeyValueLine("Watchers/background", "${runtimeDisplayName(state.backgroundRuntime)} (V1)")
+                    Text("Runtime routes", style = MaterialTheme.typography.titleMedium)
+                    KeyValueLine("Chat", runtimeDisplayName(state.effectiveChatRuntime))
+                    KeyValueLine("Volume buttons", runtimeDisplayName(state.volumeRuntime))
+                    KeyValueLine("Watchers/background", runtimeDisplayName(state.backgroundRuntime))
                 }
             }
 
@@ -120,7 +119,7 @@ fun RuntimesScreen(
             if (state.adapters.isEmpty()) {
                 GlassSurface(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "No external runtimes are configured.",
+                        text = "No runtimes are configured.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -162,12 +161,12 @@ private fun LocalRuntimeCard(
                         .padding(start = 10.dp),
                 ) {
                     Text(
-                        text = "Local Phone Runtime",
+                        text = "Phone",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Built-in phone brain and execution layer",
+                        text = "Built-in OpenPhone agent and execution layer",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

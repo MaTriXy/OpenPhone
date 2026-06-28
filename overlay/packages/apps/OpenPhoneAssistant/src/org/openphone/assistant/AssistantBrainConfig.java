@@ -3,7 +3,7 @@ package org.openphone.assistant;
 import android.content.Context;
 import android.provider.Settings;
 
-import org.openphone.assistant.external.ExternalRuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeConfig;
 
 import java.util.Locale;
 
@@ -69,7 +69,7 @@ public final class AssistantBrainConfig {
     public static String label(String mode) {
         String clean = cleanMode(mode);
         if (BUILTIN.equals(clean)) {
-            return "Built-in";
+            return "Phone";
         }
         if (OPENCLAW.equals(clean)) {
             return "OpenClaw";
@@ -77,20 +77,20 @@ public final class AssistantBrainConfig {
         return "Auto";
     }
 
-    public static String routeRuntime(Context context, ExternalRuntimeConfig config) {
+    public static String routeRuntime(Context context, RuntimeConfig config) {
         String mode = loadMode(context);
         return routeSelectedRuntime(mode, config);
     }
 
-    public static String routeVolumeRuntime(Context context, ExternalRuntimeConfig config) {
+    public static String routeVolumeRuntime(Context context, RuntimeConfig config) {
         return routeSelectedRuntime(loadVolumeMode(context), config);
     }
 
-    public static String routeBackgroundRuntime(Context context, ExternalRuntimeConfig config) {
+    public static String routeBackgroundRuntime(Context context, RuntimeConfig config) {
         return routeSelectedRuntime(loadBackgroundMode(context), config);
     }
 
-    private static String routeSelectedRuntime(String mode, ExternalRuntimeConfig config) {
+    private static String routeSelectedRuntime(String mode, RuntimeConfig config) {
         if (BUILTIN.equals(mode)) {
             return BUILTIN;
         }

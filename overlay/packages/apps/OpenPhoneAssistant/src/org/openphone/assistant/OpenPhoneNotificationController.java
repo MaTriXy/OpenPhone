@@ -22,7 +22,7 @@ public final class OpenPhoneNotificationController {
     private static final String COMMITMENT_CHANNEL_ID = "openphone_commitments";
     private static final String WATCHER_CHANNEL_ID = "openphone_watchers";
     private static final String AGENT_JOB_CHANNEL_ID = "openphone_agent_jobs";
-    private static final String EXTERNAL_RUNTIME_CHANNEL_ID = "openphone_external_runtimes";
+    private static final String RUNTIME_CHANNEL_ID = "openphone_runtimes";
     static final String ACTION_START = "org.openphone.assistant.action.START";
     static final String ACTION_STOP = "org.openphone.assistant.action.STOP";
     static final String ACTION_OPEN = "org.openphone.assistant.action.OPEN";
@@ -36,7 +36,7 @@ public final class OpenPhoneNotificationController {
     private static final int COMMITMENT_NOTIFICATION_BASE_ID = 5000;
     private static final int WATCHER_NOTIFICATION_BASE_ID = 6000;
     private static final int AGENT_JOB_NOTIFICATION_BASE_ID = 7000;
-    private static final int EXTERNAL_RUNTIME_NOTIFICATION_BASE_ID = 8000;
+    private static final int RUNTIME_NOTIFICATION_BASE_ID = 8000;
 
     private OpenPhoneNotificationController() {}
 
@@ -229,7 +229,7 @@ public final class OpenPhoneNotificationController {
         manager.notify(agentJobNotificationId(job.id), builder.build());
     }
 
-    public static void showExternalRuntimeMessage(Context context, String runtime,
+    public static void showRuntimeMessage(Context context, String runtime,
             String title, String text, String messageId) {
         if (context == null) {
             return;
@@ -238,9 +238,9 @@ public final class OpenPhoneNotificationController {
         if (manager == null) {
             return;
         }
-        ensureExternalRuntimeChannel(manager);
+        ensureRuntimeChannel(manager);
         String cleanRuntime = runtime == null || runtime.trim().isEmpty()
-                ? "External runtime" : runtime.trim();
+                ? "Runtime" : runtime.trim();
         String cleanTitle = title == null || title.trim().isEmpty()
                 ? cleanRuntime : title.trim();
         String cleanText = text == null ? "" : text.trim();
@@ -252,14 +252,14 @@ public final class OpenPhoneNotificationController {
                 .setShowWhen(true)
                 .setWhen(System.currentTimeMillis())
                 .setContentIntent(pendingBroadcast(context, ACTION_OPEN,
-                        externalRuntimeRequestCode(messageId)));
+                        runtimeRequestCode(messageId)));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            builder.setChannelId(EXTERNAL_RUNTIME_CHANNEL_ID);
+            builder.setChannelId(RUNTIME_CHANNEL_ID);
         }
-        manager.notify(externalRuntimeNotificationId(messageId), builder.build());
+        manager.notify(runtimeNotificationId(messageId), builder.build());
     }
 
-    public static void showExternalRuntimeConfirmation(Context context, String confirmationId,
+    public static void showRuntimeConfirmation(Context context, String confirmationId,
             String runtime, String tool, String summary) {
         if (context == null || confirmationId == null || confirmationId.trim().isEmpty()) {
             return;
@@ -268,9 +268,9 @@ public final class OpenPhoneNotificationController {
         if (manager == null) {
             return;
         }
-        ensureExternalRuntimeChannel(manager);
+        ensureRuntimeChannel(manager);
         String cleanRuntime = runtime == null || runtime.trim().isEmpty()
-                ? "External runtime" : runtime.trim();
+                ? "Runtime" : runtime.trim();
         String cleanTool = tool == null || tool.trim().isEmpty() ? "OpenPhone action" : tool.trim();
         String detail = summary == null || summary.trim().isEmpty()
                 ? cleanTool : summary.trim();
@@ -282,28 +282,28 @@ public final class OpenPhoneNotificationController {
                 .setShowWhen(true)
                 .setWhen(System.currentTimeMillis())
                 .setContentIntent(pendingBroadcast(context, ACTION_OPEN,
-                        externalRuntimeRequestCode(confirmationId)))
+                        runtimeRequestCode(confirmationId)))
                 .addAction(new Notification.Action.Builder(
                         R.drawable.ic_openphone_tile,
                         "Approve",
-                        externalRuntimeAction(context, ACTION_EXTERNAL_APPROVE,
+                        runtimeAction(context, ACTION_EXTERNAL_APPROVE,
                                 confirmationId, 1)).build())
                 .addAction(new Notification.Action.Builder(
                         R.drawable.ic_openphone_tile,
                         "Deny",
-                        externalRuntimeAction(context, ACTION_EXTERNAL_DENY,
+                        runtimeAction(context, ACTION_EXTERNAL_DENY,
                                 confirmationId, 2)).build());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            builder.setChannelId(EXTERNAL_RUNTIME_CHANNEL_ID);
+            builder.setChannelId(RUNTIME_CHANNEL_ID);
         }
-        manager.notify(externalRuntimeNotificationId(confirmationId), builder.build());
+        manager.notify(runtimeNotificationId(confirmationId), builder.build());
     }
 
-    public static void cancelExternalRuntimeConfirmation(Context context, String confirmationId) {
+    public static void cancelRuntimeConfirmation(Context context, String confirmationId) {
         NotificationManager manager = context == null
                 ? null : context.getSystemService(NotificationManager.class);
         if (manager != null) {
-            manager.cancel(externalRuntimeNotificationId(confirmationId));
+            manager.cancel(runtimeNotificationId(confirmationId));
         }
     }
 
@@ -372,7 +372,7 @@ public final class OpenPhoneNotificationController {
                 intent, flags);
     }
 
-    private static PendingIntent externalRuntimeAction(Context context, String action,
+    private static PendingIntent runtimeAction(Context context, String action,
             String confirmationId, int actionCode) {
         Intent intent = new Intent(context, OpenPhoneTriggerReceiver.class);
         intent.setAction(action);
@@ -382,7 +382,7 @@ public final class OpenPhoneNotificationController {
             flags |= PendingIntent.FLAG_IMMUTABLE;
         }
         return PendingIntent.getBroadcast(context,
-                externalRuntimeRequestCode(confirmationId) + actionCode, intent, flags);
+                runtimeRequestCode(confirmationId) + actionCode, intent, flags);
     }
 
     private static void ensureCommitmentChannel(Context context, NotificationManager manager) {
@@ -415,11 +415,11 @@ public final class OpenPhoneNotificationController {
         }
     }
 
-    private static void ensureExternalRuntimeChannel(NotificationManager manager) {
+    private static void ensureRuntimeChannel(NotificationManager manager) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                    EXTERNAL_RUNTIME_CHANNEL_ID,
-                    "OpenPhone external runtimes",
+                    RUNTIME_CHANNEL_ID,
+                    "OpenPhone runtimes",
                     NotificationManager.IMPORTANCE_DEFAULT);
             manager.createNotificationChannel(channel);
         }
@@ -440,8 +440,8 @@ public final class OpenPhoneNotificationController {
         return AGENT_JOB_NOTIFICATION_BASE_ID + (int) bounded;
     }
 
-    private static int externalRuntimeNotificationId(String messageId) {
-        return EXTERNAL_RUNTIME_NOTIFICATION_BASE_ID
+    private static int runtimeNotificationId(String messageId) {
+        return RUNTIME_NOTIFICATION_BASE_ID
                 + Math.abs((messageId == null ? "" : messageId).hashCode() % 1000);
     }
 
@@ -455,8 +455,8 @@ public final class OpenPhoneNotificationController {
         return (int) (AGENT_JOB_NOTIFICATION_BASE_ID + bounded * 10L + actionCode);
     }
 
-    private static int externalRuntimeRequestCode(String messageId) {
-        return EXTERNAL_RUNTIME_NOTIFICATION_BASE_ID + 1000
+    private static int runtimeRequestCode(String messageId) {
+        return RUNTIME_NOTIFICATION_BASE_ID + 1000
                 + Math.abs((messageId == null ? "" : messageId).hashCode() % 1000);
     }
 

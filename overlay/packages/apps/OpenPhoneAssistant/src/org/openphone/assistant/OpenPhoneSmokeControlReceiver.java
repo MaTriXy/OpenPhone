@@ -28,9 +28,9 @@ public final class OpenPhoneSmokeControlReceiver extends BroadcastReceiver {
     }
 
     private static boolean isAllowedAction(String action) {
-        return OpenPhoneAssistantService.ACTION_LOG_EXTERNAL_STATUS.equals(action)
-                || OpenPhoneAssistantService.ACTION_RELOAD_EXTERNAL_RUNTIMES.equals(action)
-                || OpenPhoneAssistantService.ACTION_REQUEST_OPENCLAW_ATTENTION.equals(action)
+        return OpenPhoneAssistantService.ACTION_LOG_RUNTIME_STATUS.equals(action)
+                || OpenPhoneAssistantService.ACTION_RELOAD_RUNTIMES.equals(action)
+                || OpenPhoneAssistantService.ACTION_REQUEST_RUNTIME_ATTENTION.equals(action)
                 || OpenPhoneNotificationController.ACTION_EXTERNAL_APPROVE.equals(action)
                 || OpenPhoneNotificationController.ACTION_EXTERNAL_DENY.equals(action);
     }

@@ -12,6 +12,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
 import android.util.Base64;
 import android.util.Log;
 import android.view.View;
@@ -28,7 +29,7 @@ import org.openphone.assistant.agent.AuditEvidenceExporter;
 import org.openphone.assistant.agent.TrajectoryRecorder;
 import org.openphone.assistant.actions.ActionRegistry;
 import org.openphone.assistant.context.ContextIndexStore;
-import org.openphone.assistant.external.ExternalRuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeConfig;
 import org.openphone.assistant.model.LocalHeuristicModelAdapter;
 import org.openphone.assistant.model.GeminiLiveVoiceSession;
 import org.openphone.assistant.model.ModelEndpointConfig;
@@ -107,7 +108,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
     }
 
-    static void deliverExternalRuntimeMessage(final String runtime, final String sessionKey,
+    static void deliverRuntimeMessage(final String runtime, final String sessionKey,
             final String message, final boolean terminal) {
         AssistantActivityBackend target = sActiveControlRunner != null
                 ? sActiveControlRunner : sForegroundActivity;
@@ -117,7 +118,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         target.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                target.handleExternalRuntimeMessage(runtime, sessionKey, message, terminal);
+                target.handleRuntimeMessage(runtime, sessionKey, message, terminal);
             }
         });
     }
@@ -226,6 +227,9 @@ public class AssistantActivityBackend extends ComponentActivity {
     private boolean mListening;
     private boolean mVoiceHoldToRecord;
     private String mVoiceRouteSource = "chat_voice";
+    private TextToSpeech mRuntimeReplyTts;
+    private boolean mRuntimeReplyTtsReady;
+    private boolean mPendingRuntimeVoiceReply;
     private boolean mVoiceCaptureFinishRequested;
     private boolean mRealtimeVoiceErrorShown;
     private boolean mPendingVoiceForceClassic;
@@ -247,7 +251,7 @@ public class AssistantActivityBackend extends ComponentActivity {
     private String mComposeAuditText = "";
     private String mComposeModelDisclosureText = "";
     private String mComposeOtaStatusText = "";
-    private String mLastExternalRuntimeMessageKey = "";
+    private String mLastRuntimeMessageKey = "";
     private boolean mComposeUseBroker;
     private boolean mComposeUseRealtime;
     private boolean mComposeUseRealtime2;
@@ -341,6 +345,7 @@ public class AssistantActivityBackend extends ComponentActivity {
 
     @Override
     protected void onDestroy() {
+        shutdownRuntimeReplyTts();
         if (isControlSurface()) {
             super.onDestroy();
             return;
@@ -598,7 +603,7 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     private String selectedVolumeRuntime() {
-        return AssistantBrainConfig.routeVolumeRuntime(this, ExternalRuntimeConfig.load(this));
+        return AssistantBrainConfig.routeVolumeRuntime(this, RuntimeConfig.load(this));
     }
 
     private String volumeChordPrompt() {
@@ -774,32 +779,32 @@ public class AssistantActivityBackend extends ComponentActivity {
     }
 
     public String onComposeRuntimeStatusSnapshot() {
-        return composeExternalRuntimeStatusJson();
+        return composeRuntimeStatusJson();
     }
 
-    public String onComposeRefreshExternalRuntimes() {
-        startAssistantServiceAction(OpenPhoneAssistantService.ACTION_LOG_EXTERNAL_STATUS);
-        return composeExternalRuntimeStatusJson();
+    public String onComposeRefreshRuntimes() {
+        startAssistantServiceAction(OpenPhoneAssistantService.ACTION_LOG_RUNTIME_STATUS);
+        return composeRuntimeStatusJson();
     }
 
-    public String onComposeReloadExternalRuntimes() {
-        startAssistantServiceAction(OpenPhoneAssistantService.ACTION_RELOAD_EXTERNAL_RUNTIMES);
-        return composeExternalRuntimeStatusJson();
+    public String onComposeReloadRuntimes() {
+        startAssistantServiceAction(OpenPhoneAssistantService.ACTION_RELOAD_RUNTIMES);
+        return composeRuntimeStatusJson();
     }
 
     public String onComposeSelectChatRuntime(String mode) {
         AssistantBrainConfig.persistMode(this, mode);
-        return composeExternalRuntimeStatusJson();
+        return composeRuntimeStatusJson();
     }
 
     public String onComposeSelectVolumeRuntime(String mode) {
         AssistantBrainConfig.persistVolumeMode(this, mode);
-        return composeExternalRuntimeStatusJson();
+        return composeRuntimeStatusJson();
     }
 
     public String onComposeSelectBackgroundRuntime(String mode) {
         AssistantBrainConfig.persistBackgroundMode(this, mode);
-        return composeExternalRuntimeStatusJson();
+        return composeRuntimeStatusJson();
     }
 
     public void onComposeStartTask() {
@@ -1388,6 +1393,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         mListening = true;
         mVoiceHoldToRecord = false;
         mVoiceCaptureFinishRequested = false;
+        mPendingRuntimeVoiceReply = false;
         mRealtimeVoiceErrorShown = false;
         mLastVoiceStartUptimeMillis = SystemClock.uptimeMillis();
         clearVoicePipelineProtection();
@@ -2029,7 +2035,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         }
         Log.i(TAG, "route start control=" + isControlSurface()
                 + " message=\"" + previewForLog(message) + "\"");
-        if (routeMessageToOpenClaw(message, source)) {
+        if (routeMessageToRuntime(message, source)) {
             return;
         }
         final OperatingMode operatingMode = currentOperatingMode();
@@ -2099,20 +2105,24 @@ public class AssistantActivityBackend extends ComponentActivity {
         chatThread.start();
     }
 
-    private boolean routeMessageToOpenClaw(String message, String source) {
-        ExternalRuntimeConfig config = ExternalRuntimeConfig.load(this);
+    private boolean routeMessageToRuntime(String message, String source) {
+        RuntimeConfig config = RuntimeConfig.load(this);
         String route = routeRuntimeForSource(source, config);
+        if (AssistantBrainConfig.BUILTIN.equals(route)) {
+            return false;
+        }
         if (!AssistantBrainConfig.OPENCLAW.equals(route)) {
             return false;
         }
+        String runtimeLabel = runtimeLabel(route);
         if (!config.globallyEnabled || !config.openClaw.configured()) {
             appendConversation("You", message);
             setCurrentGoalText("");
             cancelChatRun();
             mAgentRunCancelled = false;
-            appendConversation("OpenPhone", "OpenClaw runtime is not configured.");
-            setTaskText("OpenClaw is not configured.");
-            updateIsland("OpenClaw");
+            appendConversation("OpenPhone", runtimeLabel + " runtime is not configured.");
+            setTaskText(runtimeLabel + " is not configured.");
+            updateIsland(runtimeLabel);
             updateComposerActionButton();
             return true;
         }
@@ -2121,25 +2131,29 @@ public class AssistantActivityBackend extends ComponentActivity {
         cancelChatRun();
         mAgentRunCancelled = false;
         String cleanSource = source == null || source.trim().isEmpty() ? "chat" : source.trim();
+        mPendingRuntimeVoiceReply = isVoiceRouteSource(cleanSource);
         Intent service = new Intent(this, OpenPhoneAssistantService.class);
-        service.setAction(OpenPhoneAssistantService.ACTION_REQUEST_OPENCLAW_ATTENTION);
-        service.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_TEXT, message);
-        service.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_SOURCE, cleanSource);
-        service.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_AUTONOMY,
-                externalAutonomyMode());
-        service.putExtra(OpenPhoneAssistantService.EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN,
+        service.setAction(OpenPhoneAssistantService.ACTION_REQUEST_RUNTIME_ATTENTION);
+        service.putExtra(OpenPhoneAssistantService.EXTRA_RUNTIME_ATTENTION_RUNTIME, route);
+        service.putExtra(OpenPhoneAssistantService.EXTRA_RUNTIME_ATTENTION_TEXT, message);
+        service.putExtra(OpenPhoneAssistantService.EXTRA_RUNTIME_ATTENTION_SOURCE, cleanSource);
+        service.putExtra(OpenPhoneAssistantService.EXTRA_RUNTIME_ATTENTION_AUTONOMY,
+                runtimeAutonomyMode());
+        service.putExtra(OpenPhoneAssistantService.EXTRA_RUNTIME_ATTENTION_INCLUDE_SCREEN,
                 screenCaptureGrantEnabled());
         try {
             startService(service);
         } catch (RuntimeException e) {
-            Log.w(TAG, "Could not request OpenClaw attention", e);
-            appendConversation("OpenPhone", "Message routing failed: OpenClaw service request failed.");
-            setTaskText("OpenClaw request failed.");
+            Log.w(TAG, "Could not request runtime attention", e);
+            mPendingRuntimeVoiceReply = false;
+            appendConversation("OpenPhone",
+                    "Message routing failed: " + runtimeLabel + " service request failed.");
+            setTaskText(runtimeLabel + " request failed.");
             updateIsland("Needs review");
             return true;
         }
-        setTaskText("Sent to OpenClaw.");
-        updateIsland("OpenClaw");
+        setTaskText("Sent to " + runtimeLabel + ".");
+        updateIsland(runtimeLabel);
         updateComposerActionButton();
         if (isControlSurface()) {
             moveTaskToBack(true);
@@ -2147,7 +2161,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         return true;
     }
 
-    private String routeRuntimeForSource(String source, ExternalRuntimeConfig config) {
+    private String routeRuntimeForSource(String source, RuntimeConfig config) {
         String clean = source == null ? "" : source.trim().toLowerCase(Locale.US);
         if (clean.startsWith("volume")) {
             return AssistantBrainConfig.routeVolumeRuntime(this, config);
@@ -2158,7 +2172,24 @@ public class AssistantActivityBackend extends ComponentActivity {
         return AssistantBrainConfig.routeRuntime(this, config);
     }
 
-    private String externalAutonomyMode() {
+    private static boolean isVoiceRouteSource(String source) {
+        String clean = source == null ? "" : source.trim().toLowerCase(Locale.US);
+        return clean.contains("voice");
+    }
+
+    private static String runtimeLabel(String runtime) {
+        String clean = runtime == null ? "" : runtime.trim().toLowerCase(Locale.US);
+        if (AssistantBrainConfig.OPENCLAW.equals(clean)) {
+            return "OpenClaw";
+        }
+        if (AssistantBrainConfig.BUILTIN.equals(clean) || "phone".equals(clean)
+                || "local".equals(clean)) {
+            return "Phone";
+        }
+        return clean.isEmpty() ? "Runtime" : clean;
+    }
+
+    private String runtimeAutonomyMode() {
         reloadAutonomyMode();
         if ("yolo".equals(mAutonomyMode)) {
             return "trusted_actions";
@@ -2247,29 +2278,90 @@ public class AssistantActivityBackend extends ComponentActivity {
         finishVoicePipelineIfIdle();
     }
 
-    private void handleExternalRuntimeMessage(String runtime, String sessionKey, String message,
+    private void handleRuntimeMessage(String runtime, String sessionKey, String message,
             boolean terminal) {
         String clean = message == null ? "" : message.trim();
         if (clean.isEmpty()) {
             return;
         }
-        String runtimeLabel = "openclaw".equals(runtime) ? "OpenClaw" : "Remote runtime";
+        String runtimeLabel = runtimeLabel(runtime);
         if (!terminal) {
             setTaskText(clean);
             updateIsland(runtimeLabel);
             return;
         }
         String dedupeKey = runtime + ":" + sessionKey + ":" + clean;
-        if (dedupeKey.equals(mLastExternalRuntimeMessageKey)) {
+        if (dedupeKey.equals(mLastRuntimeMessageKey)) {
             return;
         }
-        mLastExternalRuntimeMessageKey = dedupeKey;
+        mLastRuntimeMessageKey = dedupeKey;
         mChatThread = null;
         mRunningChatAdapter = null;
         appendConversation(runtimeLabel, clean);
         setTaskText(runtimeLabel + " is ready.");
         showTerminalReplyOnIsland(clean);
+        speakRuntimeReplyIfPending(clean);
         updateComposerActionButton();
+    }
+
+    private void speakRuntimeReplyIfPending(String reply) {
+        if (!mPendingRuntimeVoiceReply) {
+            return;
+        }
+        mPendingRuntimeVoiceReply = false;
+        String clean = reply == null ? "" : reply.trim();
+        if (clean.isEmpty() || isSystemFailureReply(clean)) {
+            return;
+        }
+        speakRuntimeReply(clean);
+    }
+
+    private void speakRuntimeReply(String reply) {
+        final String utterance = speechText(reply);
+        if (utterance.isEmpty()) {
+            return;
+        }
+        if (mRuntimeReplyTts == null) {
+            mRuntimeReplyTtsReady = false;
+            mRuntimeReplyTts = new TextToSpeech(this, status -> {
+                mRuntimeReplyTtsReady = status == TextToSpeech.SUCCESS;
+                if (mRuntimeReplyTtsReady && mRuntimeReplyTts != null) {
+                    mRuntimeReplyTts.speak(utterance, TextToSpeech.QUEUE_FLUSH,
+                            null, "openphone-runtime-reply");
+                } else {
+                    Log.w(TAG, "runtime reply TTS unavailable status=" + status);
+                }
+            });
+            return;
+        }
+        if (!mRuntimeReplyTtsReady) {
+            Log.w(TAG, "runtime reply TTS not ready");
+            return;
+        }
+        mRuntimeReplyTts.speak(utterance, TextToSpeech.QUEUE_FLUSH,
+                null, "openphone-runtime-reply");
+    }
+
+    private static String speechText(String reply) {
+        String clean = reply == null ? "" : reply.replace('\n', ' ').replace('\r', ' ').trim();
+        if (clean.length() <= 700) {
+            return clean;
+        }
+        return clean.substring(0, 697).trim() + "...";
+    }
+
+    private void shutdownRuntimeReplyTts() {
+        TextToSpeech tts = mRuntimeReplyTts;
+        mRuntimeReplyTts = null;
+        mRuntimeReplyTtsReady = false;
+        if (tts != null) {
+            try {
+                tts.stop();
+                tts.shutdown();
+            } catch (RuntimeException e) {
+                Log.w(TAG, "runtime reply TTS shutdown failed", e);
+            }
+        }
     }
 
     private static boolean isSystemFailureReply(String reply) {
@@ -2766,11 +2858,11 @@ public class AssistantActivityBackend extends ComponentActivity {
         mComposeAdvancedVisible = false;
     }
 
-    private String composeExternalRuntimeStatusJson() {
+    private String composeRuntimeStatusJson() {
         JSONObject status = parseObjectOrEmpty(
-                OpenPhoneAssistantService.latestExternalRuntimeStatusJson());
+                OpenPhoneAssistantService.latestRuntimeStatusJson());
         try {
-            ExternalRuntimeConfig config = ExternalRuntimeConfig.load(this);
+            RuntimeConfig config = RuntimeConfig.load(this);
             status.put("chat_runtime", AssistantBrainConfig.loadMode(this));
             status.put("effective_chat_runtime", AssistantBrainConfig.routeRuntime(this, config));
             status.put("volume_runtime", AssistantBrainConfig.loadVolumeMode(this));
@@ -2786,7 +2878,7 @@ public class AssistantActivityBackend extends ComponentActivity {
         return status.toString();
     }
 
-    private JSONObject runtimeSettingsJson(ExternalRuntimeConfig.RuntimeSettings settings)
+    private JSONObject runtimeSettingsJson(RuntimeConfig.RuntimeSettings settings)
             throws JSONException {
         return new JSONObject()
                 .put("name", settings.runtime)

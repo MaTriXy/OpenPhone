@@ -31,7 +31,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.openphone.assistant.context.ContextIndexStore;
-import org.openphone.assistant.external.ExternalRuntimeConfig;
+import org.openphone.assistant.runtime.RuntimeConfig;
 import org.openphone.assistant.jobs.AgentJobRecord;
 import org.openphone.assistant.jobs.AgentJobStore;
 import org.openphone.assistant.watchers.OpenPhoneWatcherScheduler;
@@ -1215,7 +1215,7 @@ public final class PointerOverlayController {
             return;
         }
         mIslandChatColumn.removeAllViews();
-        ExternalRuntimeConfig config = ExternalRuntimeConfig.load(mContext);
+        RuntimeConfig config = RuntimeConfig.load(mContext);
         addRuntimeCard("⚡ Phone", "", AssistantBrainConfig.BUILTIN, config);
         if (config.globallyEnabled && config.openClaw.configured()) {
             addRuntimeCard("🦞 OpenClaw",
@@ -1224,7 +1224,7 @@ public final class PointerOverlayController {
     }
 
     private void addRuntimeCard(String title, String endpoint, String runtime,
-            ExternalRuntimeConfig config) {
+            RuntimeConfig config) {
         String surfaces = runtimeSurfaceLabels(runtime, config);
         boolean selected = !surfaces.isEmpty();
         LinearLayout card = new LinearLayout(mContext);
@@ -1294,7 +1294,7 @@ public final class PointerOverlayController {
         mStateDetail = runtimeLabel(runtime) + " selected";
         if (!AssistantBrainConfig.BUILTIN.equals(runtime)) {
             Intent reload = new Intent(mContext, OpenPhoneAssistantService.class);
-            reload.setAction(OpenPhoneAssistantService.ACTION_RELOAD_EXTERNAL_RUNTIMES);
+            reload.setAction(OpenPhoneAssistantService.ACTION_RELOAD_RUNTIMES);
             try {
                 mContext.startService(reload);
             } catch (RuntimeException ignored) {
@@ -1344,7 +1344,7 @@ public final class PointerOverlayController {
     }
 
     private String runtimeStatusBody() {
-        ExternalRuntimeConfig config = ExternalRuntimeConfig.load(mContext);
+        RuntimeConfig config = RuntimeConfig.load(mContext);
         StringBuilder body = new StringBuilder();
         appendRuntimeEnvironmentLine(body, config.openClaw, "🦞",
                 AssistantBrainConfig.OPENCLAW, config);
@@ -1356,8 +1356,8 @@ public final class PointerOverlayController {
     }
 
     private void appendRuntimeEnvironmentLine(StringBuilder body,
-            ExternalRuntimeConfig.RuntimeSettings settings, String mark, String runtime,
-            ExternalRuntimeConfig config) {
+            RuntimeConfig.RuntimeSettings settings, String mark, String runtime,
+            RuntimeConfig config) {
         if (settings == null || !config.globallyEnabled || !settings.configured()) {
             return;
         }
@@ -1377,7 +1377,7 @@ public final class PointerOverlayController {
         }
     }
 
-    private void appendLocalRuntimeLine(StringBuilder body, ExternalRuntimeConfig config) {
+    private void appendLocalRuntimeLine(StringBuilder body, RuntimeConfig config) {
         String surfaces = runtimeSurfaceLabels(AssistantBrainConfig.BUILTIN, config);
         appendRuntimeLinePrefix(body);
         body.append("⚡ Phone");
@@ -1392,7 +1392,7 @@ public final class PointerOverlayController {
         }
     }
 
-    private String runtimeSurfaceLabels(String runtime, ExternalRuntimeConfig config) {
+    private String runtimeSurfaceLabels(String runtime, RuntimeConfig config) {
         StringBuilder surfaces = new StringBuilder();
         appendSurfaceLabel(surfaces, "Chat", AssistantBrainConfig.routeRuntime(mContext, config),
                 runtime);
@@ -1415,7 +1415,7 @@ public final class PointerOverlayController {
     }
 
     private String runtimeAdapterStatus(String runtime) {
-        String statusJson = OpenPhoneAssistantService.latestExternalRuntimeStatusJson();
+        String statusJson = OpenPhoneAssistantService.latestRuntimeStatusJson();
         try {
             JSONObject status = new JSONObject(statusJson == null ? "{}" : statusJson);
             JSONArray adapters = status.optJSONArray("adapters");

@@ -10,14 +10,14 @@ usage() {
   cat <<'EOF'
 Usage: scripts/smoke-test-openclaw-device-failures.sh
 
-Runs OpenClaw/OpenPhone external-runtime failure-mode checks against the
-USB-connected Pixel. This script modifies OpenPhone external-runtime
+Runs OpenClaw/OpenPhone runtime failure-mode checks against the
+USB-connected Pixel. This script modifies OpenPhone runtime
 Settings.Secure keys, starts local WebSocket shims, uses adb reverse, and
 restores the original settings on exit.
 
 Required:
   - adb device connected and authorized
-  - OpenPhoneAssistant APK containing the current external-runtime code
+  - OpenPhoneAssistant APK containing the current runtime code
   - Python websockets package available to python3
 
 Covered:
@@ -65,6 +65,11 @@ fi
 "${adb_cmd[@]}" wait-for-device >/dev/null
 state="$("${adb_cmd[@]}" get-state 2>/dev/null || true)"
 [[ "$state" == "device" ]] || die "ADB state is '$state', expected 'device'"
+adb_identity="$("${adb_cmd[@]}" shell id 2>/dev/null || true)"
+if [[ "$adb_identity" != uid=0* ]]; then
+  "${adb_cmd[@]}" root >/dev/null 2>&1 || true
+  "${adb_cmd[@]}" wait-for-device >/dev/null
+fi
 
 python3 - <<'PY'
 from __future__ import annotations
@@ -88,19 +93,26 @@ if os.environ.get("ANDROID_SERIAL"):
 
 PKG = "org.openphone.assistant"
 SMOKE_RECEIVER = f"{PKG}/.OpenPhoneSmokeControlReceiver"
-ACTION_RELOAD = "org.openphone.assistant.action.RELOAD_EXTERNAL_RUNTIMES"
-ACTION_LOG_STATUS = "org.openphone.assistant.action.LOG_EXTERNAL_RUNTIME_STATUS"
-ACTION_REQUEST_OPENCLAW_ATTENTION = "org.openphone.assistant.action.REQUEST_OPENCLAW_ATTENTION"
+ACTION_RELOAD = "org.openphone.assistant.action.RELOAD_RUNTIMES"
+ACTION_LOG_STATUS = "org.openphone.assistant.action.LOG_RUNTIME_STATUS"
+ACTION_REQUEST_RUNTIME_ATTENTION = "org.openphone.assistant.action.REQUEST_RUNTIME_ATTENTION"
 ACTION_APPROVE = "org.openphone.assistant.action.EXTERNAL_APPROVE"
 ACTION_DENY = "org.openphone.assistant.action.EXTERNAL_DENY"
-EXTRA_OPENCLAW_ATTENTION_TEXT = "org.openphone.assistant.extra.OPENCLAW_ATTENTION_TEXT"
-EXTRA_OPENCLAW_ATTENTION_SOURCE = "org.openphone.assistant.extra.OPENCLAW_ATTENTION_SOURCE"
-EXTRA_OPENCLAW_ATTENTION_AUTONOMY = "org.openphone.assistant.extra.OPENCLAW_ATTENTION_AUTONOMY"
-EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN = "org.openphone.assistant.extra.OPENCLAW_ATTENTION_INCLUDE_SCREEN"
+EXTRA_RUNTIME_ATTENTION_RUNTIME = "org.openphone.assistant.extra.RUNTIME_ATTENTION_RUNTIME"
+EXTRA_RUNTIME_ATTENTION_TEXT = "org.openphone.assistant.extra.RUNTIME_ATTENTION_TEXT"
+EXTRA_RUNTIME_ATTENTION_SOURCE = "org.openphone.assistant.extra.RUNTIME_ATTENTION_SOURCE"
+EXTRA_RUNTIME_ATTENTION_AUTONOMY = "org.openphone.assistant.extra.RUNTIME_ATTENTION_AUTONOMY"
+EXTRA_RUNTIME_ATTENTION_INCLUDE_SCREEN = "org.openphone.assistant.extra.RUNTIME_ATTENTION_INCLUDE_SCREEN"
 EXTRA_CONFIRMATION_ID = "org.openphone.assistant.extra.EXTERNAL_CONFIRMATION_ID"
 RUN_ID = str(int(time.time() * 1000))
 
 SETTINGS_KEYS = [
+    "openphone_runtimes_enabled",
+    "openphone_runtime_openclaw_enabled",
+    "openphone_runtime_openclaw_url",
+    "openphone_runtime_openclaw_token",
+    "openphone_runtime_openclaw_device_id",
+    "openphone_runtime_openclaw_label",
     "openphone_external_runtimes_enabled",
     "openphone_external_openclaw_enabled",
     "openphone_external_openclaw_url",
@@ -140,6 +152,14 @@ def setting_delete(key: str) -> None:
     shell("settings", "delete", "secure", key, check=False)
 
 
+def set_smoke_receiver_enabled(enabled: bool) -> None:
+    result = shell("pm", "enable" if enabled else "disable", SMOKE_RECEIVER, check=False)
+    if enabled and "SecurityException" in result:
+        raise RuntimeError(
+            "failed to enable OpenPhoneSmokeControlReceiver; run `adb root` and retry"
+        )
+
+
 def restore_settings(original: dict[str, str]) -> None:
     for key, value in original.items():
         if value in {"", "null"}:
@@ -149,20 +169,20 @@ def restore_settings(original: dict[str, str]) -> None:
 
 
 def configure_openclaw(url: str, token: str = "openphone-device-failure-token") -> None:
-    setting_put("openphone_external_runtimes_enabled", "1")
-    setting_put("openphone_external_openclaw_enabled", "1")
-    setting_put("openphone_external_openclaw_url", url)
-    setting_put("openphone_external_openclaw_token", token)
-    setting_put("openphone_external_openclaw_device_id", "openphone-device-failure-smoke")
-    setting_put("openphone_external_openclaw_label", "OpenPhone Failure Smoke")
+    setting_put("openphone_runtimes_enabled", "1")
+    setting_put("openphone_runtime_openclaw_enabled", "1")
+    setting_put("openphone_runtime_openclaw_url", url)
+    setting_put("openphone_runtime_openclaw_token", token)
+    setting_put("openphone_runtime_openclaw_device_id", "openphone-device-failure-smoke")
+    setting_put("openphone_runtime_openclaw_label", "OpenPhone Failure Smoke")
 
 
-def reload_external() -> None:
+def reload_runtime() -> None:
     shell("am", "broadcast", "--receiver-foreground",
           "-n", SMOKE_RECEIVER, "-a", ACTION_RELOAD, check=False)
 
 
-def log_external_status() -> str:
+def log_runtime_status() -> str:
     shell("am", "broadcast", "--receiver-foreground",
           "-n", SMOKE_RECEIVER, "-a", ACTION_LOG_STATUS, check=False)
     time.sleep(0.4)
@@ -173,7 +193,7 @@ def log_external_status() -> str:
         "300",
         "-s",
         "OpenPhoneAssistant:I",
-        "OpenPhoneExternal:I",
+        "OpenPhoneRuntime:I",
         "OpenPhoneOpenClaw:I",
         "OpenPhoneOpenClaw:W",
         check=False,
@@ -184,7 +204,7 @@ def assert_status_contains(expected: str, label: str) -> None:
     deadline = time.time() + 8
     last = ""
     while time.time() < deadline:
-        last = log_external_status()
+        last = log_runtime_status()
         if expected in last:
             print(f"[ok] {label}: observed {expected}")
             return
@@ -196,7 +216,7 @@ def assert_log_contains(expected: str, label: str, timeout: float = 8) -> None:
     deadline = time.time() + timeout
     last = ""
     while time.time() < deadline:
-        last = log_external_status()
+        last = log_runtime_status()
         if expected in last:
             print(f"[ok] {label}: observed {expected}")
             return
@@ -212,18 +232,21 @@ def request_openclaw_attention(text: str, source: str = "chat") -> None:
         "-n",
         SMOKE_RECEIVER,
         "-a",
-        ACTION_REQUEST_OPENCLAW_ATTENTION,
+        ACTION_REQUEST_RUNTIME_ATTENTION,
         "--es",
-        EXTRA_OPENCLAW_ATTENTION_TEXT,
+        EXTRA_RUNTIME_ATTENTION_RUNTIME,
+        "openclaw",
+        "--es",
+        EXTRA_RUNTIME_ATTENTION_TEXT,
         text,
         "--es",
-        EXTRA_OPENCLAW_ATTENTION_SOURCE,
+        EXTRA_RUNTIME_ATTENTION_SOURCE,
         source,
         "--es",
-        EXTRA_OPENCLAW_ATTENTION_AUTONOMY,
+        EXTRA_RUNTIME_ATTENTION_AUTONOMY,
         "observe_only",
         "--ez",
-        EXTRA_OPENCLAW_ATTENTION_INCLUDE_SCREEN,
+        EXTRA_RUNTIME_ATTENTION_INCLUDE_SCREEN,
         "false",
         check=False,
     )
@@ -427,7 +450,7 @@ def payload_result(params: dict[str, Any]) -> dict[str, Any]:
 async def run_live_failure_modes() -> None:
     async with OpenClawFailureShim() as shim:
         configure_openclaw(f"ws://127.0.0.1:{shim.port}")
-        reload_external()
+        reload_runtime()
         await shim.wait_connected()
         print("[ok] OpenClaw failure shim connected")
 
@@ -493,7 +516,7 @@ async def run_live_failure_modes() -> None:
             "openphone.url.open",
             {
                 "url": "https://example.invalid/openphone-denied-smoke",
-                "reason": "OpenPhone device failure smoke idempotency retry",
+                "reason": "OpenPhone device failure smoke deny",
                 "sessionKey": deny_session_key,
             },
             idempotency_key=deny_key,
@@ -578,7 +601,7 @@ async def run_live_failure_modes() -> None:
 async def run_attention_path() -> None:
     async with OpenClawFailureShim() as shim:
         configure_openclaw(f"ws://127.0.0.1:{shim.port}")
-        reload_external()
+        reload_runtime()
         await shim.wait_connected()
         print("[ok] OpenClaw attention shim connected")
 
@@ -596,7 +619,7 @@ async def run_attention_path() -> None:
         message = str(agent_request.get("message") or "")
         if prompt not in message:
             raise AssertionError(f"agent.request message mismatch: {agent_request}")
-        if "OpenPhone request context:" not in message:
+        if "OpenPhone request metadata JSON" not in message:
             raise AssertionError(f"agent.request missing OpenPhone context: {agent_request}")
         if "OpenPhone device-control instructions:" not in message:
             raise AssertionError(f"agent.request missing OpenPhone instructions: {agent_request}")
@@ -626,7 +649,7 @@ async def run_attention_path() -> None:
             },
         })
         assert_log_contains(
-            f"external runtime message runtime=openclaw terminal=true session={session_key}",
+            f"runtime message runtime=openclaw terminal=true session={session_key}",
             "attention final fanout",
             timeout=10,
         )
@@ -635,7 +658,7 @@ async def run_attention_path() -> None:
 async def run_bad_token_mode() -> None:
     async with OpenClawFailureShim(reject_connect=True) as shim:
         configure_openclaw(f"ws://127.0.0.1:{shim.port}", token="bad-openclaw-device-token")
-        reload_external()
+        reload_runtime()
         await asyncio.sleep(2)
         assert_status_contains("auth_failed", "bad token")
 
@@ -643,16 +666,17 @@ async def run_bad_token_mode() -> None:
 async def main() -> None:
     original = {key: setting_get(key) for key in SETTINGS_KEYS}
     try:
+        set_smoke_receiver_enabled(True)
         shell("logcat", "-c", check=False)
 
         offline_port = free_port()
         configure_openclaw(f"ws://127.0.0.1:{offline_port}")
-        reload_external()
+        reload_runtime()
         await asyncio.sleep(2)
         assert_status_contains("offline", "gateway offline")
 
         configure_openclaw("ws://8.8.8.8/openphone")
-        reload_external()
+        reload_runtime()
         await asyncio.sleep(1)
         assert_status_contains("insecure_transport_denied", "public plaintext transport")
 
@@ -661,7 +685,8 @@ async def main() -> None:
         await run_live_failure_modes()
     finally:
         restore_settings(original)
-        reload_external()
+        reload_runtime()
+        set_smoke_receiver_enabled(False)
 
 
 if __name__ == "__main__":

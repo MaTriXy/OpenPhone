@@ -126,7 +126,7 @@
         <receiver
             android:name=".OpenPhoneSmokeControlReceiver"
             android:directBootAware="true"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true"
             android:permission="android.permission.DUMP" />
 

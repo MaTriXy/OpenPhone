@@ -1,0 +1,16 @@
+{
+  "name": "@openphone/runtime-cli",
+  "version": "0.1.0",
+  "description": "OpenPhone Runtime Agent CLI.",
+  "type": "module",
+  "bin": {
+    "openphone": "./src/index.mjs"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node tests/cli-smoke.mjs"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@openphone/runtime-mcp-server",
+  "version": "0.1.0",
+  "description": "OpenPhone Runtime Agent MCP server.",
+  "type": "module",
+  "bin": {
+    "openphone-mcp-server": "./src/index.mjs"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node tests/protocol-smoke.mjs"
+  }
+}
