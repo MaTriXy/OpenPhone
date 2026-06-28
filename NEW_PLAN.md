@@ -257,6 +257,11 @@ Current validated fixes:
 - Final APK live voice proof: Android logged `runtime attention sent
   runtime=openclaw source=volume_voice`, received `terminal=true` for the
   scoped OpenClaw session, then logged `runtime service TTS speaking ... chars=16`.
+- Repeatable live smoke script proof now passes against the USB-connected
+  Pixel and a real OpenClaw gateway: `openphone.screen.get` returned screenshot
+  capture with 36,396 base64 characters, 20 visible text entries, and 6
+  interactive elements; `volume_voice` reached OpenClaw and Android service TTS
+  spoke the terminal reply.
 - The OpenClaw adapter preserves voice route sources such as `volume_voice` and
   adds an OpenClaw-scoped voice instruction so voice-originated phone requests
   return speech text instead of the OpenClaw `NO_REPLY` sentinel unless the user
