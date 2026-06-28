@@ -43,5 +43,5 @@ reviewable integration point.
 ## Validation
 
 The device smoke uses an OpenClaw-compatible shim for deterministic protocol and
-failure-mode checks. A final demo/PR proof should also run against a real
+failure-mode checks. Before release, run an end-to-end proof against a real
 OpenClaw runtime with this plugin installed.

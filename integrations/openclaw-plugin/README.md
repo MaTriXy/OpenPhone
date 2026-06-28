@@ -61,7 +61,7 @@ openclaw plugins install /path/to/OpenPhone/integrations/openclaw-plugin
 The package entrypoint is compiled JavaScript in `dist/index.js`. Do not publish
 the package as a source-only `index.ts` plugin.
 
-For a demo profile that allows selected phone actions:
+For a development profile that allows selected phone actions:
 
 ```json
 {

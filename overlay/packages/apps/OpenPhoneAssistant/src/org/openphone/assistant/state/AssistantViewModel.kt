@@ -273,7 +273,7 @@ class AssistantViewModel(
                         enabled = true,
                         configured = true,
                         url = "ws://127.0.0.1:18789",
-                        deviceId = "openphone-demo-openclaw",
+                        deviceId = "openphone-preview-openclaw",
                     ),
                 ),
             ),
