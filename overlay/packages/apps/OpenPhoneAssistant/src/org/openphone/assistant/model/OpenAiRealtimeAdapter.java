@@ -6,11 +6,9 @@ import org.json.JSONObject;
 
 import org.openphone.assistant.actions.ToolCatalog;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -831,15 +829,15 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
             output.write(request.getBytes(StandardCharsets.US_ASCII));
             output.flush();
 
-            BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    socket.getInputStream(), StandardCharsets.US_ASCII));
-            String status = reader.readLine();
+            String header = readHttpHeader(socket.getInputStream());
+            String[] lines = header.split("\\r?\\n");
+            String status = lines.length == 0 ? "" : lines[0];
             if (status == null || !status.contains(" 101 ")) {
                 throw new IOException("Realtime WebSocket upgrade failed: " + status);
             }
             String accept = "";
-            String line;
-            while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            for (int i = 1; i < lines.length; i++) {
+                String line = lines[i];
                 int colon = line.indexOf(':');
                 if (colon > 0 && "sec-websocket-accept".equals(
                         line.substring(0, colon).trim().toLowerCase(Locale.US))) {
@@ -981,6 +979,31 @@ public final class OpenAiRealtimeAdapter implements ModelAdapter {
                 buffer.put(chunk, 0, count);
             }
             return buffer.array();
+        }
+
+        private static String readHttpHeader(InputStream input) throws IOException {
+            ByteArrayOutputStream header = new ByteArrayOutputStream();
+            int matched = 0;
+            byte[] marker = new byte[] {'\r', '\n', '\r', '\n'};
+            while (true) {
+                int value = input.read();
+                if (value < 0) {
+                    throw new IOException("Realtime WebSocket EOF during handshake.");
+                }
+                header.write(value);
+                if ((byte) value == marker[matched]) {
+                    matched++;
+                    if (matched == marker.length) {
+                        break;
+                    }
+                } else {
+                    matched = (byte) value == marker[0] ? 1 : 0;
+                }
+                if (header.size() > 64 * 1024) {
+                    throw new IOException("Realtime WebSocket header too large.");
+                }
+            }
+            return header.toString(StandardCharsets.US_ASCII.name());
         }
 
         private static String websocketAccept(String key) throws IOException {
