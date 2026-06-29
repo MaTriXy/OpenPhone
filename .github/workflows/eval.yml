@@ -1,12 +1,23 @@
 name: Eval
 
 on:
+  schedule:
+    # Nightly physical-device smoke on the self-hosted device runner.
+    - cron: "17 10 * * *"
   workflow_dispatch:
     inputs:
       goals:
         description: "Comma-separated task goals. Empty uses the canonical smoke set."
         required: false
         default: ""
+      run_benchmark:
+        description: "Run docs/agent-benchmarks/openphone-v0.json after trajectory smokes."
+        required: false
+        default: "false"
+      run_openclaw_smoke:
+        description: "Run live OpenClaw runtime smoke when gateway secrets are configured."
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -25,6 +36,11 @@ jobs:
           set -euxo pipefail
           ./scripts/check.sh
 
+      - name: Verify connected device
+        run: |
+          set -euxo pipefail
+          ./scripts/verify-tegu-device.sh
+
       - name: Run trajectory smoke suite
         env:
           INPUT_GOALS: ${{ inputs.goals }}
@@ -32,10 +48,38 @@ jobs:
           set -euxo pipefail
           ./scripts/run-eval-suite.sh
 
+      - name: Run agent benchmark
+        if: ${{ github.event_name == 'schedule' || inputs.run_benchmark == 'true' }}
+        run: |
+          set -euxo pipefail
+          ./scripts/run-agent-benchmark.sh \
+            --benchmark docs/agent-benchmarks/openphone-v0.json
+
+      - name: Run OpenClaw runtime smoke
+        if: ${{ inputs.run_openclaw_smoke == 'true' }}
+        env:
+          OPENPHONE_OPENCLAW_URL: ${{ secrets.OPENPHONE_OPENCLAW_URL }}
+          OPENPHONE_OPENCLAW_TOKEN: ${{ secrets.OPENPHONE_OPENCLAW_TOKEN }}
+        run: |
+          set -euxo pipefail
+          if [ -z "${OPENPHONE_OPENCLAW_TOKEN:-}" ]; then
+            echo "OPENPHONE_OPENCLAW_TOKEN secret is required for OpenClaw runtime smoke" >&2
+            exit 1
+          fi
+          ./scripts/smoke-test-openclaw-runtime.sh
+
       - name: Upload trajectories
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: openphone-trajectories
           path: .worktree/eval-trajectories/
+          if-no-files-found: warn
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openphone-benchmark-results
+          path: .worktree/evals/
           if-no-files-found: warn

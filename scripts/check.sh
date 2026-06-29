@@ -5,11 +5,13 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 required=(
+  AGENTS.md
   README.md
   LICENSE
   .github/CONTRIBUTING.md
   .github/SECURITY.md
   docs/README.md
+  docs/AI_FIRST_ENGINEERING.md
   docs/AGENT_RUNTIME_V1.md
   docs/ARCHITECTURE.md
   docs/BUILD.md
