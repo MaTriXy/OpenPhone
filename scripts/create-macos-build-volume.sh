@@ -4,6 +4,33 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
+usage() {
+  cat <<'USAGE'
+Usage: scripts/create-macos-build-volume.sh
+
+Creates and mounts a case-sensitive APFS sparsebundle for Android source builds
+on macOS.
+
+Environment:
+  OPENPHONE_MACOS_IMAGE        Sparsebundle path.
+  OPENPHONE_MACOS_VOLUME_NAME  Mounted volume directory name.
+  OPENPHONE_MACOS_IMAGE_SIZE   Sparsebundle size, default 300g.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    usage >&2
+    die "unknown argument: $1"
+    ;;
+esac
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   die "this helper is only for macOS"
 fi

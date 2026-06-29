@@ -121,6 +121,23 @@ Validate the repository:
 git diff --check
 ```
 
+The first runnable OS test path is the OpenPhone SDK phone emulator. Build an
+emulator system image on a Linux Android build host, install it into a local
+Android SDK/AVD, and verify the OpenPhone framework services before moving to
+Pixel 9a hardware evals:
+
+```bash
+./scripts/sync.sh
+./scripts/apply-patches.sh
+./scripts/build-emulator.sh --arch arm64     # Apple Silicon UI target
+# or: ./scripts/build-emulator.sh --arch x86_64
+```
+
+The portable artifact is
+`$OPENPHONE_ANDROID_DIR/out/target/product/<emu64a|emu64x>/sdk-repo-linux-system-images.zip`.
+The local install, AVD creation, UI launch, CLI/MCP smoke, and OpenClaw runtime
+smoke are documented in [docs/EMULATOR.md](docs/EMULATOR.md).
+
 Install `repo` if needed:
 
 ```bash
@@ -155,7 +172,7 @@ scripts/push-assistant-apk.sh /path/to/OpenPhoneAssistant.apk
 ```
 
 Full build instructions are in [docs/BUILD.md](docs/BUILD.md). Testing and
-physical eval guidance is in [docs/TESTING.md](docs/TESTING.md).
+emulator/physical eval guidance is in [docs/TESTING.md](docs/TESTING.md).
 
 ## Device Support
 

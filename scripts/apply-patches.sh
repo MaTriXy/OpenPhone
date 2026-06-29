@@ -32,7 +32,12 @@ for patch_dir in "$OPENPHONE_ROOT"/patches/*; do
   info "applying patches for $repo_path"
   (
     cd "$target_dir"
+    applied_patch_ids="$(mktemp)"
+    git log --format=email --patch --no-ext-diff -n 400 \
+      | git patch-id --stable \
+      | awk '{print $1}' > "$applied_patch_ids"
     for patch in "${patches[@]}"; do
+      patch_id="$(git patch-id --stable < "$patch" | awk 'NR == 1 {print $1}')"
       subject="$(
         awk '
           /^Subject: / {
@@ -64,6 +69,14 @@ for patch_dir in "$OPENPHONE_ROOT"/patches/*; do
         fi
         rm -f "$log_subjects"
       fi
+      if [[ -n "$patch_id" ]] && grep -Fxq "$patch_id" "$applied_patch_ids"; then
+        info "skipping already-applied patch $(basename "$patch")"
+        continue
+      fi
+      if git apply --reverse --check "$patch" >/dev/null 2>&1; then
+        info "skipping already-applied patch $(basename "$patch")"
+        continue
+      fi
       info "git am $(basename "$patch")"
       if ! git am "$patch"; then
         git am --abort >/dev/null 2>&1 || true
@@ -73,7 +86,11 @@ for patch_dir in "$OPENPHONE_ROOT"/patches/*; do
         git -c user.name="OpenPhone" -c user.email="openphone@example.invalid" \
           commit -m "$subject"
       fi
+      if [[ -n "$patch_id" ]]; then
+        printf '%s\n' "$patch_id" >> "$applied_patch_ids"
+      fi
     done
+    rm -f "$applied_patch_ids"
   )
 done
 

@@ -10,8 +10,8 @@ usage() {
   cat <<'EOF'
 Usage: scripts/smoke-test-openclaw-runtime.sh
 
-Runs a live OpenClaw/OpenPhone runtime smoke against a USB-connected phone and
-an already-running OpenClaw gateway.
+Runs a live OpenClaw/OpenPhone runtime smoke against an ADB-connected
+OpenPhone device or emulator and an already-running OpenClaw gateway.
 
 Required environment:
   OPENPHONE_OPENCLAW_TOKEN      Gateway token. OPENCLAW_GATEWAY_TOKEN is also accepted.
@@ -28,7 +28,8 @@ Optional environment:
                                 Approve pending OpenClaw node command surface. Default: 1
   OPENPHONE_OPENCLAW_VOICE      Set to 1 to also smoke volume voice -> OpenClaw -> Android TTS.
   OPENPHONE_OPENCLAW_VOICE_TEXT Text for the voice smoke. Default is underscore-safe text.
-  ANDROID_SERIAL                adb serial, if multiple devices are attached.
+  ANDROID_SERIAL                adb serial, if multiple devices are attached
+                                (for example, emulator-5584).
 
 What this proves:
   - Phone runtime connects to OpenClaw as an approved node.

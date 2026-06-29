@@ -1,0 +1,27 @@
+From 22dcaea6d7362cd0406af07b2a43cb1792a268bf Mon Sep 17 00:00:00 2001
+From: OpenPhone <dev@openphone.local>
+Date: Fri, 26 Jun 2026 20:38:58 +0000
+Subject: [PATCH] OpenPhone: enable emulator image zip for SDK products
+
+The goldfish emu_img_zip target is only defined for upstream sdk/lineage_sdk product names. Include OpenPhone SDK products so openphone_sdk_phone_* can produce sdk-repo-linux-system-images.zip.
+
+Change-Id: I60f35c22850cd18d3bbc09ed9dba6b14eb813c07
+---
+ build/tasks.workaround/emu_img_zip.mk | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/build/tasks.workaround/emu_img_zip.mk b/build/tasks.workaround/emu_img_zip.mk
+index f4e54609..389cb98b 100644
+--- a/build/tasks.workaround/emu_img_zip.mk
++++ b/build/tasks.workaround/emu_img_zip.mk
+@@ -1,7 +1,7 @@
+ # Rules to generate a zip file that contains google emulator images
+ # and other files for distribution
+
+-ifneq ($(filter lineage_sdk_% sdk_% gcar_%, $(TARGET_PRODUCT)),)
++ifneq ($(filter lineage_sdk_% openphone_sdk_% sdk_% gcar_%, $(TARGET_PRODUCT)),)
+ target_notice_file_txt := $(TARGET_OUT_INTERMEDIATES)/NOTICE.txt
+
+ emulator_img_source_prop := $(TARGET_OUT_INTERMEDIATES)/source.properties
+--
+2.34.1

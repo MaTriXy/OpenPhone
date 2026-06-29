@@ -35,9 +35,8 @@ For only the runtime protocol and developer integration checks:
 
 That check covers the manifest-backed command/event/capability protocol, the
 OpenClaw plugin policy contract, the CLI contract, and the MCP protocol
-contract. Live
-OpenClaw validation is separate because it requires a USB-connected phone and a
-running OpenClaw gateway.
+contract. Live OpenClaw validation is separate because it requires an
+ADB-connected OpenPhone target and a running OpenClaw gateway.
 
 ## Android Build Check
 
@@ -51,6 +50,76 @@ After installing Android build dependencies and `repo`:
 
 The first full Android build is expected to expose integration issues. Fixing
 those against the synced Lineage tree is part of Phase 1.
+
+## Emulator Smoke Test
+
+For the first runnable OS validation, build the OpenPhone SDK phone product on
+a Linux Android build host and run it locally in an Android SDK emulator. Use
+`arm64` for an Apple Silicon workstation and `x86_64` for an Intel/x86_64
+workstation.
+
+```bash
+./scripts/sync.sh
+./scripts/apply-patches.sh
+./scripts/build-emulator.sh --arch arm64
+```
+
+The build writes a portable SDK system image zip under the product output
+directory:
+
+```bash
+ls -lh "$OPENPHONE_ANDROID_DIR/out/target/product/emu64a/sdk-repo-linux-system-images.zip"
+```
+
+Copy that zip to the workstation, install it into the Android SDK, create an
+AVD, and boot it with the steps in [EMULATOR.md](EMULATOR.md). After boot,
+verify the OpenPhone OS surface:
+
+```bash
+adb -s emulator-5584 shell 'getprop sys.boot_completed'
+adb -s emulator-5584 shell 'getprop ro.openphone.version'
+adb -s emulator-5584 shell 'getprop ro.product.model'
+adb -s emulator-5584 shell 'service check openphone_agent'
+adb -s emulator-5584 shell 'service list | grep openphone'
+adb -s emulator-5584 shell 'pm list packages | grep org.openphone.assistant'
+```
+
+Then smoke the ADB-backed Runtime CLI against the emulator:
+
+```bash
+node integrations/cli/src/index.mjs \
+  --serial emulator-5584 \
+  runtime status \
+  --json
+
+node integrations/cli/src/index.mjs \
+  --serial emulator-5584 \
+  tool invoke openphone.screen.get '{"include_screenshot":false}' \
+  --json
+```
+
+For MCP clients, start the MCP server with the emulator serial:
+
+```bash
+ANDROID_SERIAL=emulator-5584 \
+ADB="$ANDROID_HOME/platform-tools/adb" \
+node integrations/mcp-server/src/index.mjs
+```
+
+If an OpenClaw gateway is running on the host and the OpenPhone plugin is
+installed, the same emulator can run the live runtime smoke:
+
+```bash
+ANDROID_SERIAL=emulator-5584 \
+OPENPHONE_OPENCLAW_TOKEN="$OPENCLAW_GATEWAY_TOKEN" \
+scripts/smoke-test-openclaw-runtime.sh
+```
+
+The emulator validates boot, framework services, the privileged assistant,
+runtime settings, ADB-backed tool access, MCP/CLI protocol wiring, and the
+OpenClaw Android adapter. Hardware behavior, Pixel boot/recovery/OTA behavior,
+radio/camera/fingerprint, and physical button handling still require the Pixel
+9a checks below.
 
 ## Device Check
 

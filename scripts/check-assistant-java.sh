@@ -33,7 +33,17 @@ find_android_jar() {
   [[ -n "${ANDROID_HOME:-}" ]] && sdk_roots+=("$ANDROID_HOME")
   [[ -n "${ANDROID_SDK_ROOT:-}" ]] && sdk_roots+=("$ANDROID_SDK_ROOT")
   sdk_roots+=("$HOME/Library/Android/sdk" "/usr/local/lib/android/sdk" "/opt/android-sdk")
-  local sdk platform
+  local android_tree sdk platform
+  android_tree="${OPENPHONE_ANDROID_DIR:-$root/.worktree/android}"
+  for platform in \
+      "$android_tree/prebuilts/sdk/current/public/android.jar" \
+      "$android_tree/prebuilts/sdk/36.1/public/android.jar" \
+      "$android_tree/prebuilts/sdk/36/public/android.jar"; do
+    if [[ -f "$platform" ]]; then
+      echo "$platform"
+      return 0
+    fi
+  done
   for sdk in "${sdk_roots[@]}"; do
     [[ -d "$sdk/platforms" ]] || continue
     platform="$(ls -1 "$sdk/platforms" 2>/dev/null | grep -E '^android-[0-9]+$' \
