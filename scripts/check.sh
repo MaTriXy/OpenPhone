@@ -5,17 +5,20 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 required=(
+  AGENTS.md
   README.md
   LICENSE
   .github/CONTRIBUTING.md
   .github/SECURITY.md
   docs/README.md
+  docs/AI_FIRST_ENGINEERING.md
   docs/AGENT_RUNTIME_V1.md
   docs/ARCHITECTURE.md
   docs/BUILD.md
   docs/CAPABILITIES.md
   docs/DEVICE_SUPPORT.md
   docs/GMS.md
+  docs/LOCAL_AGENT_NOTES.md
   docs/LICENSING.md
   docs/runtime/hermes-integration.md
   docs/runtime/mcp-bridge.md

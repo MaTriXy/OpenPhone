@@ -7,6 +7,8 @@ build, architecture, release, device, and policy docs.
 
 - [Architecture](ARCHITECTURE.md) - system layers, OS services, agent runtime,
   and current implementation boundaries.
+- [AI-First Engineering](AI_FIRST_ENGINEERING.md) - repository operating loops,
+  CI/eval target state, agent routines, and docs-site direction.
 - [Agent Runtime V1](AGENT_RUNTIME_V1.md) - background job model, scheduling,
   safety posture, and migration path for durable agent work.
 - [Runtime Agent Protocol](runtime/runtime-agent-protocol.md) - generic
@@ -29,6 +31,8 @@ build, architecture, release, device, and policy docs.
   assistant evals, and trajectory validation.
 - [Capability Model](CAPABILITIES.md) - named capabilities, risk levels, and
   policy configuration.
+- [Local Agent Notes](LOCAL_AGENT_NOTES.md) - convention for ignored local-only
+  markdown scratch space.
 
 ## Device And Release Docs
 

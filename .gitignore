@@ -8,5 +8,6 @@ out/
 *.pem
 /*.png
 docs/local/
+docs/local-temp/
 __pycache__/
 *.pyc
