@@ -59,6 +59,7 @@ apt-get install -y \
   libxml2-utils \
   lz4 \
   lzop \
+  openjdk-17-jdk \
   pngcrush \
   protobuf-compiler \
   python3-protobuf \
@@ -71,6 +72,15 @@ apt-get install -y \
   xsltproc \
   zip \
   zlib1g-dev
+
+install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+chmod 0644 /etc/apt/keyrings/nodesource.gpg
+printf 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main\n' \
+  > /etc/apt/sources.list.d/nodesource.list
+apt-get update
+apt-get install -y nodejs
 
 install -d -m 0755 /usr/local/bin
 curl -L --fail --silent --show-error \
