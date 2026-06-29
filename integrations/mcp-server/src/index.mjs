@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
-import { OpenPhoneAdbTransport } from "../../adb/openphone-adb-transport.mjs";
+import { OpenPhoneAdbTransport } from "../adb/openphone-adb-transport.mjs";
 import {
   loadCommands,
   mcpTools,
   resolveCommand,
   textContent,
-} from "../../../runtime/protocol/openphone-runtime-tools.mjs";
+} from "../runtime/protocol/openphone-runtime-tools.mjs";
 
 const PROTOCOL_VERSION = "2025-11-25";
 const SERVER_INFO = { name: "openphone-runtime", version: "0.1.0" };

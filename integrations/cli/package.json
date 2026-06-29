@@ -7,9 +7,14 @@
     "openphone": "./src/index.mjs"
   },
   "files": [
+    "adb",
+    "runtime/protocol",
     "src",
     "README.md"
   ],
+  "dependencies": {
+    "@openphone/runtime-mcp-server": "0.1.0"
+  },
   "scripts": {
     "test": "node ../../tests/integrations/runtime-cli-contract.mjs"
   }
