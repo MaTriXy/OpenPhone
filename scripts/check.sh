@@ -18,6 +18,7 @@ required=(
   docs/CAPABILITIES.md
   docs/DEVICE_SUPPORT.md
   docs/GMS.md
+  docs/LOCAL_AGENT_NOTES.md
   docs/LICENSING.md
   docs/runtime/hermes-integration.md
   docs/runtime/mcp-bridge.md

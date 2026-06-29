@@ -29,6 +29,8 @@ build, architecture, release, device, and policy docs.
   assistant evals, and trajectory validation.
 - [Capability Model](CAPABILITIES.md) - named capabilities, risk levels, and
   policy configuration.
+- [Local Agent Notes](LOCAL_AGENT_NOTES.md) - convention for ignored local-only
+  markdown scratch space.
 
 ## Device And Release Docs
 

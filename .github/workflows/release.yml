@@ -22,6 +22,19 @@ on:
         options:
           - "true"
           - "false"
+      release_notes:
+        description: "Release notes markdown file to publish"
+        required: true
+        default: "docs/releases/0.0.1.md"
+      make_latest:
+        description: "Whether this GitHub release becomes Latest"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+          - "legacy"
 
 permissions:
   contents: write
@@ -44,6 +57,7 @@ jobs:
           set -euxo pipefail
           ./scripts/check.sh
           git diff --check
+          test -f "${{ inputs.release_notes }}"
 
       - name: Build OTA
         run: |
@@ -74,8 +88,9 @@ jobs:
         with:
           tag_name: ${{ inputs.version }}
           name: ${{ inputs.version }}
-          body_path: docs/releases/0.0.1.md
+          body_path: ${{ inputs.release_notes }}
           prerelease: ${{ inputs.prerelease == 'true' }}
+          make_latest: ${{ inputs.make_latest }}
           files: |
             ${{ steps.stage.outputs.ota_path }}
             ${{ steps.stage.outputs.sha_path }}

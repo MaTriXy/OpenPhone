@@ -45,6 +45,10 @@ Docs and contracts:
   guarantees.
 - When docs conflict, make the freshest behavior explicit and remove or update
   stale claims in the same change when practical.
+- Use ignored `docs/local-temp/` for local-only agent notes, scratch plans,
+  private triage, or temporary markdown. Do not move local scratch content into
+  public docs unless it has been reviewed and intentionally rewritten for the
+  repository.
 
 Commit shape:
 

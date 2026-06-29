@@ -111,6 +111,9 @@ Long-term, the docs should be published as a static site, for example at
 `docs.openphone.secondly.com`. The source of truth should remain this repo; the
 site should render curated docs, not become a second place where truth drifts.
 
+Local-only agent notes belong in ignored `docs/local-temp/`, not in public docs.
+See `docs/LOCAL_AGENT_NOTES.md`.
+
 ## CI And CD Target State
 
 ### Current Baseline
@@ -147,6 +150,18 @@ site should render curated docs, not become a second place where truth drifts.
 5. **Release gate**
    - Require build, device, runtime, docs, license, and security evidence before
      tagging a release.
+
+### Release Publishing Loop
+
+Every public release should have one obvious trail:
+
+1. Update `docs/releases/CHANGELOG.md`.
+2. Update the versioned release notes under `docs/releases/`.
+3. Run CI and relevant evals.
+4. Dispatch `.github/workflows/release.yml` with the version, device, release
+   notes file, prerelease flag, and latest-release behavior.
+5. Publish OTA artifacts, `SHA256SUMS`, and `ARTIFACTS.md` to GitHub Releases.
+6. Confirm the GitHub release page is the public source for that version.
 
 ## Work Queue Shape
 

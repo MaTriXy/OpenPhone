@@ -43,6 +43,23 @@ A device preview release may additionally include:
 - Flashing and wipe instructions.
 - Validation checklist and result summary.
 
+## Source Of Truth
+
+Each release has three tracked public records:
+
+- `docs/releases/CHANGELOG.md` for the cumulative project history.
+- A versioned release-notes file under `docs/releases/`, such as
+  `docs/releases/0.0.1.md`, for the human-readable release page body.
+- The GitHub Release at
+  `https://github.com/secondly-com/OpenPhone/releases`, which is the public
+  distribution page for source archives, OTA artifacts, `SHA256SUMS`, and
+  `ARTIFACTS.md`.
+
+Release evidence that contains private device details, screenshots,
+trajectories, audit exports, local paths, tokens, or signing material must stay
+out of tracked docs. Use ignored `.worktree/` paths or private GitHub Actions
+artifacts for raw evidence, then summarize safe conclusions in release notes.
+
 ## v0.0.1 Checklist
 
 Repository:
@@ -176,6 +193,31 @@ preview on-device OTA client for this feed: it checks that the feed targets the
 current device, downloads the chosen OTA ZIP to `Downloads/OpenPhone`, and
 verifies size and SHA-256 before making the file visible. Installation is still
 manual for `0.0.1`; use recovery sideload or the documented host flashing flow.
+
+## GitHub Actions Release Workflow
+
+Use `.github/workflows/release.yml` for the normal device-preview path. The
+workflow requires:
+
+- `version`, such as `v0.0.1-preview.1`;
+- `device`, currently `tegu`;
+- `release_notes`, the markdown file that becomes the GitHub Release body;
+- `prerelease`, usually `true` before `1.0.0`;
+- `make_latest`, usually `false` for preview builds unless this release should
+  become the repository's Latest release.
+
+The workflow validates the repository, confirms the release-notes file exists,
+builds the OTA on the `openphone-build` runner, stages the OTA, generates
+`SHA256SUMS` and `ARTIFACTS.md`, validates the staged directory, and publishes
+the GitHub Release with those assets.
+
+Before dispatching a release:
+
+- move relevant entries from `[Unreleased]` in `docs/releases/CHANGELOG.md`
+  into the target version section;
+- update the target `docs/releases/<version>.md` notes;
+- run or review the relevant device/eval evidence;
+- decide whether the release should become GitHub's Latest release.
 
 ```markdown
 ## OpenPhone 0.0.1
